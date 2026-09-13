@@ -33,12 +33,9 @@ def test():
 async def kakao_skill(request: Request):
     body = await request.json()
 
-    print("===== KAKAO REQUEST BODY =====")
-    print(json.dumps(body, ensure_ascii=False, indent=2))
-
     utterance = body.get("userRequest", {}).get("utterance", "")
 
-    print(f"사용자 메시지: {utterance}")
+    print(f"[KAKAO] {utterance}")
 
     return {
         "version": "2.0",
