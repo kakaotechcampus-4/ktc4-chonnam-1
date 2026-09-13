@@ -31,7 +31,12 @@ def test():
 async def kakao_skill(request: Request):
     body = await request.json()
 
-    utterance = body["userRequest"]["utterance"]
+    print("===== KAKAO REQUEST BODY =====")
+    print(json.dumps(body, ensure_ascii=False, indent=2))
+
+    utterance = body.get("userRequest", {}).get("utterance", "")
+
+    print(f"사용자 메시지: {utterance}")
 
     return {
         "version": "2.0",
@@ -39,7 +44,7 @@ async def kakao_skill(request: Request):
             "outputs": [
                 {
                     "simpleText": {
-                        "text": f"받은 메시지: {utterance}"
+                        "text": f"서버가 받은 메시지:\n{utterance}"
                     }
                 }
             ]
