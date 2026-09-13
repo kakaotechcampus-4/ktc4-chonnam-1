@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 app = FastAPI(
     title="Message Verify Server",
@@ -25,4 +25,23 @@ def health_check():
 def test():
     return {
         "message": "Render + FastAPI connection success"
+    }
+
+@app.post("/kakao/skill")
+async def kakao_skill(request: Request):
+    body = await request.json()
+
+    utterance = body["userRequest"]["utterance"]
+
+    return {
+        "version": "2.0",
+        "template": {
+            "outputs": [
+                {
+                    "simpleText": {
+                        "text": f"받은 메시지: {utterance}"
+                    }
+                }
+            ]
+        }
     }
