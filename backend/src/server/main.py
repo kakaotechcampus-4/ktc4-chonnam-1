@@ -1,51 +1,115 @@
-import json
-
 from fastapi import FastAPI, Request
 
-app = FastAPI(
-    title="Message Verify Server",
-    description="메세지 링크 보안 검사 테스트 API",
-    version="0.1.0"
-)
+from urlscan_service import submit_url_scan, wait_for_url_scan_result
+from url_utils import split_message
 
 
-@app.get("/")
-def root():
-    return {
-        "message": "Message Verify Server is running!"
-    }
+app = FastAPI()
 
-
-@app.get("/health")
-def health_check():
-    return {
-        "status": "ok"
-    }
-
-
-@app.get("/test")
-def test():
-    return {
-        "message": "Render + FastAPI connection success"
-    }
 
 @app.post("/kakao/skill")
 async def kakao_skill(request: Request):
+
     body = await request.json()
 
-    utterance = body.get("userRequest", {}).get("utterance", "")
+    utterance = body.get(
+        "userRequest", {}
+    ).get("utterance", "")
 
     print(f"[KAKAO] {utterance}")
 
+    links, message = split_message(utterance)
+
+    if not links:
+        return kakao_response(
+            "URL을 찾을 수 없습니다.\n"
+            "http:// 또는 https://로 시작하는 URL을 보내주세요."
+        )
+
+    submit_result_lines = []
+    scan_results = []
+
+    for link in links:
+        try:
+            # 1. urlscan에 검사 요청
+            submit_result = await submit_url_scan(link)
+
+            # 2. scan ID 획득
+            scan_id = submit_result.get("uuid")
+
+            print(f"[URLSCAN] url={link} scan_id={scan_id}")
+
+            submit_result_lines.append(
+                f"✅ 검사 요청됨: {link}"
+            )
+
+            # 3. 검사 결과 대기
+            scan_result = await wait_for_url_scan_result(
+                scan_id
+            )
+
+            # 4. 검사 결과 파싱
+            if scan_result is not None:
+                parsed_result = parse_urlscan_result(
+                    scan_result
+                )
+
+                scan_results.append(parsed_result)
+
+        except Exception as e:
+            print(
+                f"[URLSCAN ERROR] "
+                f"url={link} error={e}"
+            )
+
+            submit_result_lines.append(
+                f"⚠️ 검사 요청 실패: {link}"
+            )
+
+    summary = "\n".join(submit_result_lines)
+
+    # TODO
+    # message + links + scan_results를
+    # AI에게 전달하여 분석
+    #
+    # ai_result = await analyze_smishing(
+    #     message=message,
+    #     links=links,
+    #     scan_results=scan_results
+    # )
+
+    return kakao_response(
+        f"URL 검사를 요청했습니다. "
+        f"(총 {len(links)}건)\n\n"
+        f"{summary}\n\n"
+        f"분석 결과는 다음과 같습니다.\n"
+        f"AI 분석 결과"
+    )
+
+
+def kakao_response(text: str):
     return {
         "version": "2.0",
         "template": {
             "outputs": [
                 {
                     "simpleText": {
-                        "text": f"서버가 받은 메시지:\n{utterance}"
+                        "text": text
                     }
                 }
             ]
         }
+    }
+
+
+def parse_urlscan_result(result: dict):
+    task = result.get("task", {})
+    page = result.get("page", {})
+    verdicts = result.get("verdicts", {})
+    urlscan = verdicts.get("urlscan", {})
+
+    return {
+        "url": task.get("url"),
+        "title": page.get("title"),
+        "brands": urlscan.get("brands", [])
     }
