@@ -1,4 +1,6 @@
+import asyncio
 import httpx
+
 from fastapi import BackgroundTasks, FastAPI, Request
 
 from urlscan_service import submit_url_scan, wait_for_url_scan_result
@@ -7,10 +9,6 @@ from url_utils import split_message
 
 app = FastAPI()
 
-
-# TODO:
-# 현재는 콜백 기능 테스트를 위한 임시 인메모리 저장소.
-# 추후 PostgreSQL 또는 Redis 기반 작업 상태 관리로 변경.
 RUNNING_USERS: set[str] = set()
 
 
@@ -20,7 +18,47 @@ async def kakao_skill(
     background_tasks: BackgroundTasks
 ):
     print("========== CALLBACK TEST VERSION 1 ==========")
-    
+
+    # 1. 카카오 요청 파싱
+    body = await request.json()
+
+    user_request = body.get("userRequest", {})
+
+    utterance = user_request.get("utterance", "")
+    user_id = user_request.get("user", {}).get("id")
+    callback_url = user_request.get("callbackUrl")
+
+    print(
+        f"[KAKAO] "
+        f"user={user_id} "
+        f"utterance={utterance}"
+    )
+
+    print(
+        f"[CALLBACK EXISTS] "
+        f"{bool(callback_url)}"
+    )
+
+    # 2. 메시지에서 URL 추출
+    links, message = split_message(utterance)
+
+    print(f"[LINK COUNT] {len(links)}")
+
+    if not links:
+        return kakao_response(
+            "URL을 찾을 수 없습니다.\n"
+            "http:// 또는 https://로 시작하는 URL을 보내주세요."
+        )
+
+    # 3. callbackUrl 확인
+    if not callback_url:
+        return kakao_response(
+            "Callback URL을 전달받지 못했습니다."
+        )
+
+    # 4. 백그라운드 작업 등록
+    print("[KAKAO] BACKGROUND TASK ADD")
+
     background_tasks.add_task(
         run_analysis_and_callback,
         links,
@@ -28,9 +66,10 @@ async def kakao_skill(
         callback_url,
         user_id
     )
-    
+
     print("[KAKAO] BACKGROUND TASK ADDED")
-    
+
+    # 5. 카카오에는 즉시 응답
     return {
         "version": "2.0",
         "useCallback": True,
@@ -38,7 +77,6 @@ async def kakao_skill(
             "text": "콜백 테스트 중입니다."
         }
     }
-
 
 async def run_analysis(
     links: list[str],
