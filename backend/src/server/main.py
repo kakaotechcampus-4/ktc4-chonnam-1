@@ -20,6 +20,15 @@ async def kakao_skill(request: Request):
 
     links, message = split_message(utterance)
 
+    links, message = split_message(utterance)
+
+    print(f"[UTTERANCE LENGTH] {len(utterance)}")
+    print(f"[UTTERANCE STARTS BRACKET] {utterance.startswith('[')}")
+    
+    for link in links:
+        print(f"[LINK LENGTH] {len(link)}")
+        print(f"[LINK STARTS BRACKET] {link.startswith('[')}")
+    
     print(f"[KAKAO RAW] {utterance!r}")
     print(f"[LINKS RAW] {links!r}")
 
