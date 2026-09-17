@@ -56,3 +56,38 @@ def test_known_category_rejects_custom_label():
 def test_contract_rejects_unknown_fields():
     with pytest.raises(ValidationError):
         ExtractedMessage.model_validate({"risk_verdict": "malicious"})
+
+
+def test_category_taxonomy_matches_approved_design():
+    assert {code.value for code in CategoryCode} == {
+        "delivery",
+        "address_correction",
+        "payment",
+        "penalty",
+        "card_or_account",
+        "public_refund",
+        "public_support",
+        "acquaintance_impersonation",
+        "invitation",
+        "obituary",
+        "prize_or_event",
+        "health_check",
+        "telecom_refund",
+        "account_security",
+        "other",
+        "unknown",
+    }
+
+
+def test_other_category_preserves_evidence_backed_custom_label():
+    item = CategoryEvidence(
+        code=CategoryCode.OTHER,
+        custom_label="parcel storage scam",
+        evidence="Your parcel is held in storage.",
+    )
+
+    assert item.model_dump(mode="json") == {
+        "code": "other",
+        "custom_label": "parcel storage scam",
+        "evidence": "Your parcel is held in storage.",
+    }
