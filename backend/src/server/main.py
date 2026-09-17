@@ -62,10 +62,10 @@ async def kakao_skill(request: Request):
 
             # 4. 검사 결과 파싱
             if scan_result is not None:
-                parsed_result = parse_urlscan_result(
-                    scan_result
-                )
-
+                parsed_result = parse_urlscan_result(scan_result)
+            
+                print(f"[PARSED RESULT] {parsed_result}")
+            
                 scan_results.append(parsed_result)
 
         except Exception as e:
