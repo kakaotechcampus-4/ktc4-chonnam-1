@@ -1,6 +1,5 @@
 import asyncio
 import httpx
-
 from fastapi import BackgroundTasks, FastAPI, Request
 
 from urlscan_service import submit_url_scan, wait_for_url_scan_result
@@ -9,6 +8,10 @@ from url_utils import split_message
 
 app = FastAPI()
 
+
+# TODO:
+# 현재는 콜백 기능 테스트를 위한 임시 인메모리 저장소.
+# 추후 PostgreSQL 또는 Redis 기반 작업 상태 관리로 변경.
 RUNNING_USERS: set[str] = set()
 
 
@@ -17,9 +20,6 @@ async def kakao_skill(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    print("========== CALLBACK TEST VERSION 1 ==========")
-
-    # 1. 카카오 요청 파싱
     body = await request.json()
 
     user_request = body.get("userRequest", {})
@@ -39,26 +39,43 @@ async def kakao_skill(
         f"{bool(callback_url)}"
     )
 
-    # 2. 메시지에서 URL 추출
+    # 문자 내용에서 URL과 일반 메시지 분리
     links, message = split_message(utterance)
 
     print(f"[LINK COUNT] {len(links)}")
 
+    # URL이 없는 경우 즉시 응답
     if not links:
         return kakao_response(
             "URL을 찾을 수 없습니다.\n"
             "http:// 또는 https://로 시작하는 URL을 보내주세요."
         )
 
-    # 3. callbackUrl 확인
-    if not callback_url:
+    # 같은 사용자의 이전 분석이 아직 진행 중인 경우
+    if user_id and user_id in RUNNING_USERS:
         return kakao_response(
-            "Callback URL을 전달받지 못했습니다."
+            "이전 요청을 아직 확인하고 있어요. "
+            "잠시 후 다시 시도해주세요."
         )
 
-    # 4. 백그라운드 작업 등록
-    print("[KAKAO] BACKGROUND TASK ADD")
+    # callbackUrl이 없는 경우
+    #
+    # 개발/테스트용 fallback.
+    # urlscan 분석 시간이 길어지면 일반 Skill 응답 제한 시간을
+    # 초과할 수 있으므로 실제 서비스에서는 callback 사용을 전제로 한다.
+    if not callback_url:
+        print("[CALLBACK] callbackUrl 없음 - 동기 처리")
 
+        return await run_analysis(
+            links,
+            message
+        )
+
+    # 사용자 분석 시작 상태 저장
+    if user_id:
+        RUNNING_USERS.add(user_id)
+
+    # 오래 걸리는 분석은 background task에서 수행
     background_tasks.add_task(
         run_analysis_and_callback,
         links,
@@ -67,16 +84,18 @@ async def kakao_skill(
         user_id
     )
 
-    print("[KAKAO] BACKGROUND TASK ADDED")
-
-    # 5. 카카오에는 즉시 응답
+    # 카카오에는 즉시 callback 사용 응답
     return {
         "version": "2.0",
         "useCallback": True,
         "data": {
-            "text": "콜백 테스트 중입니다."
+            "text": (
+                "링크를 확인하고 있어요. "
+                "분석이 완료되면 결과를 알려드릴게요."
+            )
         }
     }
+
 
 async def run_analysis(
     links: list[str],
@@ -212,16 +231,33 @@ async def run_analysis_and_callback(
     백그라운드에서 분석을 수행한 뒤
     카카오 callbackUrl로 최종 결과를 전송한다.
     """
-    print("[BACKGROUND] started")
 
     try:
-        print("[BACKGROUND] 3초 대기")
+        # -----------------------------------
+        # 1. 분석 수행
+        # -----------------------------------
 
-        await asyncio.sleep(3)
+        try:
+            result = await run_analysis(
+                links,
+                message
+            )
 
-        result = kakao_response(
-            "콜백 테스트 성공!"
-        )
+        except Exception as e:
+            # 예상하지 못한 분석 오류
+            print(
+                f"[ANALYSIS ERROR] "
+                f"{e}"
+            )
+
+            result = kakao_response(
+                "분석 중 문제가 발생했습니다. "
+                "잠시 후 다시 시도해주세요."
+            )
+
+        # -----------------------------------
+        # 2. 카카오 callback 전송
+        # -----------------------------------
 
         print("[CALLBACK] 결과 전송 시작")
 
@@ -232,6 +268,7 @@ async def run_analysis_and_callback(
                 timeout=10.0
             )
 
+        # callback 디버깅을 위해 반드시 기록
         print(
             f"[CALLBACK STATUS] "
             f"{response.status_code}"
@@ -242,19 +279,55 @@ async def run_analysis_and_callback(
             f"{response.text}"
         )
 
+        # 4xx / 5xx인 경우 예외 발생
         response.raise_for_status()
+
+        # HTTP 200이어도 Kakao 응답의 status를 확인
+        try:
+            callback_result = response.json()
+
+            callback_status = callback_result.get(
+                "status"
+            )
+
+            print(
+                f"[CALLBACK RESULT STATUS] "
+                f"{callback_status}"
+            )
+
+            if (
+                callback_status is not None
+                and callback_status != "SUCCESS"
+            ):
+                print(
+                    "[CALLBACK WARNING] "
+                    f"Kakao callback status="
+                    f"{callback_status}"
+                )
+
+        except ValueError:
+            # JSON이 아닌 응답이 온 경우
+            print(
+                "[CALLBACK WARNING] "
+                "응답을 JSON으로 파싱할 수 없습니다."
+            )
 
     except Exception as e:
         print(
-            f"[CALLBACK ERROR] "
-            f"{type(e).__name__}: {e}"
+            f"[CALLBACK SEND FAILED] "
+            f"{e}"
         )
 
     finally:
+        # 분석뿐 아니라 callback 전송 시도까지 끝난 뒤
+        # 사용자 실행 상태 해제
         if user_id:
             RUNNING_USERS.discard(user_id)
 
-        print("[BACKGROUND] finished")
+            print(
+                f"[RUNNING USER REMOVED] "
+                f"user={user_id}"
+            )
 
 
 def kakao_response(text: str) -> dict:
