@@ -19,62 +19,8 @@ async def kakao_skill(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    body = await request.json()
-
-    user_request = body.get("userRequest", {})
-
-    utterance = user_request.get("utterance", "")
-    user_id = user_request.get("user", {}).get("id")
-    callback_url = user_request.get("callbackUrl")
-
-    print(
-        f"[KAKAO] "
-        f"user={user_id} "
-        f"utterance={utterance}"
-    )
-
-    print(
-        f"[CALLBACK EXISTS] "
-        f"{bool(callback_url)}"
-    )
-
-    # 문자 내용에서 URL과 일반 메시지 분리
-    links, message = split_message(utterance)
-
-    print(f"[LINK COUNT] {len(links)}")
-
-    # URL이 없는 경우 즉시 응답
-    if not links:
-        return kakao_response(
-            "URL을 찾을 수 없습니다.\n"
-            "http:// 또는 https://로 시작하는 URL을 보내주세요."
-        )
-
-    # 같은 사용자의 이전 분석이 아직 진행 중인 경우
-    if user_id and user_id in RUNNING_USERS:
-        return kakao_response(
-            "이전 요청을 아직 확인하고 있어요. "
-            "잠시 후 다시 시도해주세요."
-        )
-
-    # callbackUrl이 없는 경우
-    #
-    # 개발/테스트용 fallback.
-    # urlscan 분석 시간이 길어지면 일반 Skill 응답 제한 시간을
-    # 초과할 수 있으므로 실제 서비스에서는 callback 사용을 전제로 한다.
-    if not callback_url:
-        print("[CALLBACK] callbackUrl 없음 - 동기 처리")
-
-        return await run_analysis(
-            links,
-            message
-        )
-
-    # 사용자 분석 시작 상태 저장
-    if user_id:
-        RUNNING_USERS.add(user_id)
-
-    # 오래 걸리는 분석은 background task에서 수행
+    print("========== CALLBACK TEST VERSION 1 ==========")
+    
     background_tasks.add_task(
         run_analysis_and_callback,
         links,
@@ -82,16 +28,14 @@ async def kakao_skill(
         callback_url,
         user_id
     )
-
-    # 카카오에는 즉시 callback 사용 응답
+    
+    print("[KAKAO] BACKGROUND TASK ADDED")
+    
     return {
         "version": "2.0",
         "useCallback": True,
         "data": {
-            "text": (
-                "링크를 확인하고 있어요. "
-                "분석이 완료되면 결과를 알려드릴게요."
-            )
+            "text": "콜백 테스트 중입니다."
         }
     }
 
