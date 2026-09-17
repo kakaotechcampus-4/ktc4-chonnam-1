@@ -1,129 +1,204 @@
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Request
 
-from server.urlscan_service import submit_url_scan, wait_for_url_scan_result
-from server.url_utils import split_message
+from urlscan_service import submit_url_scan, wait_for_url_scan_result
+from url_utils import split_message
 
 
 app = FastAPI()
 
-# TODO: 지금은 콜백 전환 자체를 검증하기 위한 임시 인메모리 저장소다.
-# 실제로는 models/README.md의 chatbot_sessions/jobs 테이블로 옮겨야 하고,
-# 콜백 실패·초과 시에도 사용자가 재요청으로 결과를 받을 수 있도록
-# GET /api/analyses/{job_id}(api/README.md)에 해당하는 조회 경로가 필요하다.
+
+# TODO:
+# 현재는 콜백 기능 테스트를 위한 임시 인메모리 저장소.
+# 추후 PostgreSQL 또는 Redis 기반 작업 상태 관리로 변경.
 RUNNING_USERS: set[str] = set()
 
 
 @app.post("/kakao/skill")
-async def kakao_skill(request: Request, background_tasks: BackgroundTasks):
-
+async def kakao_skill(
+    request: Request,
+    background_tasks: BackgroundTasks
+):
     body = await request.json()
 
     user_request = body.get("userRequest", {})
+
     utterance = user_request.get("utterance", "")
     user_id = user_request.get("user", {}).get("id")
     callback_url = user_request.get("callbackUrl")
 
-    print(f"[KAKAO] user={user_id} utterance={utterance}")
+    print(
+        f"[KAKAO] "
+        f"user={user_id} "
+        f"utterance={utterance}"
+    )
 
+    print(
+        f"[CALLBACK EXISTS] "
+        f"{bool(callback_url)}"
+    )
+
+    # 문자 내용에서 URL과 일반 메시지 분리
     links, message = split_message(utterance)
 
-    print(f"[UTTERANCE LENGTH] {len(utterance)}")
-    print(f"[UTTERANCE STARTS BRACKET] {utterance.startswith('[')}")
+    print(f"[LINK COUNT] {len(links)}")
 
-    for link in links:
-        print(f"[LINK LENGTH] {len(link)}")
-        print(f"[LINK STARTS BRACKET] {link.startswith('[')}")
-
-    print(f"[KAKAO RAW] {utterance!r}")
-    print(f"[LINKS RAW] {links!r}")
-
+    # URL이 없는 경우 즉시 응답
     if not links:
         return kakao_response(
             "URL을 찾을 수 없습니다.\n"
             "http:// 또는 https://로 시작하는 URL을 보내주세요."
         )
 
-    # 같은 사용자의 이전 분석이 아직 끝나지 않았으면 새 작업을 만들지 않는다.
-    # (orchestration/README.md: "세션이 analyzing 상태인 동안 들어오는 새 요청은
-    #  새 작업을 만들지 않는다"를 세션 테이블이 생기기 전까지 흉내낸 것)
-    if user_id in RUNNING_USERS:
+    # 같은 사용자의 이전 분석이 아직 진행 중인 경우
+    if user_id and user_id in RUNNING_USERS:
         return kakao_response(
-            "이전 요청을 아직 확인하고 있어요. 잠시 후 다시 시도해주세요."
+            "이전 요청을 아직 확인하고 있어요. "
+            "잠시 후 다시 시도해주세요."
         )
 
-    # 카카오 콜백을 지원하지 않는 호출(callbackUrl이 없는 테스트 요청 등)이면
-    # 예전처럼 동기로 끝까지 처리한다. urlscan 대기가 길면 이 경로는 5초
-    # 타임아웃을 넘길 수 있다 — 실제 카카오 채널에서는 항상 callbackUrl이 온다.
+    # callbackUrl이 없는 경우
+    #
+    # 개발/테스트용 fallback.
+    # urlscan 분석 시간이 길어지면 일반 Skill 응답 제한 시간을
+    # 초과할 수 있으므로 실제 서비스에서는 callback 사용을 전제로 한다.
     if not callback_url:
-        return await run_analysis(links, message)
+        print("[CALLBACK] callbackUrl 없음 - 동기 처리")
 
-    # 4초 안에 끝내지 못하므로, 먼저 "확인 중" 응답을 보내고 실제 분석은
-    # 백그라운드에서 계속한 뒤 callbackUrl로 결과를 전송한다 (카카오 콜백 최대 1분).
+        return await run_analysis(
+            links,
+            message
+        )
+
+    # 사용자 분석 시작 상태 저장
     if user_id:
         RUNNING_USERS.add(user_id)
 
+    # 오래 걸리는 분석은 background task에서 수행
     background_tasks.add_task(
-        run_analysis_and_callback, links, message, callback_url, user_id
+        run_analysis_and_callback,
+        links,
+        message,
+        callback_url,
+        user_id
     )
 
+    # 카카오에는 즉시 callback 사용 응답
     return {
         "version": "2.0",
         "useCallback": True,
         "data": {
-            "text": "링크를 확인하고 있어요. 최대 1분 정도 걸릴 수 있어요."
+            "text": (
+                "링크를 확인하고 있어요. "
+                "분석이 완료되면 결과를 알려드릴게요."
+            )
         }
     }
 
 
-async def run_analysis(links: list[str], message: str) -> dict:
-    """urlscan 요청 → 대기 → 결과 조립까지 실제 분석을 수행하고 카카오 응답을 돌려준다."""
+async def run_analysis(
+    links: list[str],
+    message: str
+) -> dict:
+    """
+    실제 URL 분석 수행.
 
-    submit_result_lines = []
+    URL
+      → urlscan 검사 요청
+      → 결과 대기
+      → 결과 파싱
+      → 추후 AI 분석
+
+    최종적으로 카카오 응답 JSON을 반환한다.
+    """
+
+    result_lines = []
     scan_results = []
 
     for link in links:
         try:
-            # 1. urlscan에 검사 요청
+            # -----------------------------------
+            # 1. urlscan 검사 요청
+            # -----------------------------------
+
             submit_result = await submit_url_scan(link)
 
-            # 2. scan ID 획득
             scan_id = submit_result.get("uuid")
 
-            print(f"[URLSCAN] url={link} scan_id={scan_id}")
+            if not scan_id:
+                print(
+                    f"[URLSCAN ERROR] "
+                    f"url={link} uuid 없음"
+                )
 
-            submit_result_lines.append(
-                f"✅ 검사 요청됨: {link}"
+                result_lines.append(
+                    f"⚠️ 검사 요청 실패: {link}"
+                )
+
+                continue
+
+            print(
+                f"[URLSCAN] "
+                f"url={link} "
+                f"scan_id={scan_id}"
             )
 
-            # 3. 검사 결과 대기
+            # -----------------------------------
+            # 2. 검사 결과 대기
+            # -----------------------------------
+
             scan_result = await wait_for_url_scan_result(
                 scan_id
             )
 
-            # 4. 검사 결과 파싱
-            if scan_result is not None:
-                parsed_result = parse_urlscan_result(
-                    scan_result
+            # timeout 등으로 결과를 받지 못한 경우
+            if scan_result is None:
+                print(
+                    f"[URLSCAN TIMEOUT] "
+                    f"url={link}"
                 )
 
-                scan_results.append(parsed_result)
+                result_lines.append(
+                    f"⚠️ 검사 시간 초과: {link}"
+                )
+
+                continue
+
+            # -----------------------------------
+            # 3. 결과 파싱
+            # -----------------------------------
+
+            parsed_result = parse_urlscan_result(
+                scan_result
+            )
+
+            scan_results.append(parsed_result)
+
+            print(
+                f"[PARSED RESULT] "
+                f"{parsed_result}"
+            )
+
+            result_lines.append(
+                f"✅ 검사 완료: {link}"
+            )
 
         except Exception as e:
             print(
                 f"[URLSCAN ERROR] "
-                f"url={link} error={e}"
+                f"url={link} "
+                f"error={e}"
             )
 
-            submit_result_lines.append(
-                f"⚠️ 검사 요청 실패: {link}"
+            result_lines.append(
+                f"⚠️ 검사 실패: {link}"
             )
 
-    summary = "\n".join(submit_result_lines)
+    # ---------------------------------------
+    # 4. 추후 AI 분석
+    # ---------------------------------------
 
-    # TODO
-    # message + links + scan_results를
-    # AI에게 전달하여 분석
+    # TODO:
     #
     # ai_result = await analyze_smishing(
     #     message=message,
@@ -131,12 +206,17 @@ async def run_analysis(links: list[str], message: str) -> dict:
     #     scan_results=scan_results
     # )
 
+    # 현재는 콜백 기능 자체를 테스트하는 단계이므로
+    # AI 결과 대신 고정 문자열 사용
+    ai_result = "AI 분석 기능은 아직 연결되지 않았습니다."
+
+    summary = "\n".join(result_lines)
+
     return kakao_response(
-        f"URL 검사를 요청했습니다. "
+        f"URL 검사가 완료되었습니다. "
         f"(총 {len(links)}건)\n\n"
         f"{summary}\n\n"
-        f"분석 결과는 다음과 같습니다.\n"
-        f"AI 분석 결과"
+        f"{ai_result}"
     )
 
 
@@ -144,34 +224,116 @@ async def run_analysis_and_callback(
     links: list[str],
     message: str,
     callback_url: str,
-    user_id: str | None,
+    user_id: str | None
 ):
-    """백그라운드에서 분석을 수행하고, 끝나면 카카오 callbackUrl로 결과를 보낸다."""
+    """
+    백그라운드에서 분석을 수행한 뒤
+    카카오 callbackUrl로 최종 결과를 전송한다.
+    """
 
     try:
-        result = await run_analysis(links, message)
-    except Exception as e:
-        # LLM/도구가 실패해도 응답은 나가야 한다는 원칙(CLAUDE.md 절대 원칙 3)과
-        # 같은 이유로, 예상 못한 예외에도 빈손으로 끝내지 않는다.
-        print(f"[ANALYSIS ERROR] {e}")
-        result = kakao_response(
-            "분석 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요."
+        # -----------------------------------
+        # 1. 분석 수행
+        # -----------------------------------
+
+        try:
+            result = await run_analysis(
+                links,
+                message
+            )
+
+        except Exception as e:
+            # 예상하지 못한 분석 오류
+            print(
+                f"[ANALYSIS ERROR] "
+                f"{e}"
+            )
+
+            result = kakao_response(
+                "분석 중 문제가 발생했습니다. "
+                "잠시 후 다시 시도해주세요."
+            )
+
+        # -----------------------------------
+        # 2. 카카오 callback 전송
+        # -----------------------------------
+
+        print("[CALLBACK] 결과 전송 시작")
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                callback_url,
+                json=result,
+                timeout=10.0
+            )
+
+        # callback 디버깅을 위해 반드시 기록
+        print(
+            f"[CALLBACK STATUS] "
+            f"{response.status_code}"
         )
+
+        print(
+            f"[CALLBACK RESPONSE] "
+            f"{response.text}"
+        )
+
+        # 4xx / 5xx인 경우 예외 발생
+        response.raise_for_status()
+
+        # HTTP 200이어도 Kakao 응답의 status를 확인
+        try:
+            callback_result = response.json()
+
+            callback_status = callback_result.get(
+                "status"
+            )
+
+            print(
+                f"[CALLBACK RESULT STATUS] "
+                f"{callback_status}"
+            )
+
+            if (
+                callback_status is not None
+                and callback_status != "SUCCESS"
+            ):
+                print(
+                    "[CALLBACK WARNING] "
+                    f"Kakao callback status="
+                    f"{callback_status}"
+                )
+
+        except ValueError:
+            # JSON이 아닌 응답이 온 경우
+            print(
+                "[CALLBACK WARNING] "
+                "응답을 JSON으로 파싱할 수 없습니다."
+            )
+
+    except Exception as e:
+        print(
+            f"[CALLBACK SEND FAILED] "
+            f"{e}"
+        )
+
     finally:
+        # 분석뿐 아니라 callback 전송 시도까지 끝난 뒤
+        # 사용자 실행 상태 해제
         if user_id:
             RUNNING_USERS.discard(user_id)
 
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.post(callback_url, json=result, timeout=10.0)
-    except Exception as e:
-        # 카카오 콜백은 "제한된 임시 기능"이라 실패·만료될 수 있다(CLAUDE.md 제약).
-        # 지금은 로그만 남긴다 — 사용자가 재요청했을 때 결과를 돌려주려면
-        # 위 TODO(job 저장소 + 조회 API)가 먼저 있어야 한다.
-        print(f"[CALLBACK SEND FAILED] {e}")
+            print(
+                f"[RUNNING USER REMOVED] "
+                f"user={user_id}"
+            )
 
 
-def kakao_response(text: str):
+def kakao_response(text: str) -> dict:
+    """
+    카카오 SkillResponse 형식 생성.
+    """
+
     return {
         "version": "2.0",
         "template": {
@@ -186,7 +348,12 @@ def kakao_response(text: str):
     }
 
 
-def parse_urlscan_result(result: dict):
+def parse_urlscan_result(result: dict) -> dict:
+    """
+    urlscan Result API 응답 중
+    현재 분석에 필요한 데이터만 추출한다.
+    """
+
     task = result.get("task", {})
     page = result.get("page", {})
     verdicts = result.get("verdicts", {})
@@ -195,5 +362,8 @@ def parse_urlscan_result(result: dict):
     return {
         "url": task.get("url"),
         "title": page.get("title"),
-        "brands": urlscan.get("brands", [])
+        "brands": urlscan.get(
+            "brands",
+            []
+        )
     }
