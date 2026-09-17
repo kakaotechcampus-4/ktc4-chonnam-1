@@ -230,33 +230,16 @@ async def run_analysis_and_callback(
     백그라운드에서 분석을 수행한 뒤
     카카오 callbackUrl로 최종 결과를 전송한다.
     """
+    print("[BACKGROUND] started")
 
     try:
-        # -----------------------------------
-        # 1. 분석 수행
-        # -----------------------------------
+        print("[BACKGROUND] 3초 대기")
 
-        try:
-            result = await run_analysis(
-                links,
-                message
-            )
+        await asyncio.sleep(3)
 
-        except Exception as e:
-            # 예상하지 못한 분석 오류
-            print(
-                f"[ANALYSIS ERROR] "
-                f"{e}"
-            )
-
-            result = kakao_response(
-                "분석 중 문제가 발생했습니다. "
-                "잠시 후 다시 시도해주세요."
-            )
-
-        # -----------------------------------
-        # 2. 카카오 callback 전송
-        # -----------------------------------
+        result = kakao_response(
+            "콜백 테스트 성공!"
+        )
 
         print("[CALLBACK] 결과 전송 시작")
 
@@ -267,7 +250,6 @@ async def run_analysis_and_callback(
                 timeout=10.0
             )
 
-        # callback 디버깅을 위해 반드시 기록
         print(
             f"[CALLBACK STATUS] "
             f"{response.status_code}"
@@ -278,55 +260,19 @@ async def run_analysis_and_callback(
             f"{response.text}"
         )
 
-        # 4xx / 5xx인 경우 예외 발생
         response.raise_for_status()
-
-        # HTTP 200이어도 Kakao 응답의 status를 확인
-        try:
-            callback_result = response.json()
-
-            callback_status = callback_result.get(
-                "status"
-            )
-
-            print(
-                f"[CALLBACK RESULT STATUS] "
-                f"{callback_status}"
-            )
-
-            if (
-                callback_status is not None
-                and callback_status != "SUCCESS"
-            ):
-                print(
-                    "[CALLBACK WARNING] "
-                    f"Kakao callback status="
-                    f"{callback_status}"
-                )
-
-        except ValueError:
-            # JSON이 아닌 응답이 온 경우
-            print(
-                "[CALLBACK WARNING] "
-                "응답을 JSON으로 파싱할 수 없습니다."
-            )
 
     except Exception as e:
         print(
-            f"[CALLBACK SEND FAILED] "
-            f"{e}"
+            f"[CALLBACK ERROR] "
+            f"{type(e).__name__}: {e}"
         )
 
     finally:
-        # 분석뿐 아니라 callback 전송 시도까지 끝난 뒤
-        # 사용자 실행 상태 해제
         if user_id:
             RUNNING_USERS.discard(user_id)
 
-            print(
-                f"[RUNNING USER REMOVED] "
-                f"user={user_id}"
-            )
+        print("[BACKGROUND] finished")
 
 
 def kakao_response(text: str) -> dict:
