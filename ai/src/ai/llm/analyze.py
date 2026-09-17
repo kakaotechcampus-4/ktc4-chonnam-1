@@ -41,9 +41,13 @@ def _create_client() -> AsyncOpenAI:
 
 
 def _valid_field(masked_text: str, field: EvidenceField) -> EvidenceField:
-    if field.evidence is None or field.evidence not in masked_text:
+    if not _has_evidence(masked_text, field.evidence):
         return EvidenceField()
     return field
+
+
+def _has_evidence(masked_text: str, evidence: str | None) -> bool:
+    return bool(evidence and evidence.strip() and evidence in masked_text)
 
 
 def _sanitize_extracted(
@@ -52,19 +56,21 @@ def _sanitize_extracted(
 ) -> ExtractedMessage:
     return ExtractedMessage(
         categories=[
-            item for item in extracted.categories if item.evidence in masked_text
+            item
+            for item in extracted.categories
+            if _has_evidence(masked_text, item.evidence)
         ],
         claimed_sender=_valid_field(masked_text, extracted.claimed_sender),
         claimed_purpose=_valid_field(masked_text, extracted.claimed_purpose),
         requested_actions=[
             item
             for item in extracted.requested_actions
-            if item.evidence is not None and item.evidence in masked_text
+            if _has_evidence(masked_text, item.evidence)
         ],
         persuasion_signals=[
             item
             for item in extracted.persuasion_signals
-            if item.evidence in masked_text
+            if _has_evidence(masked_text, item.evidence)
         ],
     )
 

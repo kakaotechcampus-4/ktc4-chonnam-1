@@ -1,8 +1,11 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import ValidationError
 
+import ai.llm.analyze as analyze_module
 from ai.llm.analyze import analyze_message
 from ai.types import (
     AnalysisStatus,
@@ -192,3 +195,132 @@ async def test_untrusted_message_is_separate_from_system_instructions():
     assert messages[1] == {"role": "user", "content": injected}
     assert parse.await_args.kwargs["response_format"] is ExtractedMessage
     assert not hasattr(result, "risk_verdict")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("empty_evidence", ["", "   "])
+async def test_blank_evidence_is_removed_while_valid_siblings_survive(empty_evidence):
+    text = "Delivery notice from Carrier.   Confirm now."
+    parsed = ExtractedMessage(
+        categories=[
+            CategoryEvidence(code=CategoryCode.PAYMENT, evidence=empty_evidence),
+            CategoryEvidence(code=CategoryCode.DELIVERY, evidence="Delivery notice"),
+        ],
+        claimed_sender=EvidenceField(value="Invented sender", evidence=empty_evidence),
+        claimed_purpose=EvidenceField(value="Invented purpose", evidence=empty_evidence),
+        requested_actions=[
+            EvidenceField(value="Install app", evidence=empty_evidence),
+            EvidenceField(value="Confirm", evidence="Confirm"),
+        ],
+        persuasion_signals=[
+            PersuasionEvidence(code=PersuasionCode.FEAR, evidence=empty_evidence),
+            PersuasionEvidence(code=PersuasionCode.URGENCY, evidence="now"),
+        ],
+    )
+    client, _ = fake_client(parsed=parsed)
+
+    result = await analyze_message(text, client=client, model="test-model")
+
+    assert [item.code for item in result.categories] == [CategoryCode.DELIVERY]
+    assert result.claimed_sender == EvidenceField()
+    assert result.claimed_purpose == EvidenceField()
+    assert [item.value for item in result.requested_actions] == ["Confirm"]
+    assert [item.code for item in result.persuasion_signals] == [
+        PersuasionCode.URGENCY
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delayed_response_times_out_and_returns_fallback(monkeypatch):
+    async def delayed_parse(**_kwargs):
+        await asyncio.sleep(1)
+
+    client, parse = fake_client(side_effect=delayed_parse)
+    monkeypatch.setattr(analyze_module, "TIMEOUT_SECONDS", 0.01)
+
+    result = await asyncio.wait_for(
+        analyze_message("Confirm now.", client=client, model="test-model"),
+        timeout=0.2,
+    )
+
+    assert result.analysis_status is AnalysisStatus.FALLBACK
+    parse.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        ValueError("malformed response"),
+        ValidationError.from_exception_data(
+            "ExtractedMessage",
+            [
+                {
+                    "type": "extra_forbidden",
+                    "loc": ("risk_verdict",),
+                    "input": "malicious",
+                }
+            ],
+        ),
+    ],
+)
+async def test_malformed_or_schema_response_returns_fallback(error):
+    client, _ = fake_client(side_effect=error)
+
+    result = await analyze_message("Confirm now.", client=client, model="test-model")
+
+    assert result.analysis_status is AnalysisStatus.FALLBACK
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", list(CategoryCode))
+async def test_approved_category_round_trips_with_evidence(code):
+    evidence = f"evidence for {code.value}"
+    category = CategoryEvidence(
+        code=code,
+        custom_label="custom category" if code is CategoryCode.OTHER else None,
+        evidence=evidence,
+    )
+    client, _ = fake_client(parsed=ExtractedMessage(categories=[category]))
+
+    result = await analyze_message(evidence, client=client, model="test-model")
+
+    assert result.categories == [category]
+
+
+@pytest.mark.asyncio
+async def test_multiple_categories_and_other_round_trip_with_fixed_failure_shape():
+    text = "Parcel payment refund from a friend needs a health check."
+    parsed = ExtractedMessage(
+        categories=[
+            CategoryEvidence(code=CategoryCode.DELIVERY, evidence="Parcel"),
+            CategoryEvidence(code=CategoryCode.PAYMENT, evidence="payment"),
+            CategoryEvidence(code=CategoryCode.PUBLIC_REFUND, evidence="refund"),
+            CategoryEvidence(
+                code=CategoryCode.ACQUAINTANCE_IMPERSONATION,
+                evidence="friend",
+            ),
+            CategoryEvidence(code=CategoryCode.HEALTH_CHECK, evidence="health check"),
+            CategoryEvidence(
+                code=CategoryCode.OTHER,
+                custom_label="parcel collection",
+                evidence="needs",
+            ),
+        ]
+    )
+    success_client, _ = fake_client(parsed=parsed)
+    failure_client, _ = fake_client(side_effect=ValueError("malformed response"))
+
+    partial = await analyze_message(text, client=success_client, model="test-model")
+    failure = await analyze_message(text, client=failure_client, model="test-model")
+
+    assert [item.code for item in partial.categories] == [
+        CategoryCode.DELIVERY,
+        CategoryCode.PAYMENT,
+        CategoryCode.PUBLIC_REFUND,
+        CategoryCode.ACQUAINTANCE_IMPERSONATION,
+        CategoryCode.HEALTH_CHECK,
+        CategoryCode.OTHER,
+    ]
+    assert partial.categories[-1].custom_label == "parcel collection"
+    assert set(partial.model_dump(mode="json")) == set(failure.model_dump(mode="json"))
