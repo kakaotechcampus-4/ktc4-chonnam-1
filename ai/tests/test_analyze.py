@@ -18,6 +18,20 @@ from ai.types import (
 )
 
 
+EXPECTED_ANALYSIS_KEYS = {
+    "analysis_status",
+    "categories",
+    "claimed_sender",
+    "claimed_purpose",
+    "requested_actions",
+    "persuasion_signals",
+}
+
+
+def assert_fixed_analysis_keys(result):
+    assert set(result.model_dump(mode="json")) == EXPECTED_ANALYSIS_KEYS
+
+
 def fake_client(*, parsed=None, refusal=None, side_effect=None):
     parse = AsyncMock(side_effect=side_effect)
     if side_effect is None:
@@ -66,6 +80,7 @@ async def test_blank_message_skips_api_and_returns_fallback():
     assert result.categories == []
     assert result.claimed_sender == EvidenceField()
     parse.assert_not_awaited()
+    assert_fixed_analysis_keys(result)
 
 
 @pytest.mark.asyncio
@@ -80,13 +95,15 @@ async def test_api_failure_returns_fixed_fallback():
 
 
 @pytest.mark.asyncio
-async def test_refusal_returns_fixed_fallback():
-    client, _ = fake_client(parsed=None, refusal="cannot process")
+@pytest.mark.parametrize("refusal", ["cannot process", None])
+async def test_refusal_or_missing_parse_returns_fixed_fallback(refusal):
+    client, _ = fake_client(parsed=None, refusal=refusal)
 
     result = await analyze_message("Confirm the notice.", client=client, model="test-model")
 
     assert result.analysis_status is AnalysisStatus.FALLBACK
     assert result.claimed_purpose == EvidenceField()
+    assert_fixed_analysis_keys(result)
 
 
 @pytest.mark.asyncio
@@ -122,6 +139,7 @@ async def test_uncited_fields_are_removed_but_valid_fields_survive():
     assert [item.code for item in result.persuasion_signals] == [
         PersuasionCode.AUTHORITY
     ]
+    assert_fixed_analysis_keys(result)
 
 
 @pytest.mark.asyncio
@@ -232,8 +250,14 @@ async def test_blank_evidence_is_removed_while_valid_siblings_survive(empty_evid
 
 @pytest.mark.asyncio
 async def test_delayed_response_times_out_and_returns_fallback(monkeypatch):
+    cancelled = asyncio.Event()
+
     async def delayed_parse(**_kwargs):
-        await asyncio.sleep(1)
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
 
     client, parse = fake_client(side_effect=delayed_parse)
     monkeypatch.setattr(analyze_module, "TIMEOUT_SECONDS", 0.01)
@@ -245,6 +269,8 @@ async def test_delayed_response_times_out_and_returns_fallback(monkeypatch):
 
     assert result.analysis_status is AnalysisStatus.FALLBACK
     parse.assert_awaited_once()
+    assert cancelled.is_set()
+    assert_fixed_analysis_keys(result)
 
 
 @pytest.mark.asyncio
@@ -270,6 +296,7 @@ async def test_malformed_or_schema_response_returns_fallback(error):
     result = await analyze_message("Confirm now.", client=client, model="test-model")
 
     assert result.analysis_status is AnalysisStatus.FALLBACK
+    assert_fixed_analysis_keys(result)
 
 
 @pytest.mark.asyncio
@@ -323,4 +350,5 @@ async def test_multiple_categories_and_other_round_trip_with_fixed_failure_shape
         CategoryCode.OTHER,
     ]
     assert partial.categories[-1].custom_label == "parcel collection"
-    assert set(partial.model_dump(mode="json")) == set(failure.model_dump(mode="json"))
+    assert_fixed_analysis_keys(partial)
+    assert_fixed_analysis_keys(failure)
