@@ -1,4 +1,5 @@
 import asyncio
+
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Request
 
@@ -13,6 +14,14 @@ app = FastAPI()
 # 현재는 콜백 기능 테스트를 위한 임시 인메모리 저장소.
 # 추후 PostgreSQL 또는 Redis 기반 작업 상태 관리로 변경.
 RUNNING_USERS: set[str] = set()
+
+# 콜백 URL의 정확한 유효 시간은 카카오 공식 문서에서도 표현이 엇갈린다
+# (개요에는 5분, 에러 표에는 1분이라고 나와 있어 아직 확정하지 않는다).
+# 정확한 값이 뭐든, 사용자를 무한정 기다리게 하지 않도록 보수적으로 안전
+# 마진을 둔 시간제한을 걸고, 넘으면 "판단 보류"에 준하는 안내라도 반드시
+# 보낸다 (docs/latency-budget.md: "예산 초과 시 거기까지의 결과로 응답한다.
+# 전체 실패로 만들지 않는다"와 같은 원칙).
+CALLBACK_DEADLINE_SECONDS = 45.0
 
 
 @app.post("/kakao/skill")
@@ -230,17 +239,34 @@ async def run_analysis_and_callback(
     """
     백그라운드에서 분석을 수행한 뒤
     카카오 callbackUrl로 최종 결과를 전송한다.
+
+    분석 → 콜백 전송 → 사용자 실행 상태 해제 순서를 반드시 지킨다.
+    콜백 전송이 끝나기 전에 RUNNING_USERS를 먼저 비우면, 콜백이
+    아직 도착하지 않은 상태에서 같은 사용자가 새 분석을 또 시작할 수 있다.
     """
 
     try:
         # -----------------------------------
-        # 1. 분석 수행
+        # 1. 분석 수행 (안전 마진을 둔 시간제한)
         # -----------------------------------
 
         try:
-            result = await run_analysis(
-                links,
-                message
+            result = await asyncio.wait_for(
+                run_analysis(links, message),
+                timeout=CALLBACK_DEADLINE_SECONDS
+            )
+
+        except asyncio.TimeoutError:
+            # 콜백 URL이 언제 만료될지 확실치 않으니, 늦더라도 빈손보다는
+            # "아직 진행 중"이라는 응답이라도 보낸다.
+            print(
+                f"[ANALYSIS TIMEOUT] "
+                f"user={user_id} links={links}"
+            )
+
+            result = kakao_response(
+                "분석이 예상보다 오래 걸리고 있어요. "
+                "잠시 후 다시 확인해주세요."
             )
 
         except Exception as e:
