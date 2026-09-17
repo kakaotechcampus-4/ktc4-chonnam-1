@@ -9,3 +9,19 @@ AI는 링크를 제외한 메시지에서 브랜드·주장 목적·요구 행�
 스캐너 실행과 결과의 공통 구조 변환은 백엔드가 담당한다. AI는 서버 모듈과 카카오 형식에 의존하지 않는다. 상세 JSON·함수 계약은 후속 확정 사항이다. Docker sandbox와 멀티모달 격리 분석은 프로토타입에서 제외한다.
 
 모델·검색 실패 시 확인된 근거를 보존하고 설명은 템플릿으로 폴백한다. 변경 시 tests·eval의 기준을 확인한다. 상위 지침과 다른 파트 문서는 후속 동기화가 필요하다.
+
+## 메시지 구조 분석
+
+백엔드는 URL을 제거하고 개인정보를 마스킹한 본문만 AI에 전달한다. AI는
+구조화된 분석 결과를 반환하며 링크 위험도 판정은 결정적 로직의 책임이다.
+
+```python
+from ai.llm import analyze_message
+
+result = await analyze_message(masked_text)
+payload = result.model_dump(mode="json")
+```
+
+실행 환경에는 `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL` 세 키가 필요하다.
+분석 결과의 근거는 입력 본문에서 확인된 문자열만 포함하며, 호출 실패나 빈
+입력에서는 동일한 JSON 구조의 `fallback` 결과를 반환한다.
