@@ -11,13 +11,10 @@ URLSCAN_RESULT_URL = "https://urlscan.io/api/v1/result"
 
 
 async def submit_url_scan(url: str) -> dict:
-    """
-    urlscan에 새로운 URL 검사를 요청한다.
-    성공하면 scan uuid 등이 포함된 JSON을 반환한다.
-    """
-
     if not URLSCAN_API_KEY:
-        raise RuntimeError("URLSCAN_API_KEY가 설정되어 있지 않습니다.")
+        raise RuntimeError(
+            "URLSCAN_API_KEY가 설정되어 있지 않습니다."
+        )
 
     headers = {
         "API-Key": URLSCAN_API_KEY,
@@ -26,7 +23,7 @@ async def submit_url_scan(url: str) -> dict:
 
     payload = {
         "url": url,
-        "visibility": "private"
+        "visibility": "public"
     }
 
     async with httpx.AsyncClient() as client:
@@ -37,10 +34,13 @@ async def submit_url_scan(url: str) -> dict:
             timeout=10.0
         )
 
+        print(f"[URLSCAN REQUEST] {payload}")
+        print(f"[URLSCAN STATUS] {response.status_code}")
+        print(f"[URLSCAN RESPONSE] {response.text}")
+
         response.raise_for_status()
 
         return response.json()
-
 
 async def get_url_scan_result(scan_id: str) -> dict | None:
     """
