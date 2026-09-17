@@ -20,6 +20,9 @@ async def kakao_skill(request: Request):
 
     links, message = split_message(utterance)
 
+    print(f"[KAKAO RAW] {utterance!r}")
+    print(f"[LINKS RAW] {links!r}")
+
     if not links:
         return kakao_response(
             "URL을 찾을 수 없습니다.\n"
