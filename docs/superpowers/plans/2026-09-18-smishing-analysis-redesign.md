@@ -2151,7 +2151,9 @@ def test_datasets_exist_and_are_labelled():
     benign = _load_jsonl("benign.jsonl")
 
     assert len(smishing) >= 20
-    assert len(benign) >= 20
+    # 현재 확보된 정상 알림은 5건뿐이다. 목표는 20~30건이며 그때 이 값을 올린다.
+    # n=5 로는 오탐률을 의미 있게 측정할 수 없다 — 그 한계를 README 에 적는다.
+    assert len(benign) >= 5
     assert all(row["label"] == "smishing" for row in smishing)
     assert all(row["label"] == "benign" for row in benign)
 
@@ -2331,6 +2333,15 @@ KB(`ai/src/ai/kb/case_examples/`)와 겹치지 않게 유지한다. 겹치면 �
 필드를 통째로 지우면 두 집합의 차이가 사라진다.
 
 측정 항목은 오탐률, 누락률, 추출 항목별 근거 정확도, 유사도 분포 겹침이다.
+
+## 현재 한계
+
+`benign.jsonl` 은 5건뿐이다. 목표는 20~30건이다. **n=5 로 측정한 오탐률은
+의미가 없다** — 한 건만 틀려도 20%p 가 움직인다. 정상 알림을 더 모아
+채우기 전까지 오탐 수치를 품질 근거로 인용하지 않는다.
+
+스미싱 쪽은 수백 건을 확보해 KB 와 평가셋으로 나눴다. 불균형이 크다는 점도
+측정 해석에 반영한다.
 ```
 
 - [ ] **Step 7: 테스트가 통과하는지 확인한다**
