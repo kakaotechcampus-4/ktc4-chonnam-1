@@ -248,6 +248,66 @@ def test_missing_observations_drops_observation_signals():
     assert verdict.final_state is FinalState.INCONCLUSIVE
 
 
+def test_short_message_evidence_is_rejected():
+    # "요" 처럼 1~3글자는 한국어 문자 거의 어디에나 있어 근거가 되지 못한다.
+    # 채택 신호가 그것뿐이면 판정이 오르면 안 된다.
+    short = signal("요", source=EvidenceSource.MESSAGE)
+
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.NOT_REGISTERED),
+        observations(),
+        [short],
+    )
+
+    assert verdict.accepted_signals == ()
+    assert verdict.final_state is not FinalState.SMISHING_SUSPECTED
+
+
+def test_message_evidence_at_minimum_length_is_still_accepted():
+    # 4글자 이상이고 본문에 실제로 있으면 여전히 채택된다 (회귀 방지).
+    good = signal("한진택배", source=EvidenceSource.MESSAGE)
+
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.NOT_REGISTERED),
+        observations(),
+        [good],
+    )
+
+    assert [item.evidence_ref for item in verdict.accepted_signals] == ["한진택배"]
+    assert verdict.final_state is FinalState.SMISHING_SUSPECTED
+
+
+def test_official_domain_with_observation_signal_is_overturned(load_observations):
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.OFFICIAL, carrier_name="한진택배"),
+        load_observations("form"),
+        [signal("form_inputs", source=EvidenceSource.OBSERVATION)],
+    )
+
+    assert verdict.final_state is FinalState.SMISHING_SUSPECTED
+    assert verdict.reason_code is ReasonCode.OFFICIAL_BUT_RISKY
+
+
+def test_official_domain_survives_message_only_signal():
+    # LLM 이 고른 메시지 근거만으로는 화이트리스트 일치를 뒤집지 못한다.
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.OFFICIAL, carrier_name="한진택배"),
+        observations(),
+        [signal("한진택배", source=EvidenceSource.MESSAGE)],
+    )
+
+    assert verdict.final_state is FinalState.OFFICIAL_DOMAIN
+    assert verdict.reason_code is ReasonCode.OFFICIAL_MATCH
+
+
 def test_carrier_name_is_carried_through():
     verdict = decide(
         TEXT,

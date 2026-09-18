@@ -29,6 +29,9 @@ TEMPLATES: dict[ReasonCode, str] = {
     ReasonCode.OFFICIAL_MATCH: "{carrier}의 공식 주소가 맞습니다.",
     ReasonCode.LOOKALIKE: "{carrier} 공식 주소와 비슷하지만 다른 주소입니다.",
     ReasonCode.NOT_IN_WHITELIST: "확인된 택배사 공식 주소 목록에 없는 주소입니다.",
+    ReasonCode.OFFICIAL_BUT_RISKY: (
+        "{carrier}의 공식 주소가 맞지만 페이지에서 위험 신호가 확인됐습니다."
+    ),
     ReasonCode.UNRESOLVED: "주소를 확인하지 못했습니다.",
 }
 

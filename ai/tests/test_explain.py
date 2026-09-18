@@ -41,6 +41,19 @@ def test_all_reason_codes_have_template():
         assert text and isinstance(text, str)
 
 
+def test_official_but_risky_has_no_key_error():
+    verdict = Verdict(
+        reason_code=ReasonCode.OFFICIAL_BUT_RISKY,
+        carrier_name="한진택배",
+        final_state=FinalState.SMISHING_SUSPECTED,
+    )
+
+    text = generate_explanation(verdict)
+
+    assert "한진택배" in text
+    assert "위험 신호" in text
+
+
 def test_template_covers_every_final_state():
     for state in FinalState:
         text = generate_explanation(Verdict(reason_code=ReasonCode.NO_URL, final_state=state))

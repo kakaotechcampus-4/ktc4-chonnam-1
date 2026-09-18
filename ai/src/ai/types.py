@@ -11,6 +11,7 @@ class ReasonCode(str, Enum):
     OFFICIAL_MATCH = "official_match"
     LOOKALIKE = "lookalike"
     NOT_IN_WHITELIST = "not_in_whitelist"
+    OFFICIAL_BUT_RISKY = "official_but_risky"
     UNRESOLVED = "unresolved"
 
 

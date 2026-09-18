@@ -21,6 +21,11 @@ from ai.types import (
 )
 
 
+# 한국어 문자에서 3글자 이하 부분문자열은 우연히 일치하므로 근거 구실을 못 한다.
+# (조사 "요", 마침표 "." 처럼 거의 모든 문자에 존재하는 1글자도 걸러진다.)
+MIN_MESSAGE_EVIDENCE_CHARS = 4
+
+
 def _accept_signals(
     masked_text: str,
     observations: Observations | None,
@@ -46,7 +51,7 @@ def _accept_signals(
         if not ref:
             continue
         if item.evidence_source is EvidenceSource.MESSAGE:
-            if ref in masked_text:
+            if len(ref) >= MIN_MESSAGE_EVIDENCE_CHARS and ref in masked_text:
                 accepted.append(item)
         elif ref in found_checks or ref in static_signals:
             accepted.append(item)
@@ -62,6 +67,9 @@ def decide(
 ) -> Verdict:
     """4상태와 그 근거를 반환합니다."""
     accepted = _accept_signals(masked_text, observations, risk_signals)
+    observation_signals = tuple(
+        item for item in accepted if item.evidence_source is EvidenceSource.OBSERVATION
+    )
 
     def build(final_state: FinalState, reason_code: ReasonCode) -> Verdict:
         return Verdict(
@@ -91,6 +99,11 @@ def decide(
 
     # 도메인 대조는 접속 없이도 되므로 수집 실패보다 먼저 본다.
     if domain_check.match is DomainMatch.OFFICIAL:
+        # 공식 도메인도 오픈 리다이렉트나 계정 탈취로 위험한 페이지를 띄울 수 있다.
+        # 격리 환경이 실제로 관측한 사실은 화이트리스트 일치보다 무겁다.
+        # 메시지 근거는 LLM 이 고른 문자열일 뿐이라 여기서 판정을 뒤집지 못한다.
+        if observation_signals:
+            return build(FinalState.SMISHING_SUSPECTED, ReasonCode.OFFICIAL_BUT_RISKY)
         return build(FinalState.OFFICIAL_DOMAIN, ReasonCode.OFFICIAL_MATCH)
 
     # 소진된 1회성 링크는 그 자체가 신호다. 검사가 전부 비어 있어도 안전이 아니다.
