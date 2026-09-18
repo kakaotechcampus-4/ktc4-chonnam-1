@@ -1,0 +1,19 @@
+{
+  "status": "failed",
+  "source": "stub",
+  "page_state": "unreachable",
+  "input_url": "https://dead.example/x",
+  "final_url": null,
+  "payload_type": "none",
+  "checks": {
+    "download_links": { "state": "unknown", "items": [] },
+    "form_inputs": { "state": "unknown", "items": [] },
+    "app_install_prompt": { "state": "unknown", "items": [] },
+    "permissions": { "state": "unknown", "items": [] },
+    "iocs": { "state": "unknown", "items": [] },
+    "remote_control_intent": { "state": "unknown", "items": [] }
+  },
+  "static_risk_signals": [],
+  "unchecked": [{ "check": "all", "reason": "연결 시간 초과" }],
+  "elapsed_ms": 30000
+}
