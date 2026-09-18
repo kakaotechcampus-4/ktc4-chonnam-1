@@ -461,7 +461,7 @@ git commit -m "feat: 난독화 문자 정규화 추가"
 
 **Interfaces:**
 - Consumes: Task 1 의 `CaseMatch`, `CaseSearchResult`, `AnalysisStatus`, `CategoryCode`. Task 2 의 `normalize()`
-- Produces: `search_cases(masked_text: str, *, cases_dir: Path | None = None, top_k: int = 3, min_similarity: float = 0.3) -> CaseSearchResult`, `load_cases(cases_dir: Path) -> list[Case]`, `Case` 데이터클래스
+- Produces: `search_cases(masked_text: str, *, cases_dir: Path = CASES_DIR, top_k: int = 3, min_similarity: float = 0.3) -> CaseSearchResult`, `load_cases(cases_dir: Path = CASES_DIR) -> list[Case]`, `Case` 데이터클래스, 모듈 상수 `CASES_DIR`
 
 - [ ] **Step 1: 실패하는 테스트를 작성한다**
 
@@ -533,9 +533,12 @@ def test_search_matches_obfuscated_variant(cases_dir):
 
 
 def test_search_ignores_draft_case(cases_dir):
+    # CE-9002(draft)와 문면이 거의 같은 질의다. 인덱싱됐다면 유사도 1.0으로
+    # 1위에 올라온다. 대신 curated인 CE-9001이 "확인부탁합니다" 어미를 공유해
+    # 0.58로 잡히는 것은 정상이다 — 검증 대상은 draft 제외뿐이다.
     result = search_cases("한진택배 확인부탁합니다", cases_dir=cases_dir)
 
-    assert result.matches == []
+    assert "CE-9002" not in [match.case_id for match in result.matches]
 
 
 def test_search_returns_fallback_for_blank_text(cases_dir):
@@ -2057,9 +2060,21 @@ def test_kb_has_curated_cases():
     assert len(load_cases(CASES_DIR)) >= 20
 
 
-def test_kb_normalized_field_matches_variants():
-    for case in load_cases(CASES_DIR):
-        assert case.normalized[0] == normalize(case.variants[0])
+def test_kb_stored_normalized_field_is_not_stale():
+    # Case.normalized 는 variants 에서 계산되므로 그것과 비교하면 동어반복이다.
+    # 검증 대상은 레코드에 **저장된** normalized 필드다. 사람이 variants 를 고치고
+    # normalized 를 안 고치면 KB 문서가 코드와 어긋나는데, 그걸 여기서 잡는다.
+    import yaml
+
+    for path in sorted(CASES_DIR.glob("CE-*.md")):
+        raw = path.read_text(encoding="utf-8")
+        match = re.match(r"\A---\r?\n(.*?)\r?\n---", raw, re.DOTALL)
+        if match is None:
+            continue
+        meta = yaml.safe_load(match.group(1))
+        if meta.get("status") != "curated":
+            continue
+        assert meta["normalized"] == normalize(meta["variants"][0]), path.name
 
 
 def test_kb_records_are_deduplicated():
