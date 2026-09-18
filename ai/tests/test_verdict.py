@@ -62,6 +62,7 @@ def signal(ref: str, source=EvidenceSource.OBSERVATION) -> RiskSignal:
         (DomainMatch.NOT_REGISTERED, PageState.RENDERED, FinalState.INCONCLUSIVE, ReasonCode.NOT_IN_WHITELIST),
         (DomainMatch.UNRESOLVED, PageState.RENDERED, FinalState.NOT_ANALYZABLE, ReasonCode.UNRESOLVED),
         (DomainMatch.OFFICIAL, PageState.CLOAKED_SUSPECT, FinalState.INCONCLUSIVE, ReasonCode.UNRESOLVED),
+        (DomainMatch.BRAND_MISMATCH, PageState.CLOAKED_SUSPECT, FinalState.SMISHING_SUSPECTED, ReasonCode.LOOKALIKE),
         (DomainMatch.NOT_REGISTERED, PageState.EXPIRED, FinalState.SMISHING_SUSPECTED, ReasonCode.NOT_IN_WHITELIST),
         (DomainMatch.NOT_REGISTERED, PageState.UNREACHABLE, FinalState.NOT_ANALYZABLE, ReasonCode.UNRESOLVED),
     ],
@@ -77,6 +78,54 @@ def test_state_table(match, page_state, expected_state, expected_reason):
 
     assert verdict.final_state is expected_state
     assert verdict.reason_code is expected_reason
+
+
+def test_failed_collection_is_not_analyzable_even_when_page_rendered():
+    # status=failed 항은 page_state 가 rendered 여도 걸려야 한다. 이 조합이 없으면
+    # decide() 의 `or failed` 가 어떤 테스트에도 닿지 않아 회귀 보호가 없다.
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.NOT_REGISTERED),
+        observations(status=ObservationStatus.FAILED, page_state=PageState.RENDERED),
+        [],
+    )
+
+    assert verdict.final_state is FinalState.NOT_ANALYZABLE
+    assert verdict.reason_code is ReasonCode.UNRESOLVED
+
+
+def test_cloaked_page_does_not_lend_its_observations_as_evidence(load_observations):
+    # 클로킹이면 관측은 미끼 페이지를 본 것이다. 그 신호가 accepted_signals 에 실려
+    # 나가면 Task 7 의 설명이 미끼 페이지를 근거로 서술하게 된다.
+    cloaked = load_observations("form").model_copy(
+        update={"page_state": PageState.CLOAKED_SUSPECT}
+    )
+
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.NOT_REGISTERED),
+        cloaked,
+        [signal("form_inputs")],
+    )
+
+    assert verdict.final_state is FinalState.INCONCLUSIVE
+    assert verdict.accepted_signals == ()
+
+
+def test_cloaked_page_keeps_message_evidence():
+    cloaked = observations(page_state=PageState.CLOAKED_SUSPECT)
+
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.NOT_REGISTERED),
+        cloaked,
+        [signal("한진택배", source=EvidenceSource.MESSAGE)],
+    )
+
+    assert [item.evidence_ref for item in verdict.accepted_signals] == ["한진택배"]
 
 
 def test_official_domain_survives_unreachable_page():
