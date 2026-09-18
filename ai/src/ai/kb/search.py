@@ -7,6 +7,7 @@
 import logging
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import yaml
@@ -81,17 +82,22 @@ def _parse_case(path: Path) -> Case | None:
     )
 
 
-def load_cases(cases_dir: Path = CASES_DIR) -> list[Case]:
-    """status가 curated인 레코드만 인덱싱합니다."""
+@lru_cache(maxsize=8)
+def load_cases(cases_dir: Path = CASES_DIR) -> tuple[Case, ...]:
+    """status가 curated인 레코드만 인덱싱합니다.
+
+    KB 296건을 요청마다 다시 파싱하면 0.15초가 든다. 프로세스 수명 동안
+    캐시한다. KB 를 고치면 프로세스를 다시 띄워야 반영된다.
+    """
     if not cases_dir.is_dir():
-        return []
+        return ()
 
     cases = []
     for path in sorted(cases_dir.glob("*.md")):
         case = _parse_case(path)
         if case is not None:
             cases.append(case)
-    return cases
+    return tuple(cases)
 
 
 def search_cases(

@@ -62,11 +62,33 @@ def test_datasets_exist_and_are_labelled():
     assert all(row["label"] == "benign" for row in benign)
 
 
+def _pii_findings(text: str) -> list[str]:
+    # 마스킹 대상 전부를 본다. 이 저장소는 public 이고 이것이 유일한 자동 방어다.
+    found = []
+    if RRN_RE.search(text):
+        found.append("주민번호")
+    if PHONE_RE.search(text):
+        found.append("휴대폰")
+    # 송장·운송장·주문번호. 공격자가 별표로 가린 가짜 번호는 \d 연속이 아니라 안 걸린다.
+    if re.search(r"\d{8,}", text):
+        found.append("8자리이상연속숫자")
+    # URL 쿼리스트링에 식별자가 실려 나간다.
+    if re.search(r"https?://\S+\?", text):
+        found.append("URL쿼리")
+    return found
+
+
 def test_datasets_carry_no_obvious_personal_data():
     for name in ("smishing.jsonl", "benign.jsonl"):
         for row in _load_jsonl(name):
-            assert not RRN_RE.search(row["text"]), name
-            assert not PHONE_RE.search(row["text"]), name
+            assert not _pii_findings(row["text"]), (name, row["text"][:40])
+
+
+def test_kb_records_carry_no_obvious_personal_data():
+    # KB 레코드도 커밋된다. 데이터셋만 검사하면 296개가 무방비로 남는다.
+    for case in load_cases(CASES_DIR):
+        for variant in case.variants:
+            assert not _pii_findings(variant), (case.case_id, variant[:40])
 
 
 def test_eval_dataset_is_disjoint_from_kb():
