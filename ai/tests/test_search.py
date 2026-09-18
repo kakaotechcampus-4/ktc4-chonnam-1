@@ -63,9 +63,12 @@ def test_search_matches_obfuscated_variant(cases_dir):
 
 
 def test_search_ignores_draft_case(cases_dir):
+    # CE-9002(draft)와 문면이 거의 같은 질의다. 인덱싱됐다면 유사도 1.0으로
+    # 1위에 올라온다. 대신 curated인 CE-9001이 "확인부탁합니다" 어미를 공유해
+    # 0.58로 잡히는 것은 정상이다 — 검증 대상은 draft 제외뿐이다.
     result = search_cases("한진택배 확인부탁합니다", cases_dir=cases_dir)
 
-    assert result.matches == []
+    assert "CE-9002" not in [match.case_id for match in result.matches]
 
 
 def test_search_returns_fallback_for_blank_text(cases_dir):
