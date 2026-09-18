@@ -76,6 +76,7 @@ from ai.types import (
     Observations,
     ObservationStatus,
     PageState,
+    ReasonCode,
     RiskSignal,
     RiskSignalCode,
     SignalProposal,
@@ -2062,11 +2063,13 @@ def test_kb_normalized_field_matches_variants():
 
 
 def test_kb_records_are_deduplicated():
-    seen = set()
+    # 한 레코드 안에서는 여러 변종이 같은 정규화 결과를 갖는 것이 정상입니다.
+    # 금지되는 것은 서로 다른 레코드가 같은 변종을 나눠 갖는 것입니다.
+    owner: dict[str, str] = {}
     for case in load_cases(CASES_DIR):
-        for value in case.normalized:
-            assert value not in seen, f"중복 변종: {case.case_id}"
-            seen.add(value)
+        for value in set(case.normalized):
+            assert value not in owner, f"{case.case_id}와 {owner[value]}가 같은 변종"
+            owner[value] = case.case_id
 
 
 def test_datasets_exist_and_are_labelled():
@@ -2759,8 +2762,11 @@ Expected: PASS
 
 - [ ] **Step 10: 문서에 남은 모순이 없는지 확인한다**
 
-Run: `grep -rn "격리 분석을 호출하거나\|콜백에는 의존하지 않는다\|프로토타입에서 제외" docs/ ai/ CLAUDE.md --include=*.md`
+Run: `grep -rn "격리 분석을 호출하거나\|콜백에는 의존하지 않는다\|프로토타입에서 제외" docs/ ai/ CLAUDE.md --include=*.md | grep -v "docs/superpowers/"`
 Expected: 결과 없음. 나오면 그 문장을 고친다.
+
+`docs/superpowers/` 의 스펙·계획은 결정 당시를 기록한 문서이므로 제외한다.
+"기존 설계는 격리 환경을 프로토타입에서 제외했다" 같은 서술은 그대로 두는 것이 맞다.
 
 - [ ] **Step 11: 커밋**
 
