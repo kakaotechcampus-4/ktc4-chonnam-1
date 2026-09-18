@@ -520,12 +520,12 @@
     m1: {
       tag: "문자1 · 가짜 도메인",
       role: "직관성이 높은 케이스",
-      sms: "[Web발신]\nCJ대한통운 주소불일치로 배송이 보류중입니다.\n주소지 확인 요망\ncj-track.shop/d3f9a"
+      sms: "[Web발신]\n누리택배 주소불일치로 배송이 보류중입니다.\n주소지 확인 요망\nnuri-post.example/d3f9a"
     },
     m2: {
       tag: "문자2 · 공식 도메인",
       role: "핵심인데 놓치기 쉬운 케이스",
-      sms: "[Web발신]\nCJ대한통운 택배 배송 예정 안내입니다.\n배송 조회\ncjlogistics.com/tr/d3f9a"
+      sms: "[Web발신]\n누리택배 택배 배송 예정 안내입니다.\n배송 조회\nnuri-delivery.example/tr/d3f9a"
     },
     m3: {
       tag: "문자3 · 주소 없음",
@@ -544,14 +544,14 @@
     m1: {
       danger: true,
       title: "공식 주소와 다릅니다",
-      text: "보내주신 주소는 CJ대한통운의 공식 주소 목록에 없습니다.\n주소를 누르지 마시고, 배송 조회는 공식 앱에서 직접 확인하세요.",
-      limit: "확인한 범위: 주소 1건. 발신번호와 첨부는 확인하지 못했습니다.",
+      text: "보내주신 주소는 누리택배의 공식 홈페이지 주소에 없습니다.\n주소를 누르지 마시고, 배송 조회는 공식 앱에서 직접 확인하세요.",
+      limit: "확인한 범위: 주소 1개. 보낸 번호와 첨부는 확인하지 못했습니다.",
       report: true
     },
     m2: {
       title: "확인한 범위에서는 다른 점을 찾지 못했습니다",
-      text: "보내주신 주소는 CJ대한통운의 공식 주소 목록과 일치했습니다.\n\n다만 이것은 안전하다는 뜻이 아닙니다. 저희가 확인한 것은 주소 1건뿐이고, 발신번호와 문자 내용의 진위는 확인하지 못했습니다. 배송 조회는 공식 앱에서 직접 하시는 편이 안전합니다.",
-      limit: "확인한 범위: 주소 1건."
+      text: "보내주신 주소는 누리택배의 공식 홈페이지 주소과 일치했습니다.\n\n다만 이것은 안전하다는 뜻이 아닙니다. 저희가 확인한 것은 주소 1개뿐이고, 보낸 번호와 문자 내용의 진위는 확인하지 못했습니다. 배송 조회는 공식 앱에서 직접 하시는 편이 안전합니다.",
+      limit: "확인한 범위: 주소 1개."
     },
     m3: {
       title: "확인하지 못했습니다",
@@ -565,14 +565,14 @@
   var CAROUSEL = {
     m1: [
       { h: "판정 근거", p: "공식 도메인 목록에 없는 주소입니다.\n대조한 공식 주소: 4곳" },
-      { h: "확인한 것", p: "주소 1건\n리다이렉트 2홉 추적\n09:41 관측" },
-      { h: "확인 못한 것", p: "발신번호\n첨부파일\n문자 원본의 진위" },
+      { h: "확인한 것", p: "주소 1개\n리다이렉트 2홉 추적\n09:41 관측" },
+      { h: "확인 못한 것", p: "보낸 번호\n첨부파일\n문자 원본의 진위" },
       { h: "다음 행동", p: "주소를 누르지 않기\n택배사 공식 앱에서 직접 조회\n이미 눌렀다면 신고" }
     ],
     m2: [
       { h: "판정 근거", p: "주소가 공식 도메인 목록과 일치했습니다.\n일치는 안전의 근거가 아닙니다." },
-      { h: "확인한 것", p: "주소 1건\n리다이렉트 없음\n09:41 관측" },
-      { h: "확인 못한 것", p: "발신번호\n문자를 누가 보냈는지\n문자 내용의 진위" },
+      { h: "확인한 것", p: "주소 1개\n리다이렉트 없음\n09:41 관측" },
+      { h: "확인 못한 것", p: "보낸 번호\n문자를 누가 보냈는지\n문자 내용의 진위" },
       { h: "다음 행동", p: "문자 속 주소 대신\n택배사 공식 앱을 직접 열어 조회" }
     ],
     m3: [
@@ -587,13 +587,13 @@
     m1: {
       danger: true,
       title: "이 주소는 열지 마세요",
-      text: "이 주소는 CJ대한통운이 쓰는 주소가 아닙니다.\n\n하실 일\n1. 문자 속 주소를 누르지 마세요.\n2. 배송은 택배사 공식 앱에서 직접 조회하세요.\n3. 이미 눌렀다면 아래로 신고하세요.",
-      limit: "주소 1건만 확인했습니다.",
+      text: "이 주소는 누리택배이 쓰는 주소가 아닙니다.\n\n하실 일\n1. 문자 속 주소를 누르지 마세요.\n2. 배송은 택배사 공식 앱에서 직접 조회하세요.\n3. 이미 눌렀다면 아래로 신고하세요.",
+      limit: "주소 1개만 확인했습니다.",
       report: true
     },
     m2: {
       title: "배송 조회는 공식 앱에서 하세요",
-      text: "이 주소는 CJ대한통운이 실제로 쓰는 주소가 맞습니다.\n\n그래도 문자 속 주소를 누르는 대신, 택배사 공식 앱을 직접 열어 조회하세요. 주소가 맞아도 문자를 누가 보냈는지는 확인하지 못했습니다."
+      text: "이 주소는 누리택배이 실제로 쓰는 주소가 맞습니다.\n\n그래도 문자 속 주소를 누르는 대신, 택배사 공식 앱을 직접 열어 조회하세요. 주소가 맞아도 문자를 누가 보냈는지는 확인하지 못했습니다."
     },
     m3: {
       title: "확인할 주소가 없습니다",
@@ -602,27 +602,27 @@
     }
   };
 
-  var OFFICIAL = ["cjlogistics.com", "doortodoor.co.kr", "epost.go.kr", "ilogen.com"];
+  var OFFICIAL = ["nuri-delivery.example", "nuri-logistics.example", "nuri-mail.example", "nuri-courier.example"];
 
   var WEB = {
     m1: {
-      head: "공식 주소 목록에 없는 주소입니다",
-      url: "hxxp://cj-track[.]shop/d3f9a",
+      head: "공식 홈페이지 주소에 없는 주소입니다",
+      url: "hxxp://nuri-post[.]example/d3f9a",
       hops: [
-        { n: "1홉", u: "cj-track[.]shop", c: "301", t: "0.4s" },
-        { n: "2홉", u: "track-cj[.]top", c: "302", t: "0.6s" },
+        { n: "1홉", u: "nuri-post[.]example", c: "301", t: "0.4s" },
+        { n: "2홉", u: "redirect-nuri[.]example", c: "302", t: "0.6s" },
         { n: "3홉", u: "추적 중단 · 3홉 한도", c: "", t: "", stop: true }
       ],
       hit: null,
-      miss: ["발신번호", "첨부파일", "문자 원본 진위"],
+      miss: ["보낸 번호", "첨부파일", "문자 원본 진위"],
       report: true
     },
     m2: {
-      head: "공식 주소 목록과 일치했습니다",
-      url: "hxxps://cjlogistics[.]com/tr/d3f9a",
-      hops: [{ n: "1홉", u: "cjlogistics[.]com", c: "200", t: "0.3s" }],
-      hit: "cjlogistics.com",
-      miss: ["발신번호", "문자 발신 주체", "문자 원본 진위"],
+      head: "공식 홈페이지 주소과 일치했습니다",
+      url: "hxxps://nuri-delivery[.]example/tr/d3f9a",
+      hops: [{ n: "1홉", u: "nuri-delivery[.]example", c: "200", t: "0.3s" }],
+      hit: "nuri-delivery.example",
+      miss: ["보낸 번호", "문자 발신 주체", "문자 원본 진위"],
       report: false
     },
     m3: {
@@ -636,7 +636,7 @@
   };
 
   var PLANS = {
-    A: { name: "A안 · 챗봇 완결", step2: "근거 보기" },
+    A: { name: "A안 · 챗봇 완결", step2: "자세히 보기" },
     B: { name: "B안 · 챗봇 + 웹", step2: "자세히 보기" },
     C: { name: "C안 · 행동 지시", step2: null }
   };
@@ -695,7 +695,7 @@
 
     var btns = el("div", "btns");
     if (spec.report) {
-      var r = el("button", "report", "신고하기");
+      var r = el("button", "report", "신고·상담 받기");
       r.type = "button";
       r.addEventListener("click", function () { alert("KISA 보호나라 챗봇으로 넘어갑니다.\n(목업이라 실제로는 이동하지 않습니다)"); });
       btns.appendChild(r);
@@ -821,7 +821,7 @@
       "이 결과는 위에 적은 범위 안에서만 확인한 것입니다. 안전을 보장하지 않습니다."));
 
     if (d.report) {
-      var cta = el("button", "web-cta", "KISA 보호나라 챗봇으로 신고하기");
+      var cta = el("button", "web-cta", "KISA 보호나라 챗봇으로 신고·상담 받기");
       cta.type = "button";
       cta.addEventListener("click", function () { alert("KISA 보호나라 챗봇으로 넘어갑니다.\n(목업입니다)"); });
       main.appendChild(cta);
