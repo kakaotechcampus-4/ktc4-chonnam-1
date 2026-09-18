@@ -2892,7 +2892,7 @@ Expected: PASS
 
 - [ ] **Step 10: 문서에 남은 모순이 없는지 확인한다**
 
-Run: `grep -rn "격리 분석을 호출하거나\|콜백에는 의존하지 않는다\|프로토타입에서 제외\|4초 데드라인\|자체 sandbox\|프로토타입 평가에서 제외\|미확정이면" docs/ ai/ CLAUDE.md --include=*.md | grep -vE "docs/(superpowers|adr)/"`
+Run: `grep -rn "격리 분석을 호출하거나\|콜백에는 의존하지 않는다\|프로토타입에서 제외\|4초 데드라인\|자체 sandbox와\|프로토타입 평가에서 제외\|미확정이면\|후속 확정된" docs/ ai/ CLAUDE.md --include=*.md | grep -vE "docs/(superpowers|adr)/"`
 Expected: 결과 없음. 나오면 그 문장을 고친다.
 
 `docs/superpowers/` 와 `docs/adr/` 은 **결정 기록**이라 제외한다. ADR 의 Context 절은
