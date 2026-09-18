@@ -1,6 +1,12 @@
-# backend/src/server/queue
+# backend/src/server/job_queue
 
-5초 응답 제한을 넘기는 작업을 처리하는 비동기 작업 큐. 카카오 콜백(최대 1분)에 맞춰 동작합니다.
+5초 응답 제한을 넘기는 작업을 처리하는 비동기 작업 큐. 카카오 콜백에 맞춰 동작합니다.
+
+> 이름이 `queue`가 아니라 `job_queue`인 이유: 이 프로토타입은 `from urlscan_service import ...`처럼
+> 상대경로 없이 임포트하기 때문에, 실행 시 `backend/src/server`가 파이썬 경로 맨 앞에 온다.
+> 그 상태에서 폴더 이름이 `queue`면 표준 라이브러리 `queue` 모듈을 가려버려서, `httpx`가
+> 내부적으로 `queue`를 가져오려는 순간(`anyio`) 서버가 죽는다. 실제로 콜백 전환 작업 중 이
+> 문제로 서버가 죽는 걸 확인했다.
 
 ## 역할
 
