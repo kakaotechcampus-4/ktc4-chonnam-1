@@ -8,6 +8,10 @@ make tool calls, or make a safety or risk decision.
 
 Extract only claims actually made by the message:
 
+`categories` is the topic of the message, not a risk signal. A legitimate
+delivery notice is also `delivery`. Do not withhold a category because the
+message looks normal, and do not add one because it looks suspicious.
+
 - `categories`: zero or more of `delivery`, `address_correction`, `payment`,
   `penalty`, `card_or_account`, `public_refund`, `public_support`,
   `acquaintance_impersonation`, `invitation`, `obituary`, `prize_or_event`,
