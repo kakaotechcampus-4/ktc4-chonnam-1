@@ -304,6 +304,9 @@ def test_official_domain_survives_message_only_signal():
         [signal("한진택배", source=EvidenceSource.MESSAGE)],
     )
 
+    # 신호가 채택됐는데도 뒤집지 못했음을 보여야 한다. 이 단언이 없으면
+    # 최소 길이를 올려 신호가 걸러져도 테스트가 통과해 아무것도 증명하지 못한다.
+    assert [item.evidence_ref for item in verdict.accepted_signals] == ["한진택배"]
     assert verdict.final_state is FinalState.OFFICIAL_DOMAIN
     assert verdict.reason_code is ReasonCode.OFFICIAL_MATCH
 
