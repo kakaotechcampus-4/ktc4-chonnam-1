@@ -461,7 +461,7 @@ git commit -m "feat: 난독화 문자 정규화 추가"
 
 **Interfaces:**
 - Consumes: Task 1 의 `CaseMatch`, `CaseSearchResult`, `AnalysisStatus`, `CategoryCode`. Task 2 의 `normalize()`
-- Produces: `search_cases(masked_text: str, *, cases_dir: Path = CASES_DIR, top_k: int = 3, min_similarity: float = 0.3) -> CaseSearchResult`, `load_cases(cases_dir: Path = CASES_DIR) -> list[Case]`, `Case` 데이터클래스, 모듈 상수 `CASES_DIR`
+- Produces: `search_cases(masked_text: str, *, cases_dir: Path = CASES_DIR, top_k: int = 3, min_similarity: float = 0.3) -> CaseSearchResult`, `load_cases(cases_dir: Path = CASES_DIR) -> tuple[Case, ...]` (lru_cache), `Case` 데이터클래스, 모듈 상수 `CASES_DIR`
 
 - [ ] **Step 1: 실패하는 테스트를 작성한다**
 
@@ -608,6 +608,7 @@ python -m pip install -e "./ai[test]"
 import logging
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import yaml
@@ -682,17 +683,22 @@ def _parse_case(path: Path) -> Case | None:
     )
 
 
-def load_cases(cases_dir: Path = CASES_DIR) -> list[Case]:
-    """status가 curated인 레코드만 인덱싱합니다."""
+@lru_cache(maxsize=8)
+def load_cases(cases_dir: Path = CASES_DIR) -> tuple[Case, ...]:
+    """status가 curated인 레코드만 인덱싱합니다.
+
+    KB 296건을 요청마다 다시 파싱하면 0.15초가 든다. 프로세스 수명 동안
+    캐시한다. KB 를 고치면 프로세스를 다시 띄워야 반영된다.
+    """
     if not cases_dir.is_dir():
-        return []
+        return ()
 
     cases = []
     for path in sorted(cases_dir.glob("*.md")):
         case = _parse_case(path)
         if case is not None:
             cases.append(case)
-    return cases
+    return tuple(cases)
 
 
 def search_cases(
@@ -2158,11 +2164,33 @@ def test_datasets_exist_and_are_labelled():
     assert all(row["label"] == "benign" for row in benign)
 
 
+def _pii_findings(text: str) -> list[str]:
+    # 마스킹 대상 전부를 본다. 이 저장소는 public 이고 이것이 유일한 자동 방어다.
+    found = []
+    if RRN_RE.search(text):
+        found.append("주민번호")
+    if PHONE_RE.search(text):
+        found.append("휴대폰")
+    # 송장·운송장·주문번호. 공격자가 별표로 가린 가짜 번호는 \d 연속이 아니라 안 걸린다.
+    if re.search(r"\d{8,}", text):
+        found.append("8자리이상연속숫자")
+    # URL 쿼리스트링에 식별자가 실려 나간다.
+    if re.search(r"https?://\S+\?", text):
+        found.append("URL쿼리")
+    return found
+
+
 def test_datasets_carry_no_obvious_personal_data():
     for name in ("smishing.jsonl", "benign.jsonl"):
         for row in _load_jsonl(name):
-            assert not RRN_RE.search(row["text"]), name
-            assert not PHONE_RE.search(row["text"]), name
+            assert not _pii_findings(row["text"]), (name, row["text"][:40])
+
+
+def test_kb_records_carry_no_obvious_personal_data():
+    # KB 레코드도 커밋된다. 데이터셋만 검사하면 296개가 무방비로 남는다.
+    for case in load_cases(CASES_DIR):
+        for variant in case.variants:
+            assert not _pii_findings(variant), (case.case_id, variant[:40])
 
 
 def test_eval_dataset_is_disjoint_from_kb():
@@ -2194,6 +2222,7 @@ Expected: FAIL — `assert 0 >= 20`
 """수집 문자 → KB 레코드 + 평가 데이터셋. 일회용."""
 
 import json
+import random
 import sys
 from pathlib import Path
 
@@ -2214,7 +2243,7 @@ reviewer: {reviewer}
 normalized: "{normalized}"
 variants:
 {variant_lines}
-categories: [delivery]
+categories: []
 claimed_brand: ""
 ---
 
@@ -2234,6 +2263,8 @@ def main() -> None:
         groups.setdefault(normalize(line), []).append(line)
 
     ordered = sorted(groups.items(), key=lambda item: -len(item[1]))
+    # 빈도순 그대로 자르면 KB 는 다변종, eval 은 단일변종만 남아 측정이 편향된다.
+    random.Random(0).shuffle(ordered)
     kb_groups = ordered[: int(len(ordered) * 0.7)]
     eval_groups = ordered[int(len(ordered) * 0.7) :]
 
@@ -2423,7 +2454,7 @@ git commit -m "feat: 수집 문자 KB 등재와 평가 데이터셋 추가"
 | 첫 응답 ("분석 중" + useCallback) | 1.0s | — |
 | urlscan ∥ 격리 서버 ∥ ① 추출 + ② 사례검색 | 30s | 확보한 근거로 판정 |
 | ① 메시지 추출 | 1.5s | 폴백 결과 |
-| ② 사례 검색 | 50ms | 미확인 |
+| ② 사례 검색 (KB 296건, 캐시 후) | 50ms | 미확인 |
 | 격리 서버 | 12s | 미확인 |
 | 공통 구조 변환 | 100ms | — |
 | ③a 위험 신호 제안 | 2.0s | 관측만으로 판정 |
