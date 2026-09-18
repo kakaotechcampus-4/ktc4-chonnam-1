@@ -91,3 +91,101 @@ def test_other_category_preserves_evidence_backed_custom_label():
         "custom_label": "parcel storage scam",
         "evidence": "Your parcel is held in storage.",
     }
+
+
+from ai.types import (
+    CheckResult,
+    CheckState,
+    DomainCheck,
+    DomainMatch,
+    EvidenceSource,
+    FinalState,
+    Observations,
+    ObservationStatus,
+    PageState,
+    ReasonCode,
+    RiskSignal,
+    RiskSignalCode,
+    SignalProposal,
+    Verdict,
+)
+
+
+def test_observations_ignores_unknown_keys():
+    obs = Observations.model_validate(
+        {
+            "status": "success",
+            "source": "stub",
+            "page_state": "rendered",
+            "checks": {"permissions": {"state": "found", "items": ["READ_SMS"]}},
+            "elapsed_ms": 9400,
+            "display": {"headline": "무시되어야 한다"},
+        }
+    )
+
+    assert obs.status is ObservationStatus.SUCCESS
+    assert obs.checks["permissions"].state is CheckState.FOUND
+    assert not hasattr(obs, "display")
+
+
+def test_observations_defaults_are_empty_not_absent():
+    obs = Observations.model_validate(
+        {"status": "failed", "source": "stub", "page_state": "unreachable"}
+    )
+
+    assert obs.checks == {}
+    assert obs.static_risk_signals == []
+    assert obs.unchecked == []
+    assert obs.input_url is None
+
+
+def test_check_result_requires_explicit_state():
+    with pytest.raises(ValidationError):
+        CheckResult.model_validate({"items": []})
+
+
+def test_risk_signal_rejects_unknown_fields():
+    with pytest.raises(ValidationError):
+        RiskSignal.model_validate(
+            {
+                "code": "install_prompt",
+                "evidence_source": "observation",
+                "evidence_ref": "download_links",
+                "confidence": 0.9,
+            }
+        )
+
+
+def test_signal_proposal_defaults_to_empty():
+    assert SignalProposal().signals == []
+
+
+def test_domain_check_ignores_unknown_keys():
+    check = DomainCheck.model_validate(
+        {"match": "official", "checked_domain": "cjlogistics.com", "raw_payload": {}}
+    )
+
+    assert check.match is DomainMatch.OFFICIAL
+
+
+def test_verdict_keeps_existing_construction():
+    verdict = Verdict(reason_code=ReasonCode.NO_URL)
+
+    assert verdict.final_state is None
+    assert verdict.accepted_signals == ()
+
+
+def test_verdict_carries_final_state_and_signals():
+    signal = RiskSignal(
+        code=RiskSignalCode.CREDENTIAL_REQUEST,
+        evidence_source=EvidenceSource.OBSERVATION,
+        evidence_ref="form_inputs",
+    )
+    verdict = Verdict(
+        reason_code=ReasonCode.LOOKALIKE,
+        final_state=FinalState.SMISHING_SUSPECTED,
+        accepted_signals=(signal,),
+    )
+
+    assert verdict.final_state is FinalState.SMISHING_SUSPECTED
+    assert verdict.accepted_signals[0].evidence_ref == "form_inputs"
