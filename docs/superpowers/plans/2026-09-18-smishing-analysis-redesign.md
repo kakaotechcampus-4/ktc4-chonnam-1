@@ -2358,6 +2358,7 @@ git commit -m "feat: 수집 문자 KB 등재와 평가 데이터셋 추가"
 - Modify: `docs/latency-budget.md`
 - Modify: `ai/README.md`
 - Modify: `ai/src/ai/pipeline/README.md`
+- Modify: `ai/src/ai/prompts/README.md`
 - Modify: `ai/eval/cases/TC-09.md`
 - Create: `ai/eval/cases/TC-11.md`, `TC-12.md`, `TC-13.md`
 - Create: `docs/integration-requests.md`
@@ -2693,6 +2694,19 @@ RAG 유사도, 스캐너 점수, 주제 분류는 판정 입력에서 제외한�
 
 장시간 작업은 백엔드가 처리·저장하고 콜백으로 전달한다. 콜백 실패 시 조회 폴백을
 쓴다. AI는 카카오 형식에 의존하지 않는다.
+```
+
+- [ ] **Step 6-1: `ai/src/ai/prompts/README.md` 의 표를 고친다**
+
+Task 6 이 `decide_investigation.md` 를 지우고 `signals.md` 를 추가했는데 이 표가 낡았다.
+표 전체를 아래로 교체:
+
+```markdown
+| 파일 | 용도 |
+|---|---|
+| v1/parse_classify.md | 브랜드·주장 목적·요구 행동 추출. `categories` 는 주제 분류이지 위험 신호가 아니다 |
+| v1/signals.md | 관측과 본문에서 위험 신호를 **근거와 함께 제안**. 최종 판정 권한 없음 |
+| v1/compare.md | 확정된 판정과 관측을 사람이 읽을 문장으로 설명. 판정을 바꾸지 않음 |
 ```
 
 - [ ] **Step 7: 평가 케이스를 갱신·추가한다**
