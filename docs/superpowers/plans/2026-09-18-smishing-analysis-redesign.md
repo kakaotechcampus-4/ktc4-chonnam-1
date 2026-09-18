@@ -2892,11 +2892,13 @@ Expected: PASS
 
 - [ ] **Step 10: 문서에 남은 모순이 없는지 확인한다**
 
-Run: `grep -rn "격리 분석을 호출하거나\|콜백에는 의존하지 않는다\|프로토타입에서 제외" docs/ ai/ CLAUDE.md --include=*.md | grep -v "docs/superpowers/"`
+Run: `grep -rn "격리 분석을 호출하거나\|콜백에는 의존하지 않는다\|프로토타입에서 제외" docs/ ai/ CLAUDE.md --include=*.md | grep -vE "docs/(superpowers|adr)/"`
 Expected: 결과 없음. 나오면 그 문장을 고친다.
 
-`docs/superpowers/` 의 스펙·계획은 결정 당시를 기록한 문서이므로 제외한다.
-"기존 설계는 격리 환경을 프로토타입에서 제외했다" 같은 서술은 그대로 두는 것이 맞다.
+`docs/superpowers/` 와 `docs/adr/` 은 **결정 기록**이라 제외한다. ADR 의 Context 절은
+결정 이전 상태를 과거형으로 적는 자리이고, 스펙·계획도 결정 당시를 남긴 문서다.
+"기존 설계는 격리 환경을 프로토타입에서 제외했다" 는 거기서 정상이다. 지우면
+왜 그 결정을 했는지가 사라진다. 현재를 서술하는 문서에만 이 검사를 적용한다.
 
 - [ ] **Step 11: 커밋**
 
