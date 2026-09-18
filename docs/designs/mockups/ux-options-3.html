@@ -1,0 +1,954 @@
+<title>스미싱 챗봇 3안 목업</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gothic+A1:wght@400;600;800&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<style>
+  :root {
+    --ground: #e8ecf1;
+    --ink: #1a2430;
+    --ink-soft: #5b6b7d;
+    --ink-faint: #8b9aab;
+    --line: #cdd6e0;
+    --panel: #ffffff;
+    --panel-2: #f3f6f9;
+    --chat-bg: #9db4c8;
+    --bubble: #ffffff;
+    --bubble-ink: #14202c;
+    --mine: #fbe64d;
+    --mine-ink: #2a2308;
+    --danger: #b3301f;
+    --danger-bg: #fbe9e6;
+    --caution: #8a6410;
+    --caution-bg: #fbf2dd;
+    --accent: #1b5e8c;
+    --accent-bg: #e3eef6;
+    --radius: 14px;
+    --sans: "Gothic A1", "Noto Sans KR", system-ui, sans-serif;
+    --body: "Noto Sans KR", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #131a22;
+      --ink: #e6edf4;
+      --ink-soft: #9fb0c1;
+      --ink-faint: #6d7f92;
+      --line: #2b3745;
+      --panel: #1b2430;
+      --panel-2: #222d3a;
+      --chat-bg: #26323e;
+      --bubble: #333f4d;
+      --bubble-ink: #eef3f8;
+      --mine: #e2cd3d;
+      --mine-ink: #241f05;
+      --danger: #ff9b8a;
+      --danger-bg: #3a2320;
+      --caution: #e8c476;
+      --caution-bg: #352c17;
+      --accent: #8dc4e8;
+      --accent-bg: #1c2e3b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #131a22;
+    --ink: #e6edf4;
+    --ink-soft: #9fb0c1;
+    --ink-faint: #6d7f92;
+    --line: #2b3745;
+    --panel: #1b2430;
+    --panel-2: #222d3a;
+    --chat-bg: #26323e;
+    --bubble: #333f4d;
+    --bubble-ink: #eef3f8;
+    --mine: #e2cd3d;
+    --mine-ink: #241f05;
+    --danger: #ff9b8a;
+    --danger-bg: #3a2320;
+    --caution: #e8c476;
+    --caution-bg: #352c17;
+    --accent: #8dc4e8;
+    --accent-bg: #1c2e3b;
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    -webkit-text-size-adjust: 100%;
+  }
+  * { box-sizing: border-box; }
+  button { font: inherit; color: inherit; }
+
+  /* ── 진행자 헤더 ─────────────────────────── */
+  .bar {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 20;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    padding-block: 10px 12px;
+    padding-inline: 16px;
+  }
+  .bar-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .brand {
+    font-family: var(--sans);
+    font-weight: 800;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+  }
+  .brand span { color: var(--ink-faint); font-weight: 600; }
+  .bar-note {
+    font-size: 11px;
+    color: var(--ink-faint);
+    font-family: var(--sans);
+  }
+  .picks { display: flex; flex-direction: column; gap: 8px; }
+  .pick-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pick-label {
+    font-family: var(--sans);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    color: var(--ink-faint);
+    min-width: 34px;
+  }
+  .seg { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg button {
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--ink-soft);
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-family: var(--sans);
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .seg button[aria-pressed="true"] {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--ground);
+  }
+  .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ── 채팅 화면 ─────────────────────────── */
+  .stage {
+    background: var(--chat-bg);
+    min-height: 62vh;
+    padding-block: 18px 28px;
+    padding-inline: 16px;
+  }
+  .thread {
+    max-width: 420px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .row { display: flex; }
+  .row.me { justify-content: flex-end; }
+
+  .bot-wrap { display: flex; gap: 8px; max-width: 92%; }
+  .ava {
+    flex: 0 0 30px;
+    height: 30px;
+    border-radius: 9px;
+    background: var(--panel);
+    display: grid;
+    place-items: center;
+    font-size: 15px;
+  }
+  .said { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .who { font-size: 11px; color: rgba(0,0,0,.55); font-family: var(--sans); font-weight: 600; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .who { color: var(--ink-faint); } }
+  :root[data-theme="dark"] .who { color: var(--ink-faint); }
+
+  .bubble {
+    background: var(--bubble);
+    color: var(--bubble-ink);
+    border-radius: 4px 14px 14px 14px;
+    padding: 10px 13px;
+    font-size: 14px;
+    line-height: 1.62;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .bubble.mine {
+    background: var(--mine);
+    color: var(--mine-ink);
+    border-radius: 14px 4px 14px 14px;
+    max-width: 88%;
+  }
+
+  /* 카카오 textCard */
+  .card {
+    background: var(--bubble);
+    color: var(--bubble-ink);
+    border-radius: 4px 14px 14px 14px;
+    overflow: hidden;
+    width: 100%;
+    max-width: 330px;
+  }
+  .card-body { padding: 15px 15px 14px; }
+  .card-title {
+    font-family: var(--sans);
+    font-weight: 800;
+    font-size: 15.5px;
+    line-height: 1.42;
+    margin: 0 0 9px;
+    text-wrap: balance;
+  }
+  .card-title.danger { color: var(--danger); }
+  .card-text { font-size: 13.5px; line-height: 1.68; white-space: pre-wrap; margin: 0; }
+  .limit {
+    margin-top: 11px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--ink-soft);
+  }
+  .aside {
+    margin-top: 11px;
+    background: var(--panel-2);
+    border-left: 3px solid var(--ink-faint);
+    padding: 9px 11px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .aside b {
+    display: block;
+    font-family: var(--sans);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    margin-bottom: 3px;
+  }
+  .url {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-size: 12.5px;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+    word-break: break-all;
+  }
+  .btns { display: flex; border-top: 1px solid var(--line); }
+  .btns button {
+    flex: 1;
+    border: 0;
+    border-left: 1px solid var(--line);
+    background: transparent;
+    padding: 13px 6px;
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 13.5px;
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .btns button:first-child { border-left: 0; }
+  .btns button:active { background: var(--panel-2); }
+  .btns button:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+  .btns button.report { color: var(--danger); }
+  .btns button.dead { color: var(--ink-faint); }
+
+  /* 근거 캐러셀 (A안) */
+  .carousel {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    scroll-snap-type: x mandatory;
+    max-width: 100%;
+  }
+  .slide {
+    flex: 0 0 236px;
+    scroll-snap-align: start;
+    background: var(--bubble);
+    color: var(--bubble-ink);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .slide h4 {
+    font-family: var(--sans);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--ink-faint);
+    margin: 0;
+  }
+  .slide p { margin: 0; font-size: 13px; line-height: 1.62; white-space: pre-wrap; }
+  .swipe-hint {
+    font-size: 11px;
+    color: rgba(0,0,0,.5);
+    font-family: var(--sans);
+    font-weight: 600;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .swipe-hint { color: var(--ink-faint); } }
+  :root[data-theme="dark"] .swipe-hint { color: var(--ink-faint); }
+
+  /* 웹 상세 (B안) */
+  .web {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: var(--ground);
+    overflow-y: auto;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+  .web-chrome {
+    position: sticky;
+    top: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--panel-2);
+    border-bottom: 1px solid var(--line);
+    padding: 10px 14px;
+    padding-top: calc(10px + env(safe-area-inset-top, 0px));
+  }
+  .web-chrome button {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-family: var(--sans);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .web-chrome code {
+    font-size: 11px;
+    color: var(--ink-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .web-main { max-width: 480px; margin: 0 auto; padding-inline: 16px; padding-block: 22px; }
+  .web-main h1 {
+    font-family: var(--sans);
+    font-size: 20px;
+    font-weight: 800;
+    line-height: 1.35;
+    margin: 0 0 4px;
+    text-wrap: balance;
+  }
+  .stamp { font-size: 11.5px; color: var(--ink-faint); margin: 0 0 20px; font-variant-numeric: tabular-nums; }
+  .sec { margin-bottom: 20px; }
+  .sec > h2 {
+    font-family: var(--sans);
+    font-size: 10.5px;
+    letter-spacing: 0.11em;
+    color: var(--ink-faint);
+    margin: 0 0 7px;
+  }
+  .hops { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .hop {
+    display: grid;
+    grid-template-columns: 34px 1fr auto auto;
+    gap: 9px;
+    align-items: baseline;
+    padding: 9px 11px;
+    border-top: 1px solid var(--line);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  .hop:first-child { border-top: 0; }
+  .hop b { font-family: var(--sans); font-size: 10.5px; color: var(--ink-faint); font-weight: 700; }
+  .hop .h-url { font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+  .hop .h-code { color: var(--ink-soft); font-size: 11.5px; }
+  .hop.stop { background: var(--caution-bg); color: var(--caution); }
+  .doms { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+  .doms li {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12.5px;
+    padding: 7px 11px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-bottom: 0;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .doms li:first-child { border-radius: 10px 10px 0 0; }
+  .doms li:last-child { border-bottom: 1px solid var(--line); border-radius: 0 0 10px 10px; }
+  .doms em { font-style: normal; font-family: var(--sans); font-size: 10.5px; color: var(--ink-faint); }
+  .doms li.hit { background: var(--accent-bg); }
+  .doms li.hit em { color: var(--accent); font-weight: 700; }
+  .miss { display: flex; flex-wrap: wrap; gap: 6px; }
+  .miss span {
+    background: var(--caution-bg);
+    color: var(--caution);
+    border-radius: 6px;
+    padding: 4px 9px;
+    font-size: 12px;
+    font-family: var(--sans);
+    font-weight: 600;
+  }
+  .disclaim {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--danger);
+    border-radius: 0 10px 10px 0;
+    padding: 12px 14px;
+    font-size: 13px;
+    line-height: 1.65;
+  }
+  .web-cta {
+    display: block;
+    width: 100%;
+    margin-top: 18px;
+    border: 0;
+    border-radius: 11px;
+    background: var(--danger);
+    color: #fff;
+    padding: 14px;
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 14.5px;
+    cursor: pointer;
+  }
+  :root[data-theme="dark"] .web-cta,
+  :root:not([data-theme="light"]) .web-cta { color: #241010; }
+  @media (prefers-color-scheme: light) { :root .web-cta { color: #fff; } }
+
+  /* ── 진행자 패널 ─────────────────────────── */
+  .lab {
+    max-width: 460px;
+    margin: 0 auto;
+    padding-inline: 16px;
+    padding-block: 18px 32px;
+  }
+  .lab h3 {
+    font-family: var(--sans);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--ink-faint);
+    margin: 0 0 9px;
+  }
+  .log { display: flex; flex-direction: column; gap: 7px; }
+  .log div {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 12.5px;
+    padding: 9px 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+  }
+  .log .k { color: var(--ink-soft); }
+  .log .v { font-family: var(--sans); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .log .v.no { color: var(--ink-faint); }
+  .log .v.yes { color: var(--accent); }
+  .ask {
+    margin-top: 14px;
+    background: var(--accent-bg);
+    border-radius: 10px;
+    padding: 13px 15px;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  .ask b { font-family: var(--sans); display: block; margin-bottom: 5px; font-size: 11px; letter-spacing: 0.08em; color: var(--accent); }
+  .ask ol { margin: 0; padding-left: 18px; }
+  .ask li + li { margin-top: 5px; }
+  .counts { margin-top: 12px; font-size: 11.5px; color: var(--ink-faint); font-variant-numeric: tabular-nums; line-height: 1.7; }
+  .counts b { color: var(--ink-soft); font-weight: 700; }
+  .over { color: var(--danger); font-weight: 700; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<header class="bar">
+  <div class="bar-top">
+    <div class="brand">스미싱 챗봇 UX 목업 <span>· 3안 비교 실험</span></div>
+    <div class="bar-note">진행자 전용 · 피험자에게 설명하지 않음</div>
+  </div>
+  <div class="picks">
+    <div class="pick-row">
+      <span class="pick-label">안</span>
+      <div class="seg" id="segPlan"></div>
+    </div>
+    <div class="pick-row">
+      <span class="pick-label">문자</span>
+      <div class="seg" id="segMsg"></div>
+    </div>
+    <div class="pick-row">
+      <span class="pick-label">패널</span>
+      <div class="seg" id="segLab"></div>
+    </div>
+  </div>
+</header>
+
+<main class="stage">
+  <div class="thread" id="thread"></div>
+</main>
+
+<section class="lab" id="lab">
+  <h3>진행 중 기록</h3>
+  <div class="log" id="log"></div>
+  <div class="ask">
+    <b>물어볼 것 — 순서대로</b>
+    <ol>
+      <li>이 문자, 친구한테 뭐라고 전달하시겠어요?</li>
+      <li>이 결과를 믿으려면 뭘 더 알아야 할 것 같으세요?</li>
+    </ol>
+  </div>
+  <div class="counts" id="counts"></div>
+</section>
+
+<div class="web" id="web" hidden>
+  <div class="web-chrome">
+    <button type="button" id="webBack">← 카카오톡</button>
+    <code id="webUrl"></code>
+  </div>
+  <div class="web-main" id="webMain"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var MSGS = {
+    m1: {
+      tag: "문자1 · 가짜 도메인",
+      role: "직관성이 높은 케이스",
+      sms: "[Web발신]\n누리택배 주소불일치로 배송이 보류중입니다.\n주소지 확인 요망\nnuri-post.example/d3f9a"
+    },
+    m2: {
+      tag: "문자2 · 공식 도메인",
+      role: "핵심인데 놓치기 쉬운 케이스",
+      sms: "[Web발신]\n누리택배 택배 배송 예정 안내입니다.\n배송 조회\nnuri-delivery.example/tr/d3f9a"
+    },
+    m3: {
+      tag: "문자3 · 주소 없음",
+      role: "핵심인데 놓치기 쉬운 케이스",
+      sms: "[Web발신]\n고객님 부재중으로 물품을 보관중입니다.\n재배송 문의 010-4821-7702"
+    }
+  };
+
+  var INTRO = {
+    title: "택배 문자, 확인해 드립니다",
+    text: "받은 문자를 길게 눌러 전체 복사한 뒤 그대로 붙여넣어 주세요.\n주소가 포함된 부분까지 함께 보내주시면 확인할 수 있는 범위가 넓어집니다.\n\n문자 속 주소는 누르지 마세요."
+  };
+
+  // A안과 B안은 결과 카드 문구가 동일하다. 다르면 문구 차이가 매체 차이를 오염시킨다.
+  var SHARED = {
+    m1: {
+      danger: true,
+      title: "공식 주소와 다릅니다",
+      text: "보내주신 주소는 누리택배의 공식 홈페이지 주소에 없습니다.\n주소를 누르지 마시고, 배송 조회는 공식 앱에서 직접 확인하세요.",
+      limit: "확인한 범위: 주소 1개. 보낸 번호와 첨부는 확인하지 못했습니다.",
+      report: true
+    },
+    m2: {
+      title: "확인한 범위에서는 다른 점을 찾지 못했습니다",
+      text: "보내주신 주소는 누리택배의 공식 홈페이지 주소과 일치했습니다.\n\n다만 이것은 안전하다는 뜻이 아닙니다. 저희가 확인한 것은 주소 1개뿐이고, 보낸 번호와 문자 내용의 진위는 확인하지 못했습니다. 배송 조회는 공식 앱에서 직접 하시는 편이 안전합니다.",
+      limit: "확인한 범위: 주소 1개."
+    },
+    m3: {
+      title: "확인하지 못했습니다",
+      text: "보내주신 내용에서 확인할 수 있는 주소를 찾지 못했습니다.\n위험한지 아닌지 판단하지 않고 그대로 알려드립니다.",
+      aside: "택배 배송 안내 형식의 문자입니다.",
+      limit: "주소가 있는 부분을 함께 보내주시면 확인해 보겠습니다.",
+      retry: true
+    }
+  };
+
+  var CAROUSEL = {
+    m1: [
+      { h: "판정 근거", p: "공식 도메인 목록에 없는 주소입니다.\n대조한 공식 주소: 4곳" },
+      { h: "확인한 것", p: "주소 1개\n리다이렉트 2홉 추적\n09:41 관측" },
+      { h: "확인 못한 것", p: "보낸 번호\n첨부파일\n문자 원본의 진위" },
+      { h: "다음 행동", p: "주소를 누르지 않기\n택배사 공식 앱에서 직접 조회\n이미 눌렀다면 신고" }
+    ],
+    m2: [
+      { h: "판정 근거", p: "주소가 공식 도메인 목록과 일치했습니다.\n일치는 안전의 근거가 아닙니다." },
+      { h: "확인한 것", p: "주소 1개\n리다이렉트 없음\n09:41 관측" },
+      { h: "확인 못한 것", p: "보낸 번호\n문자를 누가 보냈는지\n문자 내용의 진위" },
+      { h: "다음 행동", p: "문자 속 주소 대신\n택배사 공식 앱을 직접 열어 조회" }
+    ],
+    m3: [
+      { h: "판정 근거", p: "관측할 대상이 없었습니다.\n그래서 판정하지 않았습니다." },
+      { h: "확인한 것", p: "없음\n문자에서 주소를 찾지 못함" },
+      { h: "확인 못한 것", p: "전화번호의 실제 소유자\n문자 내용의 진위\n(전화번호는 현재 대조 대상이 아닙니다)" },
+      { h: "다음 행동", p: "주소가 있는 부분을 함께 보내기\n또는 택배사 공식 앱에서 직접 조회" }
+    ]
+  };
+
+  var C_PLAN = {
+    m1: {
+      danger: true,
+      title: "이 주소는 열지 마세요",
+      text: "이 주소는 누리택배이 쓰는 주소가 아닙니다.\n\n하실 일\n1. 문자 속 주소를 누르지 마세요.\n2. 배송은 택배사 공식 앱에서 직접 조회하세요.\n3. 이미 눌렀다면 아래로 신고하세요.",
+      limit: "주소 1개만 확인했습니다.",
+      report: true
+    },
+    m2: {
+      title: "배송 조회는 공식 앱에서 하세요",
+      text: "이 주소는 누리택배이 실제로 쓰는 주소가 맞습니다.\n\n그래도 문자 속 주소를 누르는 대신, 택배사 공식 앱을 직접 열어 조회하세요. 주소가 맞아도 문자를 누가 보냈는지는 확인하지 못했습니다."
+    },
+    m3: {
+      title: "확인할 주소가 없습니다",
+      text: "보내주신 내용에는 확인할 수 있는 주소가 없습니다.\n\n하실 일\n1. 주소가 있는 부분을 함께 보내주세요.\n2. 급하면 택배사 공식 앱에서 직접 조회하세요.",
+      retry: true
+    }
+  };
+
+  var OFFICIAL = ["nuri-delivery.example", "nuri-logistics.example", "nuri-mail.example", "nuri-courier.example"];
+
+  var WEB = {
+    m1: {
+      head: "공식 홈페이지 주소에 없는 주소입니다",
+      url: "hxxp://nuri-post[.]example/d3f9a",
+      hops: [
+        { n: "1홉", u: "nuri-post[.]example", c: "301", t: "0.4s" },
+        { n: "2홉", u: "redirect-nuri[.]example", c: "302", t: "0.6s" },
+        { n: "3홉", u: "추적 중단 · 3홉 한도", c: "", t: "", stop: true }
+      ],
+      hit: null,
+      miss: ["보낸 번호", "첨부파일", "문자 원본 진위"],
+      report: true
+    },
+    m2: {
+      head: "공식 홈페이지 주소과 일치했습니다",
+      url: "hxxps://nuri-delivery[.]example/tr/d3f9a",
+      hops: [{ n: "1홉", u: "nuri-delivery[.]example", c: "200", t: "0.3s" }],
+      hit: "nuri-delivery.example",
+      miss: ["보낸 번호", "문자 발신 주체", "문자 원본 진위"],
+      report: false
+    },
+    m3: {
+      head: "관측할 대상이 없었습니다",
+      url: "(문자에서 주소를 찾지 못함)",
+      hops: [],
+      hit: null,
+      miss: ["전화번호 소유자", "문자 원본 진위", "주소 — 없음"],
+      report: false
+    }
+  };
+
+  var PLANS = {
+    A: { name: "A안 · 챗봇 완결", step2: "자세히 보기" },
+    B: { name: "B안 · 챗봇 + 웹", step2: "자세히 보기" },
+    C: { name: "C안 · 행동 지시", step2: null }
+  };
+
+  var state = { plan: "A", msg: "m1", lab: true, pressed: false, pressedAt: null, opened: false };
+
+  function el(tag, cls, txt) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (txt != null) n.textContent = txt;
+    return n;
+  }
+
+  function seg(host, items, current, onPick) {
+    host.innerHTML = "";
+    items.forEach(function (it) {
+      var b = el("button", null, it.label);
+      b.type = "button";
+      b.setAttribute("aria-pressed", String(it.key === current));
+      b.addEventListener("click", function () { onPick(it.key); });
+      host.appendChild(b);
+    });
+  }
+
+  function botSaid(node) {
+    var row = el("div", "row");
+    var wrap = el("div", "bot-wrap");
+    var ava = el("div", "ava", "🔎");
+    var said = el("div", "said");
+    said.appendChild(el("div", "who", "택배문자 확인 도우미"));
+    said.appendChild(node);
+    wrap.appendChild(ava);
+    wrap.appendChild(said);
+    row.appendChild(wrap);
+    return row;
+  }
+
+  function buildCard(spec, plan) {
+    var card = el("div", "card");
+    var body = el("div", "card-body");
+
+    var h = el("h3", "card-title" + (spec.danger ? " danger" : ""), (spec.danger ? "⚠ " : "") + spec.title);
+    body.appendChild(h);
+    body.appendChild(el("p", "card-text", spec.text));
+
+    if (spec.aside) {
+      var a = el("div", "aside");
+      var lab = el("b", null, "참고 · 판정 아님");
+      a.appendChild(lab);
+      a.appendChild(document.createTextNode(spec.aside));
+      body.appendChild(a);
+    }
+    // 한계 1줄은 결과 카드에 고정한다. 버튼 뒤로 넘기면 안 누른 사람에게 안전 보증이 된다.
+    if (spec.limit) body.appendChild(el("div", "limit", spec.limit));
+    card.appendChild(body);
+
+    var btns = el("div", "btns");
+    if (spec.report) {
+      var r = el("button", "report", "신고·상담 받기");
+      r.type = "button";
+      r.addEventListener("click", function () { alert("KISA 보호나라 챗봇으로 넘어갑니다.\n(목업이라 실제로는 이동하지 않습니다)"); });
+      btns.appendChild(r);
+    }
+    if (spec.retry) {
+      var t = el("button", "dead", "다시 보내기");
+      t.type = "button";
+      btns.appendChild(t);
+    }
+
+    var step2 = PLANS[plan].step2;
+    if (step2) {
+      var s = el("button", null, step2);
+      s.type = "button";
+      s.id = "step2";
+      s.addEventListener("click", function () { onStep2(plan); });
+      btns.appendChild(s);
+    } else if (!spec.report && !spec.retry) {
+      var home = el("button", "dead", "처음으로");
+      home.type = "button";
+      btns.appendChild(home);
+    } else if (spec.report || spec.retry) {
+      var home2 = el("button", "dead", "처음으로");
+      home2.type = "button";
+      btns.appendChild(home2);
+    }
+
+    if (btns.children.length) card.appendChild(btns);
+    return card;
+  }
+
+  function onStep2(plan) {
+    if (!state.pressed) {
+      state.pressed = true;
+      state.pressedAt = new Date();
+    }
+    if (plan === "A") {
+      state.opened = true;
+      render();
+      var c = document.querySelector(".carousel");
+      if (c) c.scrollIntoView({ block: "nearest" });
+    } else {
+      openWeb();
+    }
+    paintLog();
+  }
+
+  function buildCarousel(msg) {
+    var wrap = el("div", "said");
+    var hint = el("div", "swipe-hint", "← 옆으로 넘겨 보세요 (1/4)");
+    var car = el("div", "carousel");
+    CAROUSEL[msg].forEach(function (s, i) {
+      var sl = el("div", "slide");
+      sl.appendChild(el("h4", null, (i + 1) + " / 4 · " + s.h));
+      sl.appendChild(el("p", null, s.p));
+      car.appendChild(sl);
+    });
+    car.addEventListener("scroll", function () {
+      var i = Math.round(car.scrollLeft / 246) + 1;
+      hint.textContent = "← 옆으로 넘겨 보세요 (" + Math.min(i, 4) + "/4)";
+    });
+    wrap.appendChild(hint);
+    wrap.appendChild(car);
+    return wrap;
+  }
+
+  function openWeb() {
+    var m = state.msg;
+    var d = WEB[m];
+    document.getElementById("webUrl").textContent =
+      "check.example.kr/r/" + m + "-8f2a1c" + " · 1회용 링크";
+    var main = document.getElementById("webMain");
+    main.innerHTML = "";
+
+    main.appendChild(el("h1", null, d.head));
+    main.appendChild(el("p", "stamp", "2026-09-17 09:41 관측 기준 · 확인한 범위에 한합니다"));
+
+    var s1 = el("section", "sec");
+    s1.appendChild(el("h2", null, "관측한 주소"));
+    var u = el("div", "disclaim");
+    u.appendChild(el("div", "url", d.url));
+    u.appendChild(el("div", null, "누를 수 없도록 처리했습니다."));
+    s1.appendChild(u);
+    main.appendChild(s1);
+
+    if (d.hops.length) {
+      var s2 = el("section", "sec");
+      s2.appendChild(el("h2", null, "리다이렉트 경로 — 챗봇 카드에 담기지 않는 정보"));
+      var hs = el("div", "hops");
+      d.hops.forEach(function (h) {
+        var row = el("div", "hop" + (h.stop ? " stop" : ""));
+        row.appendChild(el("b", null, h.n));
+        row.appendChild(el("span", "h-url", h.u));
+        row.appendChild(el("span", "h-code", h.c));
+        row.appendChild(el("span", "h-code", h.t));
+        hs.appendChild(row);
+      });
+      s2.appendChild(hs);
+      main.appendChild(s2);
+    }
+
+    var s3 = el("section", "sec");
+    s3.appendChild(el("h2", null, "대조한 공식 도메인 목록 — 챗봇 카드에 담기지 않는 정보"));
+    var ul = el("ul", "doms");
+    OFFICIAL.forEach(function (o) {
+      var li = el("li", o === d.hit ? "hit" : null);
+      li.appendChild(el("span", null, o));
+      li.appendChild(el("em", null, o === d.hit ? "일치" : "불일치"));
+      ul.appendChild(li);
+    });
+    s3.appendChild(ul);
+    s3.appendChild(el("p", "stamp", "2026-09-10 갱신 · 출처: 각 사 공식 고지"));
+    main.appendChild(s3);
+
+    var s4 = el("section", "sec");
+    s4.appendChild(el("h2", null, "확인하지 못한 것"));
+    var miss = el("div", "miss");
+    d.miss.forEach(function (x) { miss.appendChild(el("span", null, x)); });
+    s4.appendChild(miss);
+    main.appendChild(s4);
+
+    main.appendChild(el("div", "disclaim",
+      "이 결과는 위에 적은 범위 안에서만 확인한 것입니다. 안전을 보장하지 않습니다."));
+
+    if (d.report) {
+      var cta = el("button", "web-cta", "KISA 보호나라 챗봇으로 신고·상담 받기");
+      cta.type = "button";
+      cta.addEventListener("click", function () { alert("KISA 보호나라 챗봇으로 넘어갑니다.\n(목업입니다)"); });
+      main.appendChild(cta);
+    }
+
+    document.getElementById("web").hidden = false;
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeWeb() {
+    document.getElementById("web").hidden = true;
+    document.body.style.overflow = "";
+  }
+
+  function spec() {
+    return state.plan === "C" ? C_PLAN[state.msg] : SHARED[state.msg];
+  }
+
+  function render() {
+    var t = document.getElementById("thread");
+    t.innerHTML = "";
+
+    var intro = el("div", "card");
+    var ib = el("div", "card-body");
+    ib.appendChild(el("h3", "card-title", INTRO.title));
+    ib.appendChild(el("p", "card-text", INTRO.text));
+    intro.appendChild(ib);
+    var ibt = el("div", "btns");
+    var howto = el("button", "dead", "확인 방법 보기");
+    howto.type = "button";
+    ibt.appendChild(howto);
+    intro.appendChild(ibt);
+    t.appendChild(botSaid(intro));
+
+    var mine = el("div", "row me");
+    mine.appendChild(el("div", "bubble mine", MSGS[state.msg].sms));
+    t.appendChild(mine);
+
+    t.appendChild(botSaid(buildCard(spec(), state.plan)));
+
+    if (state.plan === "A" && state.opened) {
+      var row = el("div", "row");
+      var wrap = el("div", "bot-wrap");
+      wrap.appendChild(el("div", "ava", "🔎"));
+      wrap.appendChild(buildCarousel(state.msg));
+      row.appendChild(wrap);
+      t.appendChild(row);
+    }
+  }
+
+  function paintLog() {
+    var s = spec();
+    var bodyLen = s.text.length + (s.limit ? s.limit.length : 0) + (s.aside ? s.aside.length : 0);
+    var log = document.getElementById("log");
+    log.innerHTML = "";
+
+    function row(k, v, cls) {
+      var d = el("div");
+      d.appendChild(el("span", "k", k));
+      d.appendChild(el("span", "v " + (cls || ""), v));
+      log.appendChild(d);
+    }
+    row("현재", PLANS[state.plan].name + " · " + MSGS[state.msg].tag);
+    row("케이스 성격", MSGS[state.msg].role);
+    if (PLANS[state.plan].step2) {
+      row("2단계 버튼을 스스로 눌렀나",
+        state.pressed ? "예 · " + state.pressedAt.toLocaleTimeString("ko-KR") : "아니오",
+        state.pressed ? "yes" : "no");
+    } else {
+      row("2단계 버튼", "없음 (C안)", "no");
+    }
+    if (state.msg === "m2") {
+      row("오독 측정 대상", "예 — 첫 노출 안만 집계", "yes");
+    } else {
+      row("오독 측정 대상", "아니오", "no");
+    }
+
+    var over = bodyLen > 400;
+    document.getElementById("counts").innerHTML =
+      "카드 본문 <b>" + bodyLen + "자</b> / textCard 한도 400자" +
+      (over ? " <span class='over'>· 한도 초과</span>" : "") +
+      "<br>제목 <b>" + s.title.length + "자</b> / 50자 · 캐러셀 장당 한도 230자";
+  }
+
+  function paintLab() {
+    document.getElementById("lab").hidden = !state.lab;
+  }
+
+  seg(document.getElementById("segPlan"),
+    [{ key: "A", label: "A안 · 챗봇 완결" }, { key: "B", label: "B안 · 웹" }, { key: "C", label: "C안 · 행동" }],
+    state.plan,
+    function (k) { state.plan = k; state.pressed = false; state.opened = false; closeWeb(); boot(); });
+
+  seg(document.getElementById("segMsg"),
+    [{ key: "m1", label: "문자1 가짜" }, { key: "m2", label: "문자2 공식" }, { key: "m3", label: "문자3 주소없음" }],
+    state.msg,
+    function (k) { state.msg = k; state.pressed = false; state.opened = false; closeWeb(); boot(); });
+
+  seg(document.getElementById("segLab"),
+    [{ key: "on", label: "기록 보기" }, { key: "off", label: "숨기기 (피험자용)" }],
+    "on",
+    function (k) { state.lab = k === "on"; paintLab(); refreshSegs(); });
+
+  function refreshSegs() {
+    seg(document.getElementById("segPlan"),
+      [{ key: "A", label: "A안 · 챗봇 완결" }, { key: "B", label: "B안 · 웹" }, { key: "C", label: "C안 · 행동" }],
+      state.plan,
+      function (k) { state.plan = k; state.pressed = false; state.opened = false; closeWeb(); boot(); });
+    seg(document.getElementById("segMsg"),
+      [{ key: "m1", label: "문자1 가짜" }, { key: "m2", label: "문자2 공식" }, { key: "m3", label: "문자3 주소없음" }],
+      state.msg,
+      function (k) { state.msg = k; state.pressed = false; state.opened = false; closeWeb(); boot(); });
+    seg(document.getElementById("segLab"),
+      [{ key: "on", label: "기록 보기" }, { key: "off", label: "숨기기 (피험자용)" }],
+      state.lab ? "on" : "off",
+      function (k) { state.lab = k === "on"; paintLab(); refreshSegs(); });
+  }
+
+  document.getElementById("webBack").addEventListener("click", closeWeb);
+
+  function boot() {
+    refreshSegs();
+    render();
+    paintLog();
+    paintLab();
+  }
+
+  boot();
+})();
+</script>

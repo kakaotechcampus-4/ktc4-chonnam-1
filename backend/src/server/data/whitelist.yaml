@@ -1,0 +1,23 @@
+# 공식 택배사 도메인. 판정의 근거이므로 backend 소유입니다.
+# 알림 발송용 별도 도메인·단축 도메인까지 모아야 합니다.
+# 수집은 택배사별 이슈로 쪼개세요.
+
+cj_logistics:
+  display_name: CJ대한통운
+  domains: []
+
+korea_post:
+  display_name: 우체국
+  domains: []
+
+hanjin:
+  display_name: 한진택배
+  domains: []
+
+lotte:
+  display_name: 롯데택배
+  domains: []
+
+logen:
+  display_name: 로젠택배
+  domains: []

@@ -1,0 +1,19 @@
+{
+  "status": "success",
+  "source": "stub",
+  "page_state": "rendered",
+  "input_url": "https://bit.example/9k2",
+  "final_url": "https://hanjin-delivery-check.example/verify",
+  "payload_type": "credential_harvesting_form",
+  "checks": {
+    "download_links": { "state": "checked_absent", "items": [] },
+    "form_inputs": { "state": "found", "items": ["name", "phone", "rrn"] },
+    "app_install_prompt": { "state": "checked_absent", "items": [] },
+    "permissions": { "state": "checked_absent", "items": [] },
+    "iocs": { "state": "checked_absent", "items": [] },
+    "remote_control_intent": { "state": "checked_absent", "items": [] }
+  },
+  "static_risk_signals": ["credential_form"],
+  "unchecked": [],
+  "elapsed_ms": 9400
+}
