@@ -1071,6 +1071,7 @@ def signal(ref: str, source=EvidenceSource.OBSERVATION) -> RiskSignal:
         (DomainMatch.NOT_REGISTERED, PageState.RENDERED, FinalState.INCONCLUSIVE, ReasonCode.NOT_IN_WHITELIST),
         (DomainMatch.UNRESOLVED, PageState.RENDERED, FinalState.NOT_ANALYZABLE, ReasonCode.UNRESOLVED),
         (DomainMatch.OFFICIAL, PageState.CLOAKED_SUSPECT, FinalState.INCONCLUSIVE, ReasonCode.UNRESOLVED),
+        (DomainMatch.BRAND_MISMATCH, PageState.CLOAKED_SUSPECT, FinalState.SMISHING_SUSPECTED, ReasonCode.LOOKALIKE),
         (DomainMatch.NOT_REGISTERED, PageState.EXPIRED, FinalState.SMISHING_SUSPECTED, ReasonCode.NOT_IN_WHITELIST),
         (DomainMatch.NOT_REGISTERED, PageState.UNREACHABLE, FinalState.NOT_ANALYZABLE, ReasonCode.UNRESOLVED),
     ],
@@ -1086,6 +1087,54 @@ def test_state_table(match, page_state, expected_state, expected_reason):
 
     assert verdict.final_state is expected_state
     assert verdict.reason_code is expected_reason
+
+
+def test_failed_collection_is_not_analyzable_even_when_page_rendered():
+    # status=failed 항은 page_state 가 rendered 여도 걸려야 한다. 이 조합이 없으면
+    # decide() 의 `or failed` 가 어떤 테스트에도 닿지 않아 회귀 보호가 없다.
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.NOT_REGISTERED),
+        observations(status=ObservationStatus.FAILED, page_state=PageState.RENDERED),
+        [],
+    )
+
+    assert verdict.final_state is FinalState.NOT_ANALYZABLE
+    assert verdict.reason_code is ReasonCode.UNRESOLVED
+
+
+def test_cloaked_page_does_not_lend_its_observations_as_evidence(load_observations):
+    # 클로킹이면 관측은 미끼 페이지를 본 것이다. 그 신호가 accepted_signals 에 실려
+    # 나가면 Task 7 의 설명이 미끼 페이지를 근거로 서술하게 된다.
+    cloaked = load_observations("form").model_copy(
+        update={"page_state": PageState.CLOAKED_SUSPECT}
+    )
+
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.NOT_REGISTERED),
+        cloaked,
+        [signal("form_inputs")],
+    )
+
+    assert verdict.final_state is FinalState.INCONCLUSIVE
+    assert verdict.accepted_signals == ()
+
+
+def test_cloaked_page_keeps_message_evidence():
+    cloaked = observations(page_state=PageState.CLOAKED_SUSPECT)
+
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.NOT_REGISTERED),
+        cloaked,
+        [signal("한진택배", source=EvidenceSource.MESSAGE)],
+    )
+
+    assert [item.evidence_ref for item in verdict.accepted_signals] == ["한진택배"]
 
 
 def test_official_domain_survives_unreachable_page():
@@ -1265,12 +1314,19 @@ def _accept_signals(
     observations: Observations | None,
     risk_signals: list[RiskSignal],
 ) -> tuple[RiskSignal, ...]:
-    found_checks = {
-        key
-        for key, check in (observations.checks if observations else {}).items()
-        if check.state is CheckState.FOUND
-    }
-    static_signals = set(observations.static_risk_signals) if observations else set()
+    # 클로킹 의심이면 관측은 미끼 페이지를 본 것이다. 거기서 나온 신호는 이번
+    # 링크의 근거가 아니므로 채택하지 않는다. 메시지 근거는 페이지와 무관하므로 남는다.
+    cloaked = observations is not None and observations.page_state is PageState.CLOAKED_SUSPECT
+
+    found_checks = set()
+    static_signals = set()
+    if observations is not None and not cloaked:
+        found_checks = {
+            key
+            for key, check in observations.checks.items()
+            if check.state is CheckState.FOUND
+        }
+        static_signals = set(observations.static_risk_signals)
 
     accepted = []
     for item in risk_signals:
@@ -1311,16 +1367,19 @@ def decide(
     if domain_check.match is DomainMatch.NO_URL:
         return build(FinalState.INPUT_REQUIRED, ReasonCode.NO_URL)
 
-    # 최종 URL이 유명 사이트로 튀었다. 그 도메인으로 판정하면 안 된다.
+    # 등록 브랜드 사칭은 원본 URL의 도메인 대조 결과다. 페이지가 무엇을 보여줬든
+    # 바뀌지 않으므로 클로킹보다 먼저 본다.
+    if domain_check.match is DomainMatch.BRAND_MISMATCH:
+        return build(FinalState.SMISHING_SUSPECTED, ReasonCode.LOOKALIKE)
+
+    # 최종 URL이 유명 사이트로 튀었다. 진짜 페이지를 못 본 것이므로 그 도메인으로
+    # 공식 확인을 주지 않는다.
     if page_state is PageState.CLOAKED_SUSPECT:
         return build(FinalState.INCONCLUSIVE, ReasonCode.UNRESOLVED)
 
     # 도메인 대조는 접속 없이도 되므로 수집 실패보다 먼저 본다.
     if domain_check.match is DomainMatch.OFFICIAL:
         return build(FinalState.OFFICIAL_DOMAIN, ReasonCode.OFFICIAL_MATCH)
-
-    if domain_check.match is DomainMatch.BRAND_MISMATCH:
-        return build(FinalState.SMISHING_SUSPECTED, ReasonCode.LOOKALIKE)
 
     # 소진된 1회성 링크는 그 자체가 신호다. 검사가 전부 비어 있어도 안전이 아니다.
     if page_state is PageState.EXPIRED:
