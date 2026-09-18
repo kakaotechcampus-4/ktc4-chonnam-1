@@ -480,14 +480,28 @@ def decide(
 | 조건 | 상태 | `ReasonCode` |
 |---|---|---|
 | 분석 대상 도메인이 검증 목록과 완전 일치 | 공식 도메인 확인 | `official_match` |
+| 공식 도메인 + **관측된** 위험 신호 | 스미싱 의심 | `official_but_risky` |
 | 등록된 브랜드 주장 + 도메인이 그 브랜드 공식 목록과 불일치 | 스미싱 의심 | `lookalike` |
-| 검증된 위험 신호 존재 | 스미싱 의심 | — |
-| `page_state == expired` | 스미싱 의심 | — |
-| `page_state == cloaked_suspect` | 판단 보류 (원본 도메인으로 대조). **단 등록 브랜드 사칭이 먼저다** | — |
+| 검증된 위험 신호 존재 | 스미싱 의심 | `risk_signal` |
+| `page_state == expired` | 스미싱 의심 | `expired_link` |
+| `page_state == cloaked_suspect` | 판단 보류 (원본 도메인으로 대조). **단 등록 브랜드 사칭이 먼저다** | `unresolved` |
 | 브랜드 미확인·미등록 + 비공식 도메인 + 관측 없음 | 판단 보류 | `not_in_whitelist` |
-| 근거 충돌 | 판단 보류 | — |
+| 근거 충돌 | 판단 보류 | — (미구현. 대응 분기가 없다) |
 | 접속 실패·타임아웃·필요한 분석 미수행 | 분석 불가 | `unresolved` |
 | 링크 없음 | 최종 상태 아님 (입력 보완 요청) | `no_url` |
+
+분기 평가 **순서**는 `ai/src/ai/verdict.py:decide()` 가 갖는다. 이 표는 조건과 코드의 대응만
+규정한다.
+
+`not_in_whitelist` 는 **대조를 끝냈고 목록에 없었으며 다른 근거도 없을 때만** 쓴다. 대조 자체가
+실패한 `unresolved` 나, 위험 신호·만료가 판정을 올린 경우에 이 코드를 붙이면 하지 않은 확인을
+주장하게 된다. 그래서 위 세 줄(`risk_signal`·`expired_link`·`official_but_risky`)이 따로 있다.
+
+`expired_link` 는 `ReasonCode` 인 동시에 `RiskSignalCode` 이기도 하다. 만료는 `PageState` 라
+신호 검증을 거치지 않으므로, `decide()` 가 같은 이름의 신호를 합성해 `accepted_signals` 에
+실어야 설명이 만료를 근거로 인용할 수 있다. 이 코드는 `decide()` 만 발행한다 — LLM 이
+제안하면 `verdict.SYNTHETIC_ONLY_CODES` 가 버린다. 실재하는 다른 근거에 만료 라벨을 붙여
+날조하는 것을 막기 위해서다.
 
 위험 신호로 인정하는 것: 설치 파일 유도, 자격증명 입력 폼, 위험 권한(접근성·SMS·설치),
 원격 제어 앱 intent, 대용량 패딩 페이로드, 상용 패커 감지.
