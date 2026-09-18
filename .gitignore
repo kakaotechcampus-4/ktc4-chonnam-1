@@ -72,3 +72,10 @@ target/
 *.sqlite3
 *.db
 .terraform/
+
+# ── 에이전트 도구 산출물 ────────────────────────────
+.codex/
+.playwright-mcp/
+
+# ── SDD 작업 공간 (git 추적 제외) ─────────────────
+.superpowers/

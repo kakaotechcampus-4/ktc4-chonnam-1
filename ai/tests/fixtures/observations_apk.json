@@ -1,0 +1,27 @@
+{
+  "status": "partial",
+  "source": "stub",
+  "page_state": "rendered",
+  "input_url": "https://cj-notice.example/app",
+  "final_url": "https://cj-notice.example/app",
+  "payload_type": "apk",
+  "checks": {
+    "download_links": { "state": "found", "items": ["https://cj-notice.example/files/track.apk"] },
+    "form_inputs": { "state": "checked_absent", "items": [] },
+    "app_install_prompt": { "state": "found", "items": ["전용 앱 설치"] },
+    "permissions": {
+      "state": "found",
+      "items": [
+        "android.permission.BIND_ACCESSIBILITY_SERVICE",
+        "android.permission.READ_SMS"
+      ]
+    },
+    "iocs": { "state": "unknown", "items": [] },
+    "remote_control_intent": { "state": "checked_absent", "items": [] }
+  },
+  "static_risk_signals": ["accessibility_abuse", "commercial_packer"],
+  "unchecked": [
+    { "check": "iocs", "reason": "상용 패커로 DEX 암호화되어 추출 불가" }
+  ],
+  "elapsed_ms": 11200
+}

@@ -17,7 +17,7 @@ FastAPI 스킬 서버. 카카오톡 채널 웹훅을 받아 분석 파이프라�
 | `src/server/tools/` | 외부 도구(격리 관측·도메인 조회 등) 실행 |
 | `src/server/clients/` | AI 파트 호출 |
 | `src/server/models/` | ORM 모델 |
-| `src/server/queue/` | 비동기 작업 큐 |
+| `src/server/job_queue/` | 비동기 작업 큐 (표준 라이브러리 `queue`와 이름 충돌 방지를 위해 `job_queue`로 명명) |
 | `tests/` | 테스트 케이스 10건 + 인젝션 픽스처 |
 
 ## 시작하기 전에
