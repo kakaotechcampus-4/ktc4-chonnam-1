@@ -11,7 +11,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from ai.llm.analyze import _create_client, _required_env
+from ai.llm._client import create_client, required_env
 from ai.types import (
     MessageAnalysis,
     Observations,
@@ -66,8 +66,8 @@ async def extract_signals(
     )
 
     try:
-        llm = client or _create_client()
-        model_name = model or _required_env("LLM_MODEL")
+        llm = client or create_client(TIMEOUT_SECONDS)
+        model_name = model or required_env("LLM_MODEL")
         response = await asyncio.wait_for(
             llm.chat.completions.parse(
                 model=model_name,

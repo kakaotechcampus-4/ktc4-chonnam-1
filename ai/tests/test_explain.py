@@ -1,8 +1,8 @@
 import asyncio
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock
 
-from ai.llm.explain import explain, generate_explanation
+from ai.llm.explain import explain_verdict, generate_explanation
 from ai.types import (
     AnalysisStatus,
     CaseSearchResult,
@@ -64,7 +64,7 @@ def test_llm_text_is_used_when_available(load_observations):
     client, _ = fake_text_client(content="한진택배 공식 주소와 다른 주소입니다.")
 
     text = asyncio.run(
-        explain(
+        explain_verdict(
             a_verdict(),
             load_observations("form"),
             CaseSearchResult(status=AnalysisStatus.FALLBACK, matches=[]),
@@ -80,7 +80,7 @@ def test_llm_failure_falls_back_to_template(load_observations):
     client, _ = fake_text_client(side_effect=RuntimeError("boom"))
 
     text = asyncio.run(
-        explain(
+        explain_verdict(
             a_verdict(),
             load_observations("form"),
             CaseSearchResult(status=AnalysisStatus.FALLBACK, matches=[]),
@@ -96,7 +96,7 @@ def test_llm_refusal_falls_back_to_template(load_observations):
     client, _ = fake_text_client(content=None, refusal="거부")
 
     text = asyncio.run(
-        explain(
+        explain_verdict(
             a_verdict(),
             load_observations("form"),
             CaseSearchResult(status=AnalysisStatus.FALLBACK, matches=[]),
@@ -112,7 +112,7 @@ def test_blank_llm_output_falls_back_to_template(load_observations):
     client, _ = fake_text_client(content="   ")
 
     text = asyncio.run(
-        explain(
+        explain_verdict(
             a_verdict(),
             load_observations("form"),
             CaseSearchResult(status=AnalysisStatus.FALLBACK, matches=[]),
@@ -122,3 +122,13 @@ def test_blank_llm_output_falls_back_to_template(load_observations):
     )
 
     assert text == generate_explanation(a_verdict())
+
+
+def test_package_exports_do_not_shadow_submodules():
+    # __init__.py 가 서브모듈과 같은 이름을 재export 하면 그 속성이 모듈에서
+    # 함수로 덮인다. `import ai.llm.explain as m` 이 함수를 주게 되어
+    # monkeypatch.setattr(module, ...) 패턴이 조용히 깨진다.
+    import ai.llm
+
+    for name in ("analyze", "explain", "signals"):
+        assert isinstance(getattr(ai.llm, name), ModuleType), f"{name} 이 가려졌다"

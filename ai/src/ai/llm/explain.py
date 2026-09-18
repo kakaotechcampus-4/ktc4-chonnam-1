@@ -11,7 +11,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from ai.llm.analyze import _create_client, _required_env
+from ai.llm._client import create_client, required_env
 from ai.types import (
     CaseSearchResult,
     FinalState,
@@ -32,6 +32,10 @@ TEMPLATES: dict[ReasonCode, str] = {
     ReasonCode.OFFICIAL_BUT_RISKY: (
         "{carrier}의 공식 주소가 맞지만 페이지에서 위험 신호가 확인됐습니다."
     ),
+    # 채택된 근거에 메시지 출처가 섞일 수 있으므로 "페이지에서"라고 쓰지 않는다.
+    # 관측이 아예 없어도 이 코드가 나온다.
+    ReasonCode.RISK_SIGNAL: "확인된 위험 신호가 있습니다.",
+    ReasonCode.EXPIRED_LINK: "이미 소진된 일회용 링크입니다.",
     ReasonCode.UNRESOLVED: "주소를 확인하지 못했습니다.",
 }
 
@@ -101,7 +105,7 @@ def _context(
     )
 
 
-async def explain(
+async def explain_verdict(
     verdict: Verdict,
     observations: Observations | None = None,
     cases: CaseSearchResult | None = None,
@@ -113,8 +117,8 @@ async def explain(
     fallback = generate_explanation(verdict)
 
     try:
-        llm = client or _create_client()
-        model_name = model or _required_env("LLM_MODEL")
+        llm = client or create_client(TIMEOUT_SECONDS)
+        model_name = model or required_env("LLM_MODEL")
         response = await asyncio.wait_for(
             llm.chat.completions.create(
                 model=model_name,

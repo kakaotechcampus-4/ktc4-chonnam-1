@@ -1,10 +1,10 @@
 import asyncio
 import logging
-import os
 from pathlib import Path
 
 from openai import AsyncOpenAI
 
+from ai.llm._client import create_client, required_env
 from ai.types import AnalysisStatus, EvidenceField, ExtractedMessage, MessageAnalysis
 
 
@@ -21,22 +21,6 @@ def fallback_analysis() -> MessageAnalysis:
         claimed_purpose=EvidenceField(),
         requested_actions=[],
         persuasion_signals=[],
-    )
-
-
-def _required_env(name: str) -> str:
-    value = os.getenv(name, "").strip()
-    if not value:
-        raise RuntimeError(f"{name} is not configured")
-    return value
-
-
-def _create_client() -> AsyncOpenAI:
-    return AsyncOpenAI(
-        api_key=_required_env("LLM_API_KEY"),
-        base_url=_required_env("LLM_BASE_URL"),
-        timeout=TIMEOUT_SECONDS,
-        max_retries=0,
     )
 
 
@@ -85,8 +69,8 @@ async def analyze_message(
         return fallback_analysis()
 
     try:
-        llm = client or _create_client()
-        model_name = model or _required_env("LLM_MODEL")
+        llm = client or create_client(TIMEOUT_SECONDS)
+        model_name = model or required_env("LLM_MODEL")
         response = await asyncio.wait_for(
             llm.chat.completions.parse(
                 model=model_name,

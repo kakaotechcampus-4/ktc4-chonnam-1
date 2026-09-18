@@ -7,11 +7,17 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ReasonCode(str, Enum):
+    """판정을 올린 **대표 이유** 하나. 근거 전부는 `Verdict.accepted_signals`."""
+
     NO_URL = "no_url"
     OFFICIAL_MATCH = "official_match"
     LOOKALIKE = "lookalike"
+    # 대조를 끝냈고 목록에 없었으며 다른 근거도 없을 때만 씁니다. 대조 자체가
+    # 실패한 UNRESOLVED 에 이 코드를 붙이면 하지 않은 확인을 주장하게 됩니다.
     NOT_IN_WHITELIST = "not_in_whitelist"
     OFFICIAL_BUT_RISKY = "official_but_risky"
+    RISK_SIGNAL = "risk_signal"
+    EXPIRED_LINK = "expired_link"
     UNRESOLVED = "unresolved"
 
 
@@ -193,6 +199,9 @@ class RiskSignalCode(str, Enum):
     OVERSIZED_PAYLOAD = "oversized_payload"
     PACKER_DETECTED = "packer_detected"
     BRAND_MISMATCH = "brand_mismatch"
+    # decide() 만 발행합니다. 프롬프트에도 싣지 않고, LLM 이 제안하면
+    # verdict.SYNTHETIC_ONLY_CODES 가 버립니다.
+    EXPIRED_LINK = "expired_link"
 
 
 class EvidenceSource(str, Enum):
@@ -201,7 +210,13 @@ class EvidenceSource(str, Enum):
 
 
 class RiskSignal(StrictModel):
-    """LLM이 제안한 위험 신호 후보. decide()의 검증을 통과해야 채택됩니다."""
+    """확인된 위험 근거.
+
+    대부분은 LLM 이 제안하고 decide() 의 검증을 통과한 것입니다. 일부는
+    decide() 가 결정적 관측에서 직접 발행합니다 (EXPIRED_LINK). 어느 쪽이든
+    `accepted_signals` 에 실린 것은 실재가 확인된 근거이므로 설명이 인용해도
+    됩니다.
+    """
 
     code: RiskSignalCode
     evidence_source: EvidenceSource

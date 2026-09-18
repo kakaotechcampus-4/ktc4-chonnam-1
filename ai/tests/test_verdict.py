@@ -16,7 +16,7 @@ from ai.types import (
     RiskSignal,
     RiskSignalCode,
 )
-from ai.verdict import decide
+from ai.verdict import EXPIRED_EVIDENCE_REF, decide
 
 TEXT = "한진택배 확인부탁합니다"
 
@@ -63,7 +63,7 @@ def signal(ref: str, source=EvidenceSource.OBSERVATION) -> RiskSignal:
         (DomainMatch.UNRESOLVED, PageState.RENDERED, FinalState.NOT_ANALYZABLE, ReasonCode.UNRESOLVED),
         (DomainMatch.OFFICIAL, PageState.CLOAKED_SUSPECT, FinalState.INCONCLUSIVE, ReasonCode.UNRESOLVED),
         (DomainMatch.BRAND_MISMATCH, PageState.CLOAKED_SUSPECT, FinalState.SMISHING_SUSPECTED, ReasonCode.LOOKALIKE),
-        (DomainMatch.NOT_REGISTERED, PageState.EXPIRED, FinalState.SMISHING_SUSPECTED, ReasonCode.NOT_IN_WHITELIST),
+        (DomainMatch.NOT_REGISTERED, PageState.EXPIRED, FinalState.SMISHING_SUSPECTED, ReasonCode.EXPIRED_LINK),
         (DomainMatch.NOT_REGISTERED, PageState.UNREACHABLE, FinalState.NOT_ANALYZABLE, ReasonCode.UNRESOLVED),
     ],
 )
@@ -309,6 +309,131 @@ def test_official_domain_survives_message_only_signal():
     assert [item.evidence_ref for item in verdict.accepted_signals] == ["한진택배"]
     assert verdict.final_state is FinalState.OFFICIAL_DOMAIN
     assert verdict.reason_code is ReasonCode.OFFICIAL_MATCH
+
+
+def test_whitelist_reason_only_when_whitelist_was_actually_checked():
+    # not_in_whitelist 는 "대조했고 목록에 없었다"는 주장이다. 대조 자체가
+    # 실패한 UNRESOLVED 에서 이 코드가 나가면 하지 않은 확인을 단언하게 된다.
+    #
+    # 신호가 있는 판과 없는 판을 모두 돈다. 신호를 항상 넘기면 accepted 분기가
+    # 먼저 걸려 not_in_whitelist 가 아예 나오지 않고, 단언이 한 번도 실행되지
+    # 않은 채로 통과한다.
+    seen = 0
+    for match in DomainMatch:
+        for page_state in PageState:
+            for status in ObservationStatus:
+                for signals in ([], [signal("한진택배", source=EvidenceSource.MESSAGE)]):
+                    verdict = decide(
+                        TEXT,
+                        extracted(),
+                        DomainCheck(match=match),
+                        observations(status=status, page_state=page_state),
+                        signals,
+                    )
+                    if verdict.reason_code is ReasonCode.NOT_IN_WHITELIST:
+                        seen += 1
+                        assert match is DomainMatch.NOT_REGISTERED
+
+    # 위 단언이 한 번도 돌지 않으면 이 테스트는 아무것도 증명하지 못한다.
+    assert seen > 0
+
+
+def test_unresolved_domain_with_signal_does_not_claim_whitelist(load_observations):
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.UNRESOLVED),
+        load_observations("form"),
+        [signal("form_inputs")],
+    )
+
+    assert verdict.final_state is FinalState.SMISHING_SUSPECTED
+    assert verdict.reason_code is ReasonCode.RISK_SIGNAL
+
+
+def test_expired_link_is_carried_as_its_own_evidence(load_observations):
+    # 만료가 판정을 올렸는데 accepted_signals 에 그 근거가 없으면, 설명은
+    # 인용할 것이 없는 채로 위험하다고만 말하게 된다.
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.NOT_REGISTERED),
+        load_observations("expired"),
+        [],
+    )
+
+    assert verdict.final_state is FinalState.SMISHING_SUSPECTED
+    assert verdict.reason_code is ReasonCode.EXPIRED_LINK
+    assert [item.code for item in verdict.accepted_signals] == [
+        RiskSignalCode.EXPIRED_LINK
+    ]
+    assert verdict.accepted_signals[0].evidence_ref == EXPIRED_EVIDENCE_REF
+
+
+def test_expired_link_keeps_verified_message_evidence(load_observations):
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.NOT_REGISTERED),
+        load_observations("expired"),
+        [signal("한진택배", source=EvidenceSource.MESSAGE)],
+    )
+
+    assert [item.evidence_ref for item in verdict.accepted_signals] == [
+        "한진택배",
+        EXPIRED_EVIDENCE_REF,
+    ]
+
+
+def test_llm_cannot_forge_an_expiry_signal(load_observations):
+    # form 픽스처에는 form_inputs 가 실제로 found 다. 코드만 expired_link 로
+    # 바꿔 달면 실재하는 근거에 만료 라벨이 붙는다. 그 경로를 막는다.
+    forged = RiskSignal(
+        code=RiskSignalCode.EXPIRED_LINK,
+        evidence_source=EvidenceSource.OBSERVATION,
+        evidence_ref="form_inputs",
+    )
+
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.NOT_REGISTERED),
+        load_observations("form"),
+        [forged],
+    )
+
+    assert verdict.accepted_signals == ()
+    assert verdict.final_state is FinalState.INCONCLUSIVE
+
+
+def test_official_domain_survives_an_expired_link():
+    # 정상 택배사의 소진된 1회성 조회 링크다. 합성 신호가 공식 도메인 분기까지
+    # 흘러가면 여기서 OFFICIAL_BUT_RISKY 로 뒤집혀 오탐이 된다.
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.OFFICIAL, carrier_name="한진택배"),
+        observations(page_state=PageState.EXPIRED),
+        [],
+    )
+
+    assert verdict.final_state is FinalState.OFFICIAL_DOMAIN
+    assert verdict.reason_code is ReasonCode.OFFICIAL_MATCH
+
+
+def test_not_run_collection_is_not_analyzable():
+    # 격리 서버를 아예 돌리지 않은 상태다. 실패와 마찬가지로 "확인하지 못했다"
+    # 이지 "문제없다"가 아니다.
+    verdict = decide(
+        TEXT,
+        extracted(),
+        DomainCheck(match=DomainMatch.NOT_REGISTERED),
+        observations(status=ObservationStatus.NOT_RUN, page_state=PageState.RENDERED),
+        [],
+    )
+
+    assert verdict.final_state is FinalState.NOT_ANALYZABLE
+    assert verdict.reason_code is ReasonCode.UNRESOLVED
 
 
 def test_carrier_name_is_carried_through():

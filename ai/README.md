@@ -32,14 +32,14 @@ payload = result.model_dump(mode="json")
 
 ```python
 from ai.kb.search import search_cases
-from ai.llm import analyze_message, explain, extract_signals
+from ai.llm import analyze_message, explain_verdict, extract_signals
 from ai.verdict import decide
 
 extracted = await analyze_message(masked_text)
 cases = search_cases(masked_text)
 signals = await extract_signals(masked_text, extracted, observations)
 verdict = decide(masked_text, extracted, domain_check, observations, signals)
-text = await explain(verdict, observations, cases)
+text = await explain_verdict(verdict, observations, cases)
 ```
 
 `decide()` 는 LLM도 네트워크도 없는 순수함수다. `domain_check` 와 `observations`

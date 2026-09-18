@@ -17,6 +17,7 @@ from ai.types import (
     PageState,
     ReasonCode,
     RiskSignal,
+    RiskSignalCode,
     Verdict,
 )
 
@@ -24,6 +25,28 @@ from ai.types import (
 # 한국어 문자에서 3글자 이하 부분문자열은 우연히 일치하므로 근거 구실을 못 한다.
 # (조사 "요", 마침표 "." 처럼 거의 모든 문자에 존재하는 1글자도 걸러진다.)
 MIN_MESSAGE_EVIDENCE_CHARS = 4
+
+# 만료 신호의 근거 참조. found 검사 키도 static_risk_signals 원소도 아니므로
+# LLM 이 같은 참조를 제안해도 _accept_signals 의 검증을 통과하지 못한다.
+EXPIRED_EVIDENCE_REF = "page_state:expired"
+
+# decide() 만 발행할 수 있는 코드. LLM 이 제안하면 실재하는 다른 근거에 이
+# 라벨을 붙여 만료를 날조할 수 있으므로 코드 단계에서 버린다.
+SYNTHETIC_ONLY_CODES = frozenset({RiskSignalCode.EXPIRED_LINK})
+
+
+def _expired_signal() -> RiskSignal:
+    """만료 사실을 근거 목록에 싣는다.
+
+    만료는 PageState 라서 _accept_signals 를 거치지 않는다. 합성하지 않으면
+    판정을 올린 사실이 accepted_signals 에 없어, 설명이 인용할 근거가 없는데
+    위험하다고만 말하게 된다.
+    """
+    return RiskSignal(
+        code=RiskSignalCode.EXPIRED_LINK,
+        evidence_source=EvidenceSource.OBSERVATION,
+        evidence_ref=EXPIRED_EVIDENCE_REF,
+    )
 
 
 def _accept_signals(
@@ -47,6 +70,8 @@ def _accept_signals(
 
     accepted = []
     for item in risk_signals:
+        if item.code in SYNTHETIC_ONLY_CODES:
+            continue
         ref = item.evidence_ref.strip()
         if not ref:
             continue
@@ -71,18 +96,27 @@ def decide(
         item for item in accepted if item.evidence_source is EvidenceSource.OBSERVATION
     )
 
-    def build(final_state: FinalState, reason_code: ReasonCode) -> Verdict:
+    def build(
+        final_state: FinalState,
+        reason_code: ReasonCode,
+        signals: tuple[RiskSignal, ...] | None = None,
+    ) -> Verdict:
         return Verdict(
             reason_code=reason_code,
             url=domain_check.checked_domain,
             official_domain=domain_check.official_domain,
             carrier_name=domain_check.carrier_name,
             final_state=final_state,
-            accepted_signals=accepted,
+            accepted_signals=accepted if signals is None else signals,
         )
 
     page_state = observations.page_state if observations else None
-    failed = observations is not None and observations.status is ObservationStatus.FAILED
+    # 수집을 못 했거나 아예 돌리지 않았거나. 둘 다 "확인하지 못했다"이지
+    # "문제없다"가 아니다.
+    unavailable = observations is not None and observations.status in (
+        ObservationStatus.FAILED,
+        ObservationStatus.NOT_RUN,
+    )
 
     if domain_check.match is DomainMatch.NO_URL:
         return build(FinalState.INPUT_REQUIRED, ReasonCode.NO_URL)
@@ -107,13 +141,21 @@ def decide(
         return build(FinalState.OFFICIAL_DOMAIN, ReasonCode.OFFICIAL_MATCH)
 
     # 소진된 1회성 링크는 그 자체가 신호다. 검사가 전부 비어 있어도 안전이 아니다.
+    # 메시지 근거보다 앞에 둔다 — 격리 환경이 직접 관측한 사실이 LLM 이 고른
+    # 문자열보다 무겁다. 합성 신호는 여기서만 더한다. 위의 공식 도메인 분기가
+    # 보는 observation_signals 에 섞이면 정상 택배사의 소진된 조회 링크가
+    # OFFICIAL_BUT_RISKY 로 뒤집힌다.
     if page_state is PageState.EXPIRED:
-        return build(FinalState.SMISHING_SUSPECTED, ReasonCode.NOT_IN_WHITELIST)
+        return build(
+            FinalState.SMISHING_SUSPECTED,
+            ReasonCode.EXPIRED_LINK,
+            accepted + (_expired_signal(),),
+        )
 
     if accepted:
-        return build(FinalState.SMISHING_SUSPECTED, ReasonCode.NOT_IN_WHITELIST)
+        return build(FinalState.SMISHING_SUSPECTED, ReasonCode.RISK_SIGNAL)
 
-    if page_state is PageState.UNREACHABLE or failed:
+    if page_state is PageState.UNREACHABLE or unavailable:
         return build(FinalState.NOT_ANALYZABLE, ReasonCode.UNRESOLVED)
 
     if domain_check.match is DomainMatch.UNRESOLVED:
