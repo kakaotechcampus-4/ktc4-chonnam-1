@@ -72,3 +72,7 @@ target/
 *.sqlite3
 *.db
 .terraform/
+
+# ── 에이전트 도구 산출물 ────────────────────────────
+.codex/
+.playwright-mcp/
