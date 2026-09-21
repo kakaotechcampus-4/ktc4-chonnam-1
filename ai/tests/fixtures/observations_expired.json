@@ -1,0 +1,19 @@
+{
+  "status": "success",
+  "source": "stub",
+  "page_state": "expired",
+  "input_url": "https://bit.example/e1x",
+  "final_url": "https://parcel-notice.example/expired",
+  "payload_type": "none",
+  "checks": {
+    "download_links": { "state": "checked_absent", "items": [] },
+    "form_inputs": { "state": "checked_absent", "items": [] },
+    "app_install_prompt": { "state": "checked_absent", "items": [] },
+    "permissions": { "state": "checked_absent", "items": [] },
+    "iocs": { "state": "checked_absent", "items": [] },
+    "remote_control_intent": { "state": "checked_absent", "items": [] }
+  },
+  "static_risk_signals": [],
+  "unchecked": [],
+  "elapsed_ms": 7300
+}
