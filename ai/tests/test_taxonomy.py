@@ -104,6 +104,11 @@ def test_brand_returns_unknown_for_unresolved_multiple_names():
     assert identify_brand("CJ대한통운과 한진택배 배송 안내") is Brand.UNKNOWN
 
 
+def test_brand_accepts_standalone_cu_without_matching_inside_english_word():
+    assert identify_brand("[CU]에서 알립니다") is Brand.CU
+    assert identify_brand("SECURE 배송 안내") is Brand.UNKNOWN
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -267,8 +272,10 @@ def test_independent_requests_use_original_order_instead_of_label_priority():
         "계좌 인출이 완료되었습니다",
         "앱 다운로드가 완료되었습니다",
         "앱 다운로드를 완료했습니다",
+        "앱 다운로드 처리가 완료되었습니다",
         "사진 보기가 완료되었습니다",
         "배송 조회가 완료되었습니다",
+        "배송 조회 작업이 완료되었습니다",
         "공지 확인이 완료되었습니다",
         "링크 클릭이 완료되었습니다",
         "택배가 문 앞에 배송되었습니다",
@@ -325,6 +332,14 @@ def test_completed_analysis_without_request_is_none():
     text = "택배 관련 안내입니다"
 
     assert select_message_doubt(message_candidates(text, analysis())) is MessageDoubt.NONE
+
+
+def test_completed_action_clause_preserves_following_independent_request():
+    text = "앱 다운로드 처리가 완료되었습니다. 주소 확인해주세요"
+    candidates = message_candidates(text, analysis())
+
+    assert select_message_doubt(candidates) is MessageDoubt.ADDRESS_CHECK
+    assert all(item.doubt is not MessageDoubt.APP_INSTALL for item in candidates)
 
 
 def test_normalized_match_restores_html_entity_source_span():
@@ -384,7 +399,9 @@ def test_separate_link_click_and_detail_keep_source_order():
     ("text", "expected"),
     [
         ("은행 카드로 구매한 상품을 환불해주세요", Topic.SHOPPING),
+        ("계좌로 결제한 주문을 환불해주세요", Topic.SHOPPING),
         ("택배 배송 조회와 주문 취소를 각각 확인하세요", Topic.UNKNOWN),
+        ("택배 배송 조회와 주문 취소를 확인하세요", Topic.UNKNOWN),
     ],
 )
 def test_topic_uses_bounded_request_context_for_overlaps(text, expected):

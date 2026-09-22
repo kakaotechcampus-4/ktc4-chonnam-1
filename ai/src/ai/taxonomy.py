@@ -47,6 +47,7 @@ _NORMALIZED_BRAND_ALIASES = {
     brand: tuple(normalize(alias) for alias in aliases)
     for brand, aliases in _BRAND_ALIASES.items()
 }
+_STANDALONE_CU_RE = re.compile(r"(?<![0-9a-z])cu(?![0-9a-z])", re.IGNORECASE)
 _NON_BRANDS = tuple(
     normalize(value)
     for value in (
@@ -63,11 +64,14 @@ _NON_BRANDS = tuple(
 
 def _brands_in(text: str) -> set[Brand]:
     normalized = normalize(text)
-    return {
+    brands = {
         brand
         for brand, aliases in _NORMALIZED_BRAND_ALIASES.items()
         if any(alias in normalized for alias in aliases)
     }
+    if _STANDALONE_CU_RE.search(text):
+        brands.add(Brand.CU)
+    return brands
 
 
 def identify_brand(text: str, extracted: MessageAnalysis | None = None) -> Brand:
@@ -101,14 +105,13 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text for term in terms)
 
 
-_BANK_CARD_SHOPPING_REQUEST_RE = re.compile(
-    r"은행카드로(?:구매|결제).*?(?:취소|환불)"
+_PAYMENT_INSTRUMENT_SHOPPING_REQUEST_RE = re.compile(
+    r"(?:은행카드|카드|계좌)로(?:구매|결제).*?(?:주문|상품|취소|환불)"
 )
 _INDEPENDENT_PARCEL_SHOPPING_RE = re.compile(
     r"(?:(?:택배|배송|운송)(?:상태)?(?:조회|확인)(?:와|과)"
     r"(?:주문|구매)?취소(?:를)?|"
     r"(?:주문|구매)?취소(?:와|과)(?:택배|배송|운송)(?:상태)?(?:조회|확인))"
-    r".*각각"
 )
 
 
@@ -157,7 +160,7 @@ def classify_topic(text: str, extracted: MessageAnalysis | None = None) -> Topic
     if Topic.PUBLIC in topics and topics <= {Topic.PUBLIC, Topic.FINANCE}:
         return Topic.PUBLIC
     shopping_context = {Topic.SHOPPING, Topic.PARCEL, Topic.GIFT}
-    if _BANK_CARD_SHOPPING_REQUEST_RE.search(normalized):
+    if _PAYMENT_INSTRUMENT_SHOPPING_REQUEST_RE.search(normalized):
         shopping_context.add(Topic.FINANCE)
     if cancel_or_refund and topics <= shopping_context:
         return Topic.SHOPPING
@@ -219,8 +222,7 @@ _REQUEST = (
     r"(?:부탁(?:드립니다|합니다)?|해?주세요|하세요|하십시오|으십시오|"
     r"하시길바랍니다|바랍니다)"
 )
-_NOT_COMPLETED = r"(?![이가을를]?완료)"
-_REQUEST_OR_INCOMPLETE_BARE_ACTION = rf"(?:{_REQUEST}|{_NOT_COMPLETED})"
+_OPTIONAL_REQUEST = rf"(?:{_REQUEST})?"
 _ACTION_RULES: tuple[tuple[MessageDoubt, re.Pattern[str]], ...] = (
     (
         MessageDoubt.DATA_INPUT,
@@ -234,7 +236,7 @@ _ACTION_RULES: tuple[tuple[MessageDoubt, re.Pattern[str]], ...] = (
     ),
     (
         MessageDoubt.APP_INSTALL,
-        re.compile(rf"앱(?:을)?(?:다운로드|설치){_NOT_COMPLETED}"),
+        re.compile(r"앱(?:을)?(?:다운로드|설치)"),
     ),
     (
         MessageDoubt.ADDRESS_EDIT,
@@ -250,22 +252,17 @@ _ACTION_RULES: tuple[tuple[MessageDoubt, re.Pattern[str]], ...] = (
     ),
     (
         MessageDoubt.PHOTO_VIEW,
-        re.compile(
-            rf"(?:클릭하여)?사진(?:보기|확인){_REQUEST_OR_INCOMPLETE_BARE_ACTION}"
-        ),
+        re.compile(rf"(?:클릭하여)?사진(?:보기|확인){_OPTIONAL_REQUEST}"),
     ),
     (
         MessageDoubt.PARCEL_LOOKUP,
-        re.compile(
-            rf"(?:택배|배송|운송)(?:상태)?(?:조회|확인)"
-            rf"{_REQUEST_OR_INCOMPLETE_BARE_ACTION}"
-        ),
+        re.compile(rf"(?:택배|배송|운송)(?:상태)?(?:조회|확인){_OPTIONAL_REQUEST}"),
     ),
     (
         MessageDoubt.DETAIL_VIEW,
         re.compile(
             rf"(?:클릭하여)?(?:상세내용|거래내역|교환내역|공지|안내|내용)(?:을)?"
-            rf"(?:확인|조회){_REQUEST_OR_INCOMPLETE_BARE_ACTION}"
+            rf"(?:확인|조회){_OPTIONAL_REQUEST}"
         ),
     ),
     (
@@ -294,8 +291,7 @@ _ACTION_RULES: tuple[tuple[MessageDoubt, re.Pattern[str]], ...] = (
         MessageDoubt.OPEN_LINK,
         re.compile(
             rf"(?:(?:아래)?(?:url|링크)(?:을|를)?(?:클릭|접속)"
-            rf"{_REQUEST_OR_INCOMPLETE_BARE_ACTION}|"
-            rf"클릭{_REQUEST_OR_INCOMPLETE_BARE_ACTION})"
+            rf"{_OPTIONAL_REQUEST}|클릭{_OPTIONAL_REQUEST})"
         ),
     ),
 )
@@ -309,6 +305,20 @@ def _make_candidate(
     return MessageCandidate(doubt=doubt, evidence=evidence, start=text.index(evidence))
 
 
+_CLAUSE_END_RE = re.compile(r"[.!?\n。！？]")
+_COMPLETION_TAIL_RE = re.compile(
+    r"^(?:(?:처리|작업)(?:[이가을를])?)?"
+    r"(?:(?:정상적으로|성공적으로|모두))?(?:[이가을를])?"
+    r"완료(?:$|되었|됐|했|됨)"
+)
+
+
+def _is_completion_notice(text: str, action_end: int) -> bool:
+    clause_end = _CLAUSE_END_RE.search(text, action_end)
+    tail_end = clause_end.start() if clause_end is not None else len(text)
+    return _COMPLETION_TAIL_RE.match(normalize(text[action_end:tail_end])) is not None
+
+
 def _find_action_candidates(text: str) -> list[MessageCandidate]:
     normalized, positions = _normalized_with_positions(text)
     candidates: list[MessageCandidate] = []
@@ -316,6 +326,8 @@ def _find_action_candidates(text: str) -> list[MessageCandidate]:
         for match in pattern.finditer(normalized):
             start = positions[match.start()].start
             end = positions[match.end() - 1].end
+            if _is_completion_notice(text, end):
+                continue
             evidence = text[start:end]
             if evidence not in text:
                 continue
