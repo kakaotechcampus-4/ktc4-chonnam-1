@@ -48,6 +48,10 @@ PAGE_SYSTEM_PROMPT = (
 
 _PROMPT_ATTRIBUTES = frozenset({"type", "name", "autocomplete", "aria-label"})
 _CLAUSE_SPLIT_RE = re.compile(r"[.!?\n。！？]")
+_QUOTED_TEXT_RE = re.compile(r'''‘[^’]*’|“[^”]*”|'[^']*'|"[^"]*"|「[^」]*」|『[^』]*』''')
+_CLAUSE_TOKEN_RE = re.compile(
+    rf"(?P<quote>{_QUOTED_TEXT_RE.pattern})|{_CLAUSE_SPLIT_RE.pattern}"
+)
 _APP_RE = re.compile(r"(?:앱|어플|app|application)", re.IGNORECASE)
 _INSTALL_RE = re.compile(r"(?:설치|다운로드|내려받|install|download)", re.IGNORECASE)
 _REMOTE_RE = re.compile(r"(?:원격\s*(?:제어|지원|접속)|remote\s*(?:control|support|access))", re.IGNORECASE)
@@ -77,8 +81,8 @@ _REQUEST_AFTER_ACTION_RE = re.compile(
     r"바랍니다|(?:이|가)?\s*필요(?:합니다|해요)|please\b|now\b)",
     re.IGNORECASE,
 )
-_MENTION_AFTER_REQUEST_RE = re.compile(
-    r"^\s*[’”'\"」』]\s*(?:라는|이라는|이라고\s*(?:한|하는))\s*"
+_MENTION_AFTER_QUOTE_RE = re.compile(
+    r"^\s*(?:라는|이라는|이라고\s*(?:한|하는))\s*"
     r"(?:문구|메시지|안내|표현)"
 )
 _CONNECTED_WARNING_RE = re.compile(
@@ -152,10 +156,34 @@ def _supported_category(inspection: PageInspection, proposal: PageProposal) -> T
         return Topic.UNKNOWN
 
 
+def _without_reported_warnings(clause: str) -> str:
+    def retain_request(quote: re.Match[str]) -> str:
+        remainder = clause[quote.end() :]
+        mention = _MENTION_AFTER_QUOTE_RE.match(remainder)
+        if mention is not None and _CONNECTED_WARNING_RE.search(
+            remainder[mention.end() :]
+        ) is not None:
+            return " "
+        return quote.group()
+
+    return _QUOTED_TEXT_RE.sub(retain_request, clause)
+
+
 def _clauses(context: str) -> list[str]:
+    # Keep a quotation attached to its reporting/warning context even when it
+    # contains sentence punctuation. Only the reported quotation is excluded.
+    outer_clauses: list[str] = []
+    start = 0
+    for token in _CLAUSE_TOKEN_RE.finditer(context):
+        if token.lastgroup == "quote":
+            continue
+        outer_clauses.append(context[start : token.start()])
+        start = token.end()
+    outer_clauses.append(context[start:])
     return [
         clause
-        for raw in _CLAUSE_SPLIT_RE.split(context)
+        for outer in outer_clauses
+        for raw in _CLAUSE_SPLIT_RE.split(_without_reported_warnings(outer))
         if (clause := " ".join(raw.split()))
     ]
 
@@ -169,14 +197,8 @@ def _action_match_is_request(
     tail = text[match.end() :]
     if _NON_REQUEST_AFTER_ACTION_RE.match(tail):
         return False
-    request = _REQUEST_AFTER_ACTION_RE.match(tail)
-    if request is not None:
-        remainder = tail[request.end() :]
-        mention = _MENTION_AFTER_REQUEST_RE.match(remainder)
-        if mention is None or _CONNECTED_WARNING_RE.search(
-            remainder[mention.end() :]
-        ) is None:
-            return True
+    if _REQUEST_AFTER_ACTION_RE.match(tail) is not None:
+        return True
 
     coordinator = _COORDINATOR_RE.match(tail)
     if coordinator is not None:

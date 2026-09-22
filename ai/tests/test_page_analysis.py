@@ -296,7 +296,71 @@ async def test_quoted_request_governed_by_warning_is_not_an_install_request(
 @pytest.mark.parametrize(
     "text",
     [
+        "‘앱을 설치해 주시기 바랍니다.’라는 문구가 보여도 설치하지 마세요",
+        '“앱을 설치하세요!”라는 메시지를 보아도 따르지 마세요',
+        "'앱을 설치하세요?'라는 안내가 보여도 설치하지 마세요",
+        '"앱을 설치하세요。"라는 표현은 무시하세요',
+        "「앱을 설치하세요！」라는 문구는 따르지 마세요",
+        "『앱을 설치하세요？』라는 문구는 따르지 마세요",
+        "‘앱을 설치하세요. 설치해 주시기 바랍니다.’라는 문구는 따르지 마세요",
+    ],
+)
+async def test_punctuated_quoted_warning_is_not_an_install_request(
+    text, make_parse_client
+):
+    inspected = inspect_html(f'<a href="/client.apk">{text}</a>')
+    candidate = observation_signal(
+        RiskSignalCode.INSTALL_PROMPT, inspected.elements[0].element_id
+    )
+    client, _ = make_parse_client(parsed=PageProposal(signals=[candidate]))
+
+    result = await analyze_page(inspected, client=client, model="test")
+
+    assert result.signals == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("html", "code"),
+    [
+        (
+            '<form>‘계좌 비밀번호를 입력하세요.’라는 문구는 따르지 마세요'
+            '<input type="password"></form>',
+            RiskSignalCode.CREDENTIAL_REQUEST,
+        ),
+        (
+            '<a href="/support.apk">‘원격 지원 앱을 설치하세요.’라는 문구는 '
+            '따르지 마세요</a>',
+            RiskSignalCode.REMOTE_CONTROL,
+        ),
+    ],
+)
+async def test_punctuated_quoted_warning_is_not_a_sensitive_request(
+    html, code, make_parse_client
+):
+    inspected = inspect_html(html)
+    candidate = observation_signal(code, inspected.elements[0].element_id)
+    client, _ = make_parse_client(parsed=PageProposal(signals=[candidate]))
+
+    result = await analyze_page(inspected, client=client, model="test")
+
+    assert result.signals == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
         "‘앱을 설치해 주시기 바랍니다’",
+        "‘앱을 설치해 주시기 바랍니다.’",
+        (
+            "‘앱을 설치해 주시기 바랍니다.’라는 문구는 따르지 마세요. "
+            "아래 보안 앱을 설치하세요."
+        ),
+        (
+            "‘앱을 설치해 주시기 바랍니다.’라는 문구는 따르지 말고 "
+            "아래 보안 앱을 설치하세요"
+        ),
         (
             "‘앱을 설치해 주시기 바랍니다’라는 문구는 따르지 말고 "
             "아래 보안 앱을 설치하세요"
