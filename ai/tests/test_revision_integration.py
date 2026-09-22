@@ -195,6 +195,43 @@ async def test_field_digest_preserves_associated_context_without_attribute_secre
         assert secret not in json.dumps(captured)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("label,answer", [
+    ("계좌 비밀번호 4자리를 입력하세요", False),
+    ("계좌 비밀번호를 아래에 입력하세요", False),
+    ("계좌 비밀번호 4자리를 아래에 입력하세요", False),
+    ("계좌 비밀번호 4자리를 입력하지 마세요, 전화번호를 입력하세요", True),
+    ("계좌 비밀번호는 필요 없고 전화번호를 입력하세요", True),
+    ("계좌 비밀번호 4자리는 필요 없고 전화번호를 입력하세요", True),
+    ("계좌 비밀번호는 입력하지 말고 카드 비밀번호 4자리를 입력하세요", False),
+    ("계좌 비밀번호를 아래에 입력하지 말고 전화번호를 입력하세요", True),
+])
+async def test_qualified_financial_subject_keeps_its_own_action(label, answer, make_parse_client):
+    html = f'<form><label>{label}<input type="password"></label></form>'
+    proposal = PageProposal(signals=[signal(RiskSignalCode.CREDENTIAL_REQUEST,
+        EvidenceSource.OBSERVATION, inspect_html(html).elements[0].element_id)])
+    client, _ = make_parse_client(parsed=proposal)
+    result = await analyze_environment_part(page(html), client=client, model="test")
+    assert result.answer is answer
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text,answer", [
+    ("app install please now", False),
+    ("app install now to continue", False),
+    ("app install please", False),
+    ("app install not required", True),
+    ("app install nowadays", True),
+])
+async def test_english_imperatives_preserve_word_boundaries(text, answer, make_parse_client):
+    proposal = SignalProposal(signals=[signal(
+        RiskSignalCode.INSTALL_PROMPT, EvidenceSource.MESSAGE, text)])
+    result = await analyze_message_part(
+        text, client=message_client(make_parse_client, proposal), model="test")
+    assert result.answer is answer
+    assert result.details.doubt is (MessageDoubt.NONE if answer else MessageDoubt.APP_INSTALL)
+
+
 def assert_null_parts(response):
     data = response.model_dump(mode="json")
     skipped = {"brand": None, "category": None, "answer": None,

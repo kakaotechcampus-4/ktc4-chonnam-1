@@ -57,6 +57,11 @@ _INSTALL_RE = re.compile(r"(?:설치|다운로드|내려받|install|download)", 
 _REMOTE_RE = re.compile(r"(?:원격\s*(?:제어|지원|접속)|remote\s*(?:control|support|access))", re.IGNORECASE)
 _REMOTE_ACTION_RE = re.compile(r"(?:설치|연결|접속|실행|install|connect|run)", re.IGNORECASE)
 _INPUT_RE = re.compile(r"(?:입력|제공|제출|enter|submit)", re.IGNORECASE)
+_CREDENTIAL_MODIFIERS_RE = re.compile(
+    r"^\s*(?:[을를은는이가]\s*)?"
+    r"(?:(?:\d+\s*(?:자리|글자|자)|(?:아래|여기|입력란)(?:에)?)"
+    r"(?:[을를은는이가])?\s*)*"
+)
 _ANY_ACTION_RE = re.compile(
     r"(?:설치|다운로드|내려받|입력|제공|제출|연결|접속|실행|"
     r"install|download|enter|submit|connect|run)",
@@ -234,7 +239,9 @@ def _credential_is_requested(clause: str) -> bool:
         context = clause[credential.end() :]
         if _NON_REQUEST_AFTER_ACTION_RE.match(context):
             continue
-        context = re.sub(r"^\s*(?:을|를|은|는|이|가)?\s*", "", context)
+        # Quantity and destination modifiers belong to this subject. Consume
+        # only that grammar; never search past a new subject for an input verb.
+        context = _CREDENTIAL_MODIFIERS_RE.sub("", context, count=1)
         action = _INPUT_RE.match(context)
         if action is not None:
             if _action_match_is_request(context, action, allow_bare=True):

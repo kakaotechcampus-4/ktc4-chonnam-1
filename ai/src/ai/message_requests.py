@@ -38,8 +38,9 @@ _REQUEST = re.compile(
     r"주세요|주십시오|야(?:합니다|해요)|해야(?:합니다|해요)|"
     r"완료(?:하(?:세요|십시오)|해(?:주세요|주십시오))|"
     r"바랍니다|(?:이|가)?필요(?:합니다|해요)|"
-    r"(?:부탁|요청)(?:드립니다|합니다|하(?:세요|십시오))|받(?:으세요|아주세요)|please\b|now\b)"
+    r"(?:부탁|요청)(?:드립니다|합니다|하(?:세요|십시오))|받(?:으세요|아주세요))"
 )
+_ENGLISH_REQUEST = re.compile(r"^\s*(?:please|now)\b", re.I)
 _COORDINATOR = re.compile(r"^(?:하고|한뒤|후|및)")
 # Only an adjacent, named request may share its imperative with an earlier
 # action. Do not search forward for an unrelated affirmative action.
@@ -88,11 +89,11 @@ def request_context(text: str) -> str:
 
 def _action_tail(text: str, action_end: int) -> str:
     end = _CLAUSE_END.search(text, action_end)
-    return normalize(text[action_end:end.start() if end else len(text)])
+    return text[action_end:end.start() if end else len(text)]
 
 
 def action_is_denied(text: str, action_end: int) -> bool:
-    tail = _action_tail(text, action_end)
+    tail = normalize(_action_tail(text, action_end))
     return bool(_NON_REQUEST.match(tail) or _COMPLETION.match(tail))
 
 
@@ -100,14 +101,17 @@ def action_requested(text: str, action_end: int) -> bool:
     """Require a local imperative, including an adjacent coordinated request."""
     tail = _action_tail(text, action_end)
     while tail:
-        if _NON_REQUEST.match(tail) or _COMPLETION.match(tail):
+        normalized, positions = normalized_with_positions(tail)
+        if _NON_REQUEST.match(normalized) or _COMPLETION.match(normalized):
             return False
-        if _REQUEST.match(tail):
+        # English words need their original boundaries; Korean matching still
+        # tolerates source separators/entities via the shared position map.
+        if _ENGLISH_REQUEST.match(html.unescape(tail)) or _REQUEST.match(normalized):
             return True
-        coordinator = _COORDINATOR.match(tail)
-        following = tail[coordinator.end():] if coordinator else tail
-        action = _FOLLOWING_ACTION.match(following)
+        coordinator = _COORDINATOR.match(normalized)
+        start = coordinator.end() if coordinator else 0
+        action = _FOLLOWING_ACTION.match(normalized, start)
         if action is None:
             return False
-        tail = following[action.end():]
+        tail = tail[positions[action.end() - 1].end:]
     return False
