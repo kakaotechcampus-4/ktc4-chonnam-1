@@ -1,0 +1,233 @@
+"""Deterministic, source-local result assembly without clients or I/O."""
+
+from __future__ import annotations
+
+import html
+import re
+
+from ai.page import PageInspection, select_env_doubt
+from ai.taxonomy import (
+    MessageCandidate, classify_topic, identify_brand, message_candidates,
+    select_message_doubt,
+)
+from ai.types import (
+    AnalysisResponse, AnalysisStatus, Brand, CaseSearchResult, EnvDoubt,
+    EnvironmentDetails, EnvironmentPart, EvidenceSource, FailureCode,
+    IsolatedPage, MessageAnalysis, MessageDetails, MessageDoubt, MessagePart,
+    PageAnalysis, RiskSignal, RiskSignalCode, SignalAnalysis, Topic, UrlAnalysis,
+)
+
+
+_FAILURE_REASONS = {
+    FailureCode.COLLECTION_FAILED: "페이지 접속·수집에 실패하여 내용을 확인하지 못했으므로 의심으로 처리했습니다.",
+    FailureCode.TIMEOUT: "분석 시간이 초과되어 확인을 완료하지 못했으므로 의심으로 처리했습니다.",
+    FailureCode.EMPTY_INPUT: "분석할 자료 또는 결과를 확보하지 못해 의심으로 처리했습니다.",
+    FailureCode.MISSING_RESULT: "분석할 자료 또는 결과를 확보하지 못해 의심으로 처리했습니다.",
+    FailureCode.INPUT_TOO_LARGE: "자료 전체를 확인하지 못해 의심으로 처리했습니다.",
+    FailureCode.PARTIAL_CONTENT: "자료 전체를 확인하지 못해 의심으로 처리했습니다.",
+    FailureCode.LLM_ERROR: "분석을 완료하지 못해 의심으로 처리했습니다.",
+    FailureCode.REFUSED: "분석을 완료하지 못해 의심으로 처리했습니다.",
+    FailureCode.INVALID_OUTPUT: "분석을 완료하지 못해 의심으로 처리했습니다.",
+}
+_MISSING_REASON = "분석 결과를 전달받지 못해 의심으로 처리했습니다."
+_QUOTATION = re.compile(r'''‘[^’]*’|“[^”]*”|'[^']*'|"[^"]*"|「[^」]*」|『[^』]*』''')
+_MENTION = re.compile(r"^\s*(?:라는|이라는|이라고\s*(?:한|하는))\s*(?:문구|메시지|안내|표현)")
+_WARNING = re.compile(r"무시\s*(?:하|해)|(?:따르|응하|설치하|입력하)지\s*(?:말|마|않)")
+_CLAUSE_END = re.compile(r"[.!?\n。！？]")
+_ACTIONS = re.compile(r"설치|다운로드|내려받|입력|전달|제공|제출|보내|연결|접속|install|download|enter|send|connect", re.I)
+_NON_REQUEST = re.compile(
+    r"^\s*(?:을|를|은|는|이|가|도|할|하는|하기)?\s*"
+    r"(?:하지\s*(?:말|마|않)|필요(?:가|는)?\s*(?:없|하지\s*않)|불필요|금지|"
+    r"완료(?:되었|됐|됨|입니다|되었습니다|됐습니다|\s*$)|성공|종료|상태|여부|내역|방법|안내|not\s+required)", re.I,
+)
+_REQUEST = re.compile(
+    r"^\s*(?:을|를)?\s*(?:하(?:세요|십시오|라)|해\s*(?:주세요|주십시오|주시기\s*바랍니다)|"
+    r"주세요|주십시오|야\s*(?:합니다|해요)|해야\s*(?:합니다|해요)|"
+    r"완료(?:하(?:세요|십시오)|해\s*(?:주세요|주십시오))|"
+    r"바랍니다|(?:이|가)?\s*필요(?:합니다|해요)|요청|please\b|now\b)", re.I,
+)
+_COORDINATOR = re.compile(r"^\s*(?:하고|한\s*뒤|후|및)\s*")
+_SUBJECT_ACTION = {
+    RiskSignalCode.INSTALL_PROMPT: re.compile(
+        r"(?:앱|어플|application|app)\s*(?:을|를)?\s*(?P<action>설치|다운로드|내려받|install|download)", re.I),
+    RiskSignalCode.CREDENTIAL_REQUEST: re.compile(
+        r"(?:비밀번호|비번|인증\s*번호|보안\s*카드(?:\s*(?:전체|모든|전부))?(?:\s*번호)?|password|otp)"
+        r"\s*(?:을|를)?\s*(?P<action>입력|전달|제공|제출|보내|enter|send)", re.I),
+    RiskSignalCode.REMOTE_CONTROL: re.compile(
+        r"(?:원격\s*(?:제어|지원|접속)|remote\s*(?:control|support|access))\s*"
+        r"(?:앱|어플|application|app)\s*(?:을|를|에)?\s*(?P<action>설치|연결|접속|install|connect)", re.I),
+}
+
+
+def _request_context(text: str) -> str:
+    """Mask reported warnings without changing offsets of independent requests."""
+    characters = list(text)
+    for quote in _QUOTATION.finditer(text):
+        end = _CLAUSE_END.search(text, quote.end())
+        remainder = text[quote.end():end.start() if end else len(text)]
+        mention = _MENTION.match(remainder)
+        if mention and _WARNING.search(remainder[mention.end():]):
+            characters[quote.start():quote.end()] = " " * (quote.end() - quote.start())
+    return "".join(characters)
+
+
+def _action_requested(text: str, action_end: int) -> bool:
+    end = _CLAUSE_END.search(text, action_end)
+    tail = text[action_end:end.start() if end else len(text)]
+    # Closing quotation marks do not disconnect a directly attached request.
+    tail = tail.rstrip(" '\"’”」』")
+    if _NON_REQUEST.match(tail):
+        return False
+    if _REQUEST.match(tail):
+        return True
+    coordinator = _COORDINATOR.match(tail)
+    if coordinator:
+        following = tail[coordinator.end():]
+        action = _ACTIONS.search(following)
+        return bool(action and _action_requested(following, action.end()))
+    return re.fullmatch(r"\s*(?:하기)?\s*", tail) is not None
+
+
+def validate_message_signals(text: str, signals: list[RiskSignal]) -> list[RiskSignal]:
+    """Require current-message quotes and explicit code-specific requests."""
+    context = _request_context(text)
+    accepted: list[RiskSignal] = []
+    seen: set[tuple[RiskSignalCode, str]] = set()
+    for signal in signals:
+        quote = signal.evidence_ref
+        pattern = _SUBJECT_ACTION.get(signal.code)
+        key = signal.code, quote
+        if (signal.evidence_source is not EvidenceSource.MESSAGE or pattern is None
+                or len(quote.strip()) < 4 or quote not in text or key in seen):
+            continue
+        # Both the subject and action must occur inside the proposed quote; the
+        # connected suffix comes from the original, untruncated message.
+        grounded = False
+        for occurrence in re.finditer(re.escape(quote), text):
+            for request in pattern.finditer(context, occurrence.start(), occurrence.end()):
+                if _action_requested(context, request.end("action")):
+                    grounded = True
+                    break
+            if grounded:
+                break
+        if grounded:
+            accepted.append(signal)
+            seen.add(key)
+    return accepted
+
+
+def _plain_quote(quote: str) -> str:
+    return " ".join(re.sub(r"<[^>]*>", "", html.unescape(quote)).split())
+
+
+def _join_reasons(reasons: list[str]) -> str:
+    return " ".join(dict.fromkeys(reason for reason in reasons if reason))
+
+
+def build_message_part(
+    text: str, extracted: MessageAnalysis, cases: CaseSearchResult,
+    signals: SignalAnalysis, *, failure: FailureCode | None = None,
+) -> MessagePart:
+    """Preserve grounded message facts across extraction/search/signal failures."""
+    accepted = validate_message_signals(text, signals.signals)
+    completed = (failure is None
+        and extracted.analysis_status is AnalysisStatus.COMPLETED
+        and cases.status is AnalysisStatus.COMPLETED
+        and signals.status is AnalysisStatus.COMPLETED)
+    # Collect facts independently of the taxonomy's synthetic failure candidate.
+    # A real, unclassified request can itself span the entire input.
+    candidates = message_candidates(text, extracted.model_copy(
+        update={"analysis_status": AnalysisStatus.COMPLETED}))
+    candidates = [candidate for candidate in candidates if (
+        candidate.doubt is not MessageDoubt.APP_INSTALL
+        or validate_message_signals(text, [RiskSignal(code=RiskSignalCode.INSTALL_PROMPT,
+            evidence_source=EvidenceSource.MESSAGE, evidence_ref=candidate.evidence)])
+    )]
+    for signal in accepted:
+        doubt = (MessageDoubt.DATA_INPUT if signal.code is RiskSignalCode.CREDENTIAL_REQUEST
+            else MessageDoubt.APP_INSTALL if signal.code is RiskSignalCode.INSTALL_PROMPT
+            else MessageDoubt.UNKNOWN)
+        candidates.append(MessageCandidate(doubt, signal.evidence_ref, text.index(signal.evidence_ref)))
+    doubt = select_message_doubt(candidates) if candidates else (
+        MessageDoubt.NONE if completed else MessageDoubt.UNKNOWN)
+    quotes = [candidate.evidence for candidate in sorted(candidates, key=lambda item: item.start)]
+    quotes = [quote for quote in quotes if not any(quote != other and quote in other for other in quotes)]
+    reasons = [f"문자에서 '{plain}'라고 안내했습니다." for quote in dict.fromkeys(quotes)
+        if (plain := _plain_quote(quote))]
+    if completed and not candidates:
+        reasons.append("제공된 문자에서 명시적인 행동 요구를 확인하지 못했습니다.")
+    if extracted.analysis_status is AnalysisStatus.FALLBACK:
+        reasons.append("문자 분석을 완료하지 못했습니다.")
+    if cases.status is AnalysisStatus.FALLBACK:
+        reasons.append("사례 검색 결과를 확보하지 못했습니다.")
+    for code in (failure, signals.failure):
+        if code is not None:
+            reasons.append(_FAILURE_REASONS[code])
+    return MessagePart(brand=identify_brand(text, extracted), category=classify_topic(text, extracted),
+        answer=completed and not accepted,
+        details=MessageDetails(doubt=doubt, reason=_join_reasons(reasons)))
+
+
+def build_environment_part(
+    page: IsolatedPage | None, inspection: PageInspection, analysis: PageAnalysis,
+    *, failure: FailureCode | None = None,
+) -> EnvironmentPart:
+    """Describe only inspected HTML existence and labeled collector metadata."""
+    codes = [code for code in (failure, inspection.failure, analysis.failure) if code is not None]
+    if page is None:
+        codes.append(FailureCode.MISSING_RESULT)
+    completed = not codes and analysis.status is AnalysisStatus.COMPLETED
+    doubt = select_env_doubt(inspection.elements) if inspection.elements else (
+        EnvDoubt.NONE if completed else EnvDoubt.UNKNOWN)
+    reasons = [f"전달된 HTML에서 {element.doubt.value}을 확인했습니다." for element in inspection.elements]
+    if completed and not inspection.elements:
+        reasons.append("제공된 HTML에서 분류 대상 요소를 확인하지 못했습니다.")
+    brand, category = analysis.brand, analysis.category
+    metadata: list[str] = []
+    if page is not None and analysis.status is AnalysisStatus.FALLBACK:
+        if brand is Brand.UNKNOWN:
+            try:
+                brand = Brand(page.brand)
+            except ValueError:
+                pass
+            if brand is not Brand.UNKNOWN:
+                metadata.append(brand.value)
+        if category is Topic.UNKNOWN:
+            try:
+                category = Topic(page.category)
+            except ValueError:
+                pass
+            if category is not Topic.UNKNOWN:
+                metadata.append(category.value)
+    if metadata:
+        reasons.append(f"격리 환경 전달 정보: {', '.join(metadata)}.")
+    reasons.extend(_FAILURE_REASONS[code] for code in codes)
+    elements = {element.element_id for element in inspection.elements}
+    accepted = [signal for signal in analysis.signals
+        if signal.evidence_source is EvidenceSource.OBSERVATION and signal.evidence_ref in elements]
+    return EnvironmentPart(brand=brand, category=category, answer=completed and not accepted,
+        details=EnvironmentDetails(doubt=doubt, reason=_join_reasons(reasons)))
+
+
+def missing_message_part() -> MessagePart:
+    return MessagePart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN, answer=False,
+        details=MessageDetails(doubt=MessageDoubt.UNKNOWN, reason=_MISSING_REASON))
+
+
+def missing_environment_part() -> EnvironmentPart:
+    return EnvironmentPart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN, answer=False,
+        details=EnvironmentDetails(doubt=EnvDoubt.UNKNOWN, reason=_MISSING_REASON))
+
+
+def assemble_analysis(
+    url: UrlAnalysis, message: MessagePart | None = None,
+    env: EnvironmentPart | None = None,
+) -> AnalysisResponse:
+    """Keep the BE boolean authoritative and skip parts before reading them."""
+    if url.official:
+        return AnalysisResponse(url=url, message=MessagePart(), env=EnvironmentPart(), result=True)
+    if message is None or message.answer is None:
+        message = missing_message_part()
+    if env is None or env.answer is None:
+        env = missing_environment_part()
+    return AnalysisResponse(url=url, message=message, env=env, result=False)
