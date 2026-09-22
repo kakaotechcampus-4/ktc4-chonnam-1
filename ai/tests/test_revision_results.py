@@ -32,6 +32,14 @@ def message_part(text, *, extracted=None, cases=None, signals=None, failure=None
     )
 
 
+@pytest.mark.parametrize("text", ["배송 조회를 하지 마세요", "링크를 클릭하지 마세요"])
+def test_builder_does_not_describe_a_prohibition_as_a_positive_request(text):
+    result = message_part(text)
+    assert result.details.doubt is MessageDoubt.NONE
+    assert result.answer is True
+    assert "라고 안내했습니다" not in result.details.reason
+
+
 def environment_part(html, *, analysis=None, failure=None, brand="unknown", category="unknown"):
     page = IsolatedPage(brand=brand, category=category, info=html)
     return build_environment_part(

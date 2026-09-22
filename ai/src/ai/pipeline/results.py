@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import re
 
+from ai.message_requests import action_requested, normalized_with_positions, request_context
 from ai.page import PageInspection, select_env_doubt
 from ai.taxonomy import (
     MessageCandidate, classify_topic, identify_brand, message_candidates,
@@ -30,25 +31,6 @@ _FAILURE_REASONS = {
     FailureCode.INVALID_OUTPUT: "분석을 완료하지 못해 의심으로 처리했습니다.",
 }
 _MISSING_REASON = "분석 결과를 전달받지 못해 의심으로 처리했습니다."
-_QUOTATION = re.compile(r'''‘[^’]*’|“[^”]*”|'[^']*'|"[^"]*"|「[^」]*」|『[^』]*』''')
-_MENTION = re.compile(r"^\s*(?:라는|이라는|이라고\s*(?:한|하는))\s*(?:문구|메시지|안내|표현)")
-_WARNING = re.compile(r"무시\s*(?:하|해)|(?:따르|응하|설치하|입력하)지\s*(?:말|마|않)")
-_CLAUSE_END = re.compile(r"[.!?\n。！？]")
-_ACTIONS = re.compile(r"설치|다운로드|내려받|입력|전달|제공|제출|보내|연결|접속|install|download|enter|send|connect", re.I)
-_NON_REQUEST = re.compile(
-    r"^\s*(?:을|를|은|는|이|가|도|할|하는|하기)?\s*"
-    r"(?:하지\s*(?:말|마|않)|필요(?:가|는)?\s*(?:없|하지\s*않)|불필요|금지|"
-    r"완료(?:되었|됐|됨|입니다|되었습니다|됐습니다|\s*$)|성공|종료|상태|여부|내역|방법|안내|not\s+required)", re.I,
-)
-_REQUEST = re.compile(
-    r"^\s*(?:을|를)?\s*(?:하(?:세요|십시오|라)|해\s*(?:주세요|주십시오|주시기\s*바랍니다)|"
-    r"주세요|주십시오|야\s*(?:합니다|해요)|해야\s*(?:합니다|해요)|"
-    r"완료(?:하(?:세요|십시오)|해\s*(?:주세요|주십시오))|"
-    r"바랍니다|(?:이|가)?\s*필요(?:합니다|해요)|"
-    r"(?:부탁|요청)\s*(?:드립니다|합니다|하(?:세요|십시오))|"
-    r"받(?:으세요|아\s*주세요)|please\b|now\b)", re.I,
-)
-_COORDINATOR = re.compile(r"^\s*(?:하고|한\s*뒤|후|및)\s*")
 _SUBJECT_ACTION = {
     RiskSignalCode.INSTALL_PROMPT: re.compile(
         r"(?:앱|어플|application|app)\s*(?:을|를)?\s*(?P<action>설치|다운로드|내려받|install|download)", re.I),
@@ -61,38 +43,10 @@ _SUBJECT_ACTION = {
 }
 
 
-def _request_context(text: str) -> str:
-    """Mask reported warnings without changing offsets of independent requests."""
-    characters = list(text)
-    for quote in _QUOTATION.finditer(text):
-        end = _CLAUSE_END.search(text, quote.end())
-        remainder = text[quote.end():end.start() if end else len(text)]
-        mention = _MENTION.match(remainder)
-        if mention and _WARNING.search(remainder[mention.end():]):
-            characters[quote.start():quote.end()] = " " * (quote.end() - quote.start())
-    return "".join(characters)
-
-
-def _action_requested(text: str, action_end: int) -> bool:
-    end = _CLAUSE_END.search(text, action_end)
-    tail = text[action_end:end.start() if end else len(text)]
-    # Closing quotation marks do not disconnect a directly attached request.
-    tail = tail.rstrip(" '\"’”」』")
-    if _NON_REQUEST.match(tail):
-        return False
-    if _REQUEST.match(tail):
-        return True
-    coordinator = _COORDINATOR.match(tail)
-    if coordinator:
-        following = tail[coordinator.end():]
-        action = _ACTIONS.search(following)
-        return bool(action and _action_requested(following, action.end()))
-    return False
-
-
 def validate_message_signals(text: str, signals: list[RiskSignal]) -> list[RiskSignal]:
     """Require current-message quotes and explicit code-specific requests."""
-    context = _request_context(text)
+    context = request_context(text)
+    normalized, positions = normalized_with_positions(context)
     accepted: list[RiskSignal] = []
     seen: set[tuple[RiskSignalCode, str]] = set()
     for signal in signals:
@@ -106,8 +60,11 @@ def validate_message_signals(text: str, signals: list[RiskSignal]) -> list[RiskS
         # connected suffix comes from the original, untruncated message.
         grounded = False
         for occurrence in re.finditer(re.escape(quote), text):
-            for request in pattern.finditer(context, occurrence.start(), occurrence.end()):
-                if _action_requested(context, request.end("action")):
+            for request in pattern.finditer(normalized):
+                start = positions[request.start()].start
+                end = positions[request.end("action") - 1].end
+                if (occurrence.start() <= start and end <= occurrence.end()
+                        and action_requested(context, end)):
                     grounded = True
                     break
             if grounded:
@@ -143,11 +100,6 @@ def build_message_part(
     # A real, unclassified request can itself span the entire input.
     candidates = message_candidates(text, extracted.model_copy(
         update={"analysis_status": AnalysisStatus.COMPLETED}))
-    candidates = [candidate for candidate in candidates if (
-        candidate.doubt is not MessageDoubt.APP_INSTALL
-        or validate_message_signals(text, [RiskSignal(code=RiskSignalCode.INSTALL_PROMPT,
-            evidence_source=EvidenceSource.MESSAGE, evidence_ref=candidate.evidence)])
-    )]
     for signal in accepted:
         doubt = (MessageDoubt.DATA_INPUT if signal.code is RiskSignalCode.CREDENTIAL_REQUEST
             else MessageDoubt.APP_INSTALL if signal.code is RiskSignalCode.INSTALL_PROMPT
@@ -210,6 +162,8 @@ def build_environment_part(
     elements = {element.element_id for element in inspection.elements}
     accepted = [signal for signal in analysis.signals
         if signal.evidence_source is EvidenceSource.OBSERVATION and signal.evidence_ref in elements]
+    if any(signal.code is RiskSignalCode.CREDENTIAL_REQUEST for signal in accepted):
+        reasons.append("전달된 HTML 입력 요소에서 민감한 금융 인증정보 요구를 확인했습니다.")
     return EnvironmentPart(brand=brand, category=category, answer=completed and not accepted,
         details=EnvironmentDetails(doubt=doubt, reason=_join_reasons(reasons)))
 

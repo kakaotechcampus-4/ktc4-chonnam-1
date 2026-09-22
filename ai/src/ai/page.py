@@ -54,6 +54,12 @@ _DOCUMENT_EXTENSIONS = re.compile(
 
 
 @dataclass(frozen=True)
+class PageField:
+    attributes: dict[str, str]
+    labels: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class PageElement:
     element_id: str
     doubt: EnvDoubt
@@ -62,6 +68,7 @@ class PageElement:
     tag: str
     attributes: dict[str, str]
     text: str
+    fields: tuple[PageField, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -262,11 +269,8 @@ def _has_ancestor(node: _Node, tag: str) -> bool:
     return False
 
 
-def _field_context(field_node: _Node, root: _Node, labels: list[_Node]) -> str:
-    pieces = [
-        field_node.raw_attributes.get(name, "")
-        for name in ("type", "name", "autocomplete", "aria-label")
-    ]
+def _field_labels(field_node: _Node, root: _Node, labels: list[_Node]) -> tuple[str, ...]:
+    pieces: list[str] = []
     current = field_node.parent
     while current is not None and current is not root.parent:
         if current.tag == "label":
@@ -280,7 +284,15 @@ def _field_context(field_node: _Node, root: _Node, labels: list[_Node]) -> str:
             for label in labels
             if label.raw_attributes.get("for") == field_id
         )
-    return _normalize_text(pieces).casefold()
+    return tuple(dict.fromkeys(pieces))
+
+
+def _field_context(field_node: _Node, root: _Node, labels: list[_Node]) -> str:
+    return _normalize_text([
+        *(field_node.attributes.get(name, "")
+          for name in ("type", "name", "autocomplete", "aria-label")),
+        *_field_labels(field_node, root, labels),
+    ]).casefold()
 
 
 def _matches_named_field(context: str, names: tuple[str, ...]) -> bool:
@@ -400,15 +412,10 @@ def _nearest_input_root(node: _Node) -> _Node:
     return node
 
 
-def _combined_attributes(root: _Node, fields: list[_Node] = ()) -> dict[str, str]:
-    combined = dict(root.attributes)
-    for input_node in fields:
-        for name, value in input_node.attributes.items():
-            combined.setdefault(name, value)
-    return combined
-
-
-def _element(source: str, root: _Node, doubt: EnvDoubt, fields: list[_Node] = ()) -> PageElement:
+def _element(
+    source: str, root: _Node, doubt: EnvDoubt,
+    fields: list[_Node] = (), labels: list[_Node] = (),
+) -> PageElement:
     end = root.end if root.end is not None else len(source)
     return PageElement(
         element_id=f"element-{root.sequence:04d}",
@@ -416,8 +423,13 @@ def _element(source: str, root: _Node, doubt: EnvDoubt, fields: list[_Node] = ()
         evidence=source[root.start:end],
         start=root.start,
         tag=root.tag,
-        attributes=_combined_attributes(root, fields),
+        attributes=dict(root.attributes),
         text=_node_text(root),
+        fields=tuple(PageField(
+            attributes={name: value for name, value in input_node.attributes.items()
+                        if name in {"type", "name", "autocomplete", "aria-label"}},
+            labels=_field_labels(input_node, root, labels),
+        ) for input_node in fields),
     )
 
 
@@ -494,7 +506,7 @@ def _classify(source: str, nodes: list[_Node]) -> tuple[PageElement, ...]:
                 )
             continue
         doubt, fields = classified
-        by_sequence[root.sequence] = _element(source, root, doubt, fields)
+        by_sequence[root.sequence] = _element(source, root, doubt, fields, labels)
 
     for node in visible:
         if node.tag == "a":

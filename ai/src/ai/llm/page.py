@@ -108,8 +108,12 @@ def _element_context(element: PageElement) -> str:
     values = [
         element.text,
         *(element.attributes.get(name, "") for name in _PROMPT_ATTRIBUTES),
+        *(context for field in element.fields
+          for context in (*field.labels, *field.attributes.values())),
     ]
-    return " ".join(" ".join(values).split())
+    # Keep independent field labels/attributes separate: an action in a second
+    # field must not supply an imperative for a credential in the first.
+    return "\n".join(" ".join(value.split()) for value in values if value)
 
 
 def _safe_elements(inspection: PageInspection) -> list[dict[str, object]]:
@@ -127,6 +131,10 @@ def _safe_elements(inspection: PageInspection) -> list[dict[str, object]]:
                 "tag": element.tag,
                 "text": element.text,
                 "attributes": attributes,
+                "fields": [{"attributes": {
+                    name: value for name, value in field.attributes.items()
+                    if name in _PROMPT_ATTRIBUTES
+                }, "labels": list(field.labels)} for field in element.fields],
                 "has_href": "href" in element.attributes,
                 "has_action": "action" in element.attributes,
                 "hidden": "hidden" in element.attributes,
@@ -224,15 +232,16 @@ def _has_requested_action(
 def _credential_is_requested(clause: str) -> bool:
     for credential in _FINANCIAL_CREDENTIAL_RE.finditer(clause):
         context = clause[credential.end() :]
-        actions = list(_INPUT_RE.finditer(context))
-        if actions:
-            if any(
-                _action_match_is_request(context, action, allow_bare=True)
-                for action in actions
-            ):
-                return True
+        if _NON_REQUEST_AFTER_ACTION_RE.match(context):
             continue
-        if _NON_REQUEST_AFTER_ACTION_RE.match(context) is None:
+        context = re.sub(r"^\s*(?:을|를|은|는|이|가)?\s*", "", context)
+        action = _INPUT_RE.match(context)
+        if action is not None:
+            if _action_match_is_request(context, action, allow_bare=True):
+                return True
+        elif not context.strip():
+            # A financial credential label on an actual field is a request;
+            # arbitrary later instructions in the form are not its action.
             return True
     return False
 
@@ -256,7 +265,7 @@ def _valid_signal(signal: RiskSignal, elements: dict[str, PageElement]) -> bool:
             )
         )
     if signal.code is RiskSignalCode.CREDENTIAL_REQUEST:
-        return element.doubt is EnvDoubt.LOGIN_FORM and any(
+        return bool(element.fields) and any(
             _credential_is_requested(clause) for clause in clauses
         )
     if signal.code is RiskSignalCode.REMOTE_CONTROL:

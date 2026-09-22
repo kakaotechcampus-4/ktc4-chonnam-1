@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import html
 import re
 
 from ai.kb.normalize import normalize
+from ai.message_requests import action_is_denied, normalized_with_positions, request_context
 from ai.types import AnalysisStatus, Brand, MessageAnalysis, MessageDoubt, Topic
 
 
@@ -207,47 +207,6 @@ def classify_topic(text: str, extracted: MessageAnalysis | None = None) -> Topic
     return Topic.UNKNOWN
 
 
-@dataclass(frozen=True)
-class _SourceChar:
-    value: str
-    start: int
-    end: int
-
-
-_ENTITY_RE = re.compile(r"&(?:#[xX][0-9a-fA-F]+|#\d+|[a-zA-Z][a-zA-Z0-9]+);")
-_KEEP_CHAR_RE = re.compile(r"[0-9a-z가-힣]", re.IGNORECASE)
-
-
-def _normalized_with_positions(text: str) -> tuple[str, list[_SourceChar]]:
-    decoded: list[_SourceChar] = []
-    index = 0
-    while index < len(text):
-        lowered = text[index : index + 3].lower()
-        if lowered in {"&l;", "&g;"}:
-            index += 3
-            continue
-
-        entity = _ENTITY_RE.match(text, index)
-        if entity is not None:
-            raw = entity.group(0)
-            value = html.unescape(raw)
-            if value != raw:
-                decoded.extend(
-                    _SourceChar(char, index, entity.end()) for char in value
-                )
-                index = entity.end()
-                continue
-
-        if text[index : index + 4].lower() == "amp;":
-            index += 4
-            continue
-        decoded.append(_SourceChar(text[index], index, index + 1))
-        index += 1
-
-    kept = [item for item in decoded if _KEEP_CHAR_RE.fullmatch(item.value)]
-    return "".join(item.value.lower() for item in kept), kept
-
-
 _REQUEST = (
     r"(?:부탁(?:드립니다|합니다)?|해?주세요|하세요|하십시오|으십시오|"
     r"하시길바랍니다|바랍니다)"
@@ -335,28 +294,15 @@ def _make_candidate(
     return MessageCandidate(doubt=doubt, evidence=evidence, start=text.index(evidence))
 
 
-_CLAUSE_END_RE = re.compile(r"[.!?\n。！？]")
-_COMPLETION_TAIL_RE = re.compile(
-    r"^(?:(?:처리|작업)(?:[이가을를])?)?"
-    r"(?:(?:정상적으로|성공적으로|모두))?(?:[이가을를])?"
-    r"완료(?:$|입니다|되었|됐|했|하였|됨|(?:안내|알림)(?:입니다)?)"
-)
-
-
-def _is_completion_notice(text: str, action_end: int) -> bool:
-    clause_end = _CLAUSE_END_RE.search(text, action_end)
-    tail_end = clause_end.start() if clause_end is not None else len(text)
-    return _COMPLETION_TAIL_RE.match(normalize(text[action_end:tail_end])) is not None
-
-
 def _find_action_candidates(text: str) -> list[MessageCandidate]:
-    normalized, positions = _normalized_with_positions(text)
+    context = request_context(text)
+    normalized, positions = normalized_with_positions(context)
     candidates: list[MessageCandidate] = []
     for doubt, pattern in _ACTION_RULES:
         for match in pattern.finditer(normalized):
             start = positions[match.start()].start
             end = positions[match.end() - 1].end
-            if _is_completion_notice(text, end):
+            if action_is_denied(context, end):
                 continue
             evidence = text[start:end]
             if evidence not in text:
@@ -374,9 +320,10 @@ def message_candidates(
     for action in extracted.requested_actions:
         if not action.evidence or action.evidence not in text:
             continue
-        if _find_action_candidates(action.evidence):
-            continue
         normalized_evidence = normalize(action.evidence)
+        # A known but prohibited/reported action must not return as UNKNOWN.
+        if any(pattern.search(normalized_evidence) for _, pattern in _ACTION_RULES):
+            continue
         if _contains_any(
             normalized_evidence,
             ("부탁", "해주세요", "하십시오", "하세요", "요청"),

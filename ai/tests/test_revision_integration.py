@@ -59,6 +59,142 @@ def signal(code, source, evidence):
     return RiskSignal(code=code, evidence_source=source, evidence_ref=evidence)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text,quotes", [
+    ("[Web발신] [CJ대한통운]배송불가&l;도로명불일치&g;앱 다운로드 주소지확인 부탁드립니다",
+     ("앱 다운로드", "주소지확인")),
+    ("앱 다운로드 후 주소 확인 부탁드립니다", ("앱 다운로드", "주소 확인")),
+    ("&#xC571;·다 운.로-드 부탁드립니다", ("앱·다 운.로-드",)),
+])
+@pytest.mark.parametrize("propose", [False, True])
+async def test_install_taxonomy_and_normalized_grounding_survive_pipeline(
+    text, quotes, propose, make_parse_client,
+):
+    proposal = SignalProposal(signals=[signal(
+        RiskSignalCode.INSTALL_PROMPT, EvidenceSource.MESSAGE, text)] if propose else [])
+    result = await analyze_message_part(
+        text, client=message_client(make_parse_client, proposal), model="test")
+    assert result.details.doubt is MessageDoubt.APP_INSTALL
+    assert result.answer is (not propose)
+    assert all(quote in result.details.reason for quote in quotes)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("html,doubt,answer", [
+    ('<form><label>주소<input name="address"></label><label>계좌 비밀번호를 입력하세요'
+     '<input type="password"></label></form>', EnvDoubt.ADDRESS_FORM, False),
+    ('<form><input aria-label="아이디"><input type="password" '
+     'aria-label="계좌 비밀번호를 입력하세요"></form>', EnvDoubt.LOGIN_FORM, False),
+    ('<label for="pw">계좌 비밀번호를 입력하세요</label><form>'
+     '<input id="pw" type="password"></form>', EnvDoubt.LOGIN_FORM, False),
+    ('<form>계좌 비밀번호는 입력하지 마세요, 전화번호를 입력하세요'
+     '<input type="password"><input name="phone"></form>', EnvDoubt.LOGIN_FORM, True),
+    ('<form>계좌 비밀번호는 필요 없고 전화번호를 입력하세요'
+     '<input type="password"><input name="phone"></form>', EnvDoubt.LOGIN_FORM, True),
+    ('<form>전화번호는 입력하지 말고 계좌 비밀번호를 입력하세요'
+     '<input type="password"><input name="phone"></form>', EnvDoubt.LOGIN_FORM, False),
+    ('<label for="other">계좌 비밀번호를 입력하세요</label><form>'
+     '<input id="pw" type="password"></form>', EnvDoubt.LOGIN_FORM, True),
+])
+async def test_field_grounding_and_subject_local_negation_survive_pipeline(
+    html, doubt, answer, make_parse_client,
+):
+    inspected = inspect_html(html)
+    proposal = PageProposal(signals=[signal(RiskSignalCode.CREDENTIAL_REQUEST,
+        EvidenceSource.OBSERVATION, inspected.elements[0].element_id)])
+    client, _ = make_parse_client(parsed=proposal)
+    result = await analyze_environment_part(page(html), client=client, model="test")
+    assert result.details.doubt is doubt
+    assert result.answer is answer
+    if not answer:
+        assert "금융 인증정보" in result.details.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text,doubt,quote", [
+    ("배송 조회를 하지 마세요", MessageDoubt.NONE, None),
+    ("링크를 클릭하지 마세요", MessageDoubt.NONE, None),
+    ("‘배송 조회하세요’라는 문구를 무시하세요", MessageDoubt.NONE, None),
+    ("배송 조회", MessageDoubt.PARCEL_LOOKUP, "배송 조회"),
+    ("배송 조회를 하지 말고 주소를 확인하세요", MessageDoubt.ADDRESS_CHECK, "주소를 확인하세요"),
+    ("링크를 클릭하지 말고 사진 확인해주세요", MessageDoubt.PHOTO_VIEW, "사진 확인해주세요"),
+])
+async def test_message_prohibitions_are_not_positive_purposes(text, doubt, quote, make_parse_client):
+    result = await analyze_message_part(text, client=message_client(make_parse_client), model="test")
+    assert result.details.doubt is doubt
+    assert result.answer is True
+    if quote:
+        assert quote in result.details.reason
+    else:
+        assert "라고 안내했습니다" not in result.details.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("purpose", [
+    "앱 설치", "주소 입력", "주소 확인", "본인확인", "정보 입력", "사진 확인",
+    "배송 조회", "상세내용 확인", "취소 진행", "직접수령", "인출", "전화 받기", "링크 클릭",
+])
+@pytest.mark.parametrize("later_request", [False, True])
+async def test_each_message_purpose_rejects_prohibition_and_keeps_later_request(
+    purpose, later_request, make_parse_client,
+):
+    text = f"{purpose}를 하지 마세요." + (" 사진 확인해주세요" if later_request else "")
+    extracted = ExtractedMessage(requested_actions=[EvidenceField(value=purpose, evidence=text)])
+    client, _ = make_parse_client(side_effect=[sdk_response(extracted), sdk_response(SignalProposal())])
+    result = await analyze_message_part(text, client=client, model="test")
+    assert result.details.doubt is (MessageDoubt.PHOTO_VIEW if later_request else MessageDoubt.NONE)
+    assert result.answer is True
+    assert "하지 마세요" not in result.details.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text,denied_install", [
+    ("&#xC571;·다 운.로-드 하지 마세요", True),
+    ("앱 다운로드하지 말고 주소 확인하세요", True),
+    ("앱 설치는 필요 없고 주소 확인하세요", True),
+    ("앱 다운로드 후 주소 확인하지 말고 전화번호를 입력하세요", False),
+    ("앱 설치하고 다운로드하지 마세요", False),
+])
+async def test_normalized_and_coordinated_install_prohibitions_reject_risk(
+    text, denied_install, make_parse_client,
+):
+    proposal = SignalProposal(signals=[signal(
+        RiskSignalCode.INSTALL_PROMPT, EvidenceSource.MESSAGE, text)])
+    result = await analyze_message_part(
+        text, client=message_client(make_parse_client, proposal), model="test")
+    assert result.answer is True
+    if denied_install:
+        assert result.details.doubt is not MessageDoubt.APP_INSTALL
+
+
+@pytest.mark.asyncio
+async def test_field_digest_preserves_associated_context_without_attribute_secrets(make_parse_client):
+    html = (
+        '<label for="pw">계좌 비밀번호를 입력하세요</label>'
+        '<label for="other">UNRELATED_LABEL</label>'
+        '<form action="https://example.com/ACTION_SECRET">'
+        '<input aria-label="아이디" value="FIRST_SECRET">'
+        '<input id="pw" type="password" aria-label="금융 인증" value="VALUE_SECRET" '
+        'data-token="TOKEN_SECRET" formaction="https://example.com/FORM_SECRET">'
+        '</form>'
+    )
+    captured = {}
+
+    async def capture(**kwargs):
+        captured.update(json.loads(kwargs["messages"][1]["content"]))
+        return sdk_response(PageProposal())
+
+    client, _ = make_parse_client(side_effect=capture)
+    await analyze_environment_part(page(html), client=client, model="test")
+    element_data = json.dumps(captured["elements"], ensure_ascii=False)
+    assert "아이디" in element_data
+    assert "금융 인증" in element_data
+    assert "계좌 비밀번호를 입력하세요" in element_data
+    assert "UNRELATED_LABEL" not in element_data
+    for secret in ("ACTION_SECRET", "FIRST_SECRET", "VALUE_SECRET", "TOKEN_SECRET", "FORM_SECRET"):
+        assert secret not in json.dumps(captured)
+
+
 def assert_null_parts(response):
     data = response.model_dump(mode="json")
     skipped = {"brand": None, "category": None, "answer": None,
