@@ -6,6 +6,8 @@ from fastapi import BackgroundTasks, FastAPI, Request
 from urlscan_service import submit_url_scan, wait_for_url_scan_result
 from url_utils import split_message
 
+from templates.renderer import render_r1_lookalike
+
 
 app = FastAPI()
 
@@ -394,3 +396,14 @@ def parse_urlscan_result(result: dict) -> dict:
             []
         )
     }
+
+@app.get("/test/kakao/r1-lookalike")
+async def test_r1_lookalike():
+    """
+    FE-BE Kakao 카드 연동 테스트용.
+
+    실제 분석 로직을 거치지 않고
+    R1 lookalike 카드를 반환한다.
+    """
+
+    return render_r1_lookalike()
