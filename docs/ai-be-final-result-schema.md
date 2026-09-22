@@ -1,316 +1,302 @@
-# BE ↔ AI 분석 결과 구조
+# BE ↔ AI `ai.pipeline` 결과 계약
 
-AI가 BE에게 돌려주는 최종 결과다. 네 블록으로 이루어진다.
+이 문서는 새 `ai.pipeline`이 받는 입력과 BE에 반환하는 `AnalysisResponse`를 설명한다. 기준은 커밋 [`9a85dfb`](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/commit/9a85dfbf057e29f22f5b512d09113fa8787116a5)에서 구현된 계약과 [PR #17](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/pull/17)이다. 이 문서의 수정 대상은 [PR #18](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/pull/18)이다.
 
-- `url` : 링크 분석 결과. BE가 넘겨준 값을 그대로 싣는다
-- `message` : 링크를 제외한 문자 본문만 보고 분석한 결과
-- `env` : 격리 환경에서 실제로 연 페이지를 보고 분석한 결과
-- `result` : 위 셋을 종합한 최종 판단
+기존 화이트리스트 기반 API의 정책을 바꾸거나 그 결과를 새 파이프라인에 자동으로 연결하는 계약이 아니다. 여기서 `official`은 공식 도메인 여부가 아니라 BE가 URL 분석 점수를 임계값과 비교해 만든 엄격한 boolean이다. 기존 `DomainCheck`, `DomainMatch`, `decide()`의 화이트리스트 판정과 구분해서 사용한다.
 
-`message` 와 `env` 는 **필드 구성이 같다.** 같은 이름끼리 맞대어 비교하는 것이
-`result` 가 하는 일이기 때문이다. 두 블록은 서로를 보지 않고 각자 만들어진다.
-한쪽이 다른 쪽을 참고하면 같은 말을 하게 되어 비교가 의미를 잃는다.
+근거 자료는 기준 커밋에 고정한다.
 
-> 주석을 포함하므로 엄밀한 JSON이 아니라 JSONC다.
+- [Revisions 요구사항](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/blob/9a85dfbf057e29f22f5b512d09113fa8787116a5/docs/ai/Revisions.md)
+- [연동 책임과 호출 계약](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/blob/9a85dfbf057e29f22f5b512d09113fa8787116a5/docs/ai/Revisions-handoff.md)
+- [입출력 타입과 허용 목록](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/blob/9a85dfbf057e29f22f5b512d09113fa8787116a5/ai/src/ai/types.py)
+- [결과 조립 규칙](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/blob/9a85dfbf057e29f22f5b512d09113fa8787116a5/ai/src/ai/pipeline/results.py)
+- [메시지·페이지 분석 함수](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/blob/9a85dfbf057e29f22f5b512d09113fa8787116a5/ai/src/ai/pipeline/analysis.py)
 
-## 용어
+## 입력과 공개 함수
 
-문서 전체에서 아래 표현을 쓴다.
+새 파이프라인은 하나의 원격 JSON envelope를 받는 API로 정의되지 않았다. 현재 계약은 다음 세 Python 함수다.
 
-| 쓰는 말 | 쓰지 않는 말 | 이유 |
+| 함수 | 입력 | 반환과 역할 |
 | --- | --- | --- |
-| 안전 여부 | 신뢰도 | `answer` 는 `true`/`false` 뿐이다. "신뢰도"는 0~1 점수를 가리키는 말이라 값의 모양과 맞지 않는다 |
-| 의심 | 위험, 스미싱 확정 | `false` 는 "의심된다"까지다. 확정이 아니다 |
-| 안전 | 정상, 문제없음 | `true` 는 "이번 검사에서 의심 근거를 찾지 못했다"는 뜻이다 |
-| 판단 | 판정, 탐지 | 판정은 `result` 한 곳에서만 한다 |
+| `async analyze_message_part(text: str, *, client: AsyncOpenAI \| None = None, model: str \| None = None) -> MessagePart` | BE가 URL을 제거한 문자 본문 | 현재 문자만 분석한 `MessagePart` |
+| `async analyze_environment_part(page: IsolatedPage \| None, *, failure: FailureCode \| None = None, client: AsyncOpenAI \| None = None, model: str \| None = None) -> EnvironmentPart` | 성공 시 수집 페이지, 실패 시 `page=None`과 구체적인 실패 코드 | 전달된 HTML과 수집 상태를 분석한 `EnvironmentPart` |
+| `assemble_analysis(url: UrlAnalysis, message: MessagePart \| None = None, env: EnvironmentPart \| None = None) -> AnalysisResponse` | 검증된 URL 결과와 두 부분 결과 | I/O 없이 최종 응답 조립 |
 
-## BE → AI 입력
+`client`와 `model`은 테스트·설정 주입용 선택 인자다. BE가 AI 내부의 LLM 설정이나 호출을 대신 구현하는 입력이 아니다.
 
-이 문서의 결과를 만들기 위해 BE가 넘기는 것.
+### URL 분석 입력
 
-```jsonc
+`UrlAnalysis`는 `final_url`, `domain`, `official`을 받는다. `final_url`과 `domain`은 공백뿐인 문자열을 포함해 빈 값을 거부한다. `official`은 문자열 `"true"`, 문자열 `"false"`, 숫자 `0`이나 `1`, `null`을 받지 않는 엄격한 boolean이다.
+
+```json
 {
-  /* 링크를 제외한 문자 본문. URL은 BE가 미리 떼어낸다 */
-  "message_text": "[Web발신] 고객님의 택배가 배송 준비 중입니다...",
-
-  /* 아래 url 블록과 같은 모양. 그대로 결과에 실린다 */
-  "url": { "final_url": "...", "domain": "...", "official": false }
+  "final_url": "https://example.com/track",
+  "domain": "example.com",
+  "official": false
 }
 ```
 
-격리 환경 관측은 격리 서버가 수행하고, 그 결과를 `env` 형태로 만들어 돌려준다.
+BE는 URL 분석의 악성 위험도 점수 `score`가 `score <= T`이면 `official=true`, `score > T`이면 `official=false`로 가공한다. 임계값과 같은 점수는 `true`에 포함한다. AI는 원점수와 임계값을 입력받지 않는다. 실제 점수 필드 경로, 임계값 `T`, 점수 누락·조회 실패·범위 초과 처리에는 이 문서가 기본값을 만들지 않으며 BE 연동 계약에서 확정해야 한다.
 
-## 전체 구조
+### 격리 페이지 입력
 
-```jsonc
+수집에 성공하면 `IsolatedPage(brand, category, info)`를 전달한다. `info`는 수집한 HTML이며 AI는 이를 실행하거나 페이지에 접속하지 않는다.
+
+```json
 {
-  /* ---------------------------------------------------------------- */
-  /* url : 링크 분석 결과                                               */
-  /* AI가 만드는 값이 아니다. BE의 조사 결과를 그대로 싣는다              */
-  /* ---------------------------------------------------------------- */
+  "brand": "unknown",
+  "category": "unknown",
+  "info": "<form><label>아이디<input name=\"username\"></label><label>비밀번호<input type=\"password\"></label></form>"
+}
+```
+
+`brand`와 `category`는 수집기가 제공한 메타데이터다. 실제 발신자나 페이지의 진위를 확인한 값으로 해석하지 않는다. 페이지 분석이 실패했더라도 이 메타데이터가 아래 허용 목록의 값이면 확보한 정보로 보존할 수 있고, 그 출처를 `reason`에 명시한다. 목록 밖이거나 식별할 수 없는 값은 출력에서 `unknown`으로 남는다.
+
+수집 성공과 실패는 호출부터 구분한다.
+
+- 성공: `analyze_environment_part(IsolatedPage(...))`
+- 수집 실패: `analyze_environment_part(None, failure=FailureCode.COLLECTION_FAILED)`
+- 시간 초과: `analyze_environment_part(None, failure=FailureCode.TIMEOUT)`
+- 부분 자료와 알려진 실패가 함께 있음: `analyze_environment_part(page, failure=...)`
+
+이는 Python 호출 계약이다. HTTP 요청이나 원격 JSON으로 옮길 때 사용할 오류 envelope는 아직 정의되지 않았다.
+
+## 전체 응답
+
+외부 키는 `url`, `message`, `env`, `result` 네 개다. `message`와 `env`는 같은 객체 모양을 유지하지만 서로 다른 출처를 분석하며 `doubt`의 허용 목록도 다르다.
+
+| 필드 | 의미 |
+| --- | --- |
+| `url` | BE가 전달한 검증된 `UrlAnalysis`. 응답에서도 값을 유지한다. |
+| `message` | URL을 제거한 현재 문자 본문을 분석한 결과 |
+| `env` | 수집기가 제공한 HTML과 수집 상태를 분석한 결과 |
+| `result` | 최종 결과. 항상 `url.official`과 같은 boolean |
+
+두 부분의 공통 모양은 `brand`, `category`, `answer`, `details.doubt`, `details.reason`이다.
+
+- `brand`와 `category`는 이 문서의 닫힌 허용 목록 중 하나다.
+- `answer=true`는 해당 출처의 분석을 완료했고 검증된 의심 신호가 없다는 뜻이다.
+- `answer=false`는 해당 출처에서 의심 신호를 확인했거나 분석을 완료하지 못했다는 뜻이다. 두 경우는 `reason`으로 구별한다.
+- `details.doubt`는 분류값이다. 일반 배송 조회나 로그인 폼 같은 값도 포함하므로 값의 존재만으로 악성을 뜻하지 않는다.
+- `details.reason`은 현재 출처에서 확인한 근거나 실패 사실을 설명하는 평문이다.
+- `null`은 `official=true` 조기 반환에서만 사용한다. 이때 한 부분의 말단 일부만 `null`로 만들지 않는다.
+
+### `official=false` 전체 응답
+
+아래 예시에서는 문자와 페이지 분석의 `answer`가 모두 `true`지만 `official=false`이므로 `result=false`다. 배송 조회 문자와 일반 로그인 폼은 출처별 분류로 보존한다. 두 값의 차이와 로그인 폼 자체는 결과를 뒤집거나 악성을 확정하는 근거가 아니다. `reason` 문장은 계약의 의미를 보여 주는 예시이며 실제 모델 출력이나 페이지 수집 성공을 주장하지 않는다.
+
+```json
+{
   "url": {
-    /*
-     * 최종 목적지 URL. 리다이렉트를 모두 따라간 결과
-     * 타입: string
-     * 예: "https://delivery-example.com/login/verify"
-     * 확인하지 못했으면 빈 문자열
-     */
-    "final_url": "",
-
-    /*
-     * final_url 의 도메인. 화이트리스트 대조 대상이 된 값
-     * 타입: string
-     * 예: "delivery-example.com"
-     *
-     * 스킴("https://")과 경로를 붙이지 않는다. 대조는 호스트명끼리 하므로
-     * "https://delivery-example.com/" 형태로 넣으면 문자열이 달라 대조가
-     * 어긋난다. 오리진 전체를 담고 싶으면 필드 이름을 origin 으로 바꾼다
-     */
-    "domain": "",
-
-    /*
-     * 공식 도메인 화이트리스트와 일치하는가
-     * 타입: boolean
-     * true  : 사람이 검증해 등록한 공식 도메인과 일치함
-     * false : 목록에 없음
-     *
-     * false 는 "위험하다"가 아니라 "등록되지 않았다"는 뜻이다.
-     * AI가 만들지 않는 값이며, BE의 대조 결과를 그대로 받는다
-     */
+    "final_url": "https://example.com/track",
+    "domain": "example.com",
     "official": false
   },
-
-  /* ---------------------------------------------------------------- */
-  /* message : 문자 본문 분석 결과                                       */
-  /* ---------------------------------------------------------------- */
   "message": {
-    /*
-     * 문자가 주장하는 회사
-     * 타입: string
-     * 예: "한진택배", "로젠택배", "KB국민은행"
-     *
-     * 값은 아래 "공통 어휘 — brand" 의 표기를 쓴다.
-     * 확인하지 못했으면 빈 문자열. 추측해서 채우지 않는다
-     */
-    "brand": "",
-
-    /*
-     * 문자 내용의 종류
-     * 타입: string
-     * 값은 아래 "공통 어휘 — category" 참조. 예: "택배", "은행", "배달"
-     *
-     * 종류이지 위험도가 아니다. 정상 택배 알림도 "택배"다
-     */
-    "category": "",
-
-    /*
-     * 문자 본문만 놓고 본 안전 여부
-     * 타입: boolean
-     * true  : 문자 본문에서 의심 근거를 찾지 못함
-     * false : 의심 근거를 찾음
-     *
-     * true 는 "이 문자가 안전하다"가 아니라 "문자 본문만으로는 의심 근거를
-     * 찾지 못했다"는 뜻이다. 링크는 보지 않은 판단이다
-     */
+    "brand": "CJ대한통운",
+    "category": "택배",
     "answer": true,
-
-    /*
-     * answer 를 그렇게 본 내용
-     * answer 가 true 이면 두 값 모두 빈 문자열
-     */
     "details": {
-      /*
-       * 어떤 종류의 의심인가. 링크로 유도하는 사유
-       * 타입: string
-       * 값은 아래 "공통 어휘 — doubt" 참조. 예: "앱 설치", "결제 유도"
-       */
-      "doubt": "",
-
-      /*
-       * 그렇게 본 근거. 문자 본문에서 인용한다
-       * 타입: string
-       * 예: "지금 다운로드 하세요", "추가 결제가 필요합니다"
-       *
-       * message_text 에 실제로 있는 표현이어야 한다. 요약하거나 고쳐 쓰지
-       * 않는다. 대조에 실패하면 answer 를 true 로 되돌린다
-       */
-      "reason": ""
+      "doubt": "배송 조회",
+      "reason": "문자에서 '배송 현황을 확인하세요'라고 안내했습니다."
     }
   },
-
-  /* ---------------------------------------------------------------- */
-  /* env : 격리 환경 분석 결과                                          */
-  /* message 와 필드 구성이 같다. 같은 이름끼리 비교하기 위해서다         */
-  /* ---------------------------------------------------------------- */
   "env": {
-    /*
-     * 실제 페이지가 내세우는 회사
-     * 타입: string
-     * 로고·상호·문구에서 읽어낸 이름이며, 도메인 등록자가 아니다
-     * message.brand 와 **같은 표기**를 써야 비교가 성립한다
-     */
-    "brand": "",
-
-    /*
-     * 실제 페이지 내용의 종류
-     * 타입: string
-     * message.category 와 **같은 목록**에서 고른다
-     */
-    "category": "",
-
-    /*
-     * 페이지를 놓고 본 안전 여부
-     * 타입: boolean
-     * true  : 페이지에서 의심 근거를 찾지 못함
-     * false : 의심 근거를 찾음
-     */
+    "brand": "CJ대한통운",
+    "category": "택배",
     "answer": true,
-
-    /*
-     * answer 를 그렇게 본 내용
-     * answer 가 true 이면 두 값 모두 빈 문자열
-     */
     "details": {
-      /*
-       * 어떤 종류의 의심인가. 페이지 분석 결과
-       * 타입: string
-       * message.details.doubt 와 **같은 목록**에서 고른다
-       * 예: "앱 설치", "결제 유도"
-       */
-      "doubt": "",
-
-      /*
-       * 그렇게 본 근거. 페이지에 있던 요소를 적는다
-       * 타입: string
-       * 예: "페이지 속 결제 버튼", "로그인 UI 띄워짐"
-       *
-       * 평가가 아니라 관측이어야 한다. "위험한 페이지" 같은 표현은 쓰지
-       * 않는다. 무엇이 있었는지만 적는다
-       */
-      "reason": ""
+      "doubt": "로그인·인증 입력폼",
+      "reason": "전달된 HTML에서 계정과 비밀번호 입력을 요구하는 폼 요소를 확인했습니다."
     }
   },
+  "result": false
+}
+```
 
-  /*
-   * 최종 판단 결과
-   * 타입: boolean
-   * true  : 안전
-   * false : 의심
-   *
-   * 계산 규칙은 아래 "result 계산" 참조. LLM이 정하지 않고 코드가 정한다
-   */
+### `official=true` 조기 반환
+
+`official=true`이면 `message`, `env`, 두 `details` 객체와 모든 키를 유지한다. 각 부분의 `brand`, `category`, `answer`, `details.doubt`, `details.reason`을 모두 `null`로 반환하므로 말단 `null`은 모두 10개다. 분석 실패가 먼저 발생했거나 일부 결과가 준비됐더라도 이 조기 반환 구조가 우선한다.
+
+```json
+{
+  "url": {
+    "final_url": "https://example.com/track",
+    "domain": "example.com",
+    "official": true
+  },
+  "message": {
+    "brand": null,
+    "category": null,
+    "answer": null,
+    "details": {
+      "doubt": null,
+      "reason": null
+    }
+  },
+  "env": {
+    "brand": null,
+    "category": null,
+    "answer": null,
+    "details": {
+      "doubt": null,
+      "reason": null
+    }
+  },
   "result": true
 }
 ```
 
-## result 계산
+### 분석 실패 부분 응답
 
-`result` 는 LLM이 내는 값이 아니다. 위 블록들을 코드가 조합해서 만든다.
+다음 예시는 페이지 접속·수집 실패 사실만 확인했고 다른 페이지 정보는 확보하지 못한 경우다. `answer=null`이나 `없음`으로 실패를 숨기지 않는다.
 
+```json
+{
+  "brand": "unknown",
+  "category": "unknown",
+  "answer": false,
+  "details": {
+    "doubt": "unknown",
+    "reason": "페이지 접속·수집에 실패하여 내용을 확인하지 못했으므로 의심으로 처리했습니다."
+  }
+}
 ```
-result =
-    url.official
-    OR ( message.answer
-         AND env.answer
-         AND message.brand == env.brand
-         AND message.category == env.category )
-```
 
-즉 **공식 도메인이면 안전, 아니면 네 가지가 모두 통과해야 안전**이다.
+실패 전에 확인한 브랜드·분야·행동과 근거가 있다면 그 값은 보존한다. 한 분석이 실패해도 다른 분석의 완료 결과를 지우지 않는다. 실패는 악성, 스미싱 또는 분석 회피가 확인됐다는 뜻이 아니다.
 
-| 상황 | `result` |
-| --- | --- |
-| `url.official` 이 `true` | `true` |
-| 문자는 "한진택배", 페이지는 "KB국민은행" | `false` |
-| 문자는 "택배", 페이지는 "은행" | `false` |
-| 문자에서 "지금 다운로드 하세요" 발견 | `false` |
-| 페이지에 로그인 UI가 떠 있음 | `false` |
-| 넷 다 통과 | `true` |
+## 최종 결과 결정
 
-읽어야 할 것들.
+유효한 `url.official`을 입력받으면 다음 규칙만 최종 결과를 정한다.
 
-- **빈 문자열은 불일치가 아니다.** `message.brand` 가 `""`(확인 못 함)이고
-  `env.brand` 가 `"KB국민은행"` 인 경우를 불일치로 처리하면, 확인하지 못한 것을
-  근거로 의심 판정을 내는 셈이 된다. 한쪽이라도 비어 있으면 그 비교는 건너뛴다.
-- **브랜드 비교는 표기가 같아야 성립한다.** `"한진택배"` 와 `"한진"` 이 다르게
-  잡히면 정상 문자가 의심으로 나간다. 아래 "공통 어휘 — brand" 참조.
-- **`message.answer` 만으로도 `false` 가 된다.** 문자 본문만 보고 내린 판단이
-  최종 결과를 뒤집을 수 있다는 뜻이다. `details.reason` 이 본문에 실제로 있는지
-  대조하는 것이 이 경로의 유일한 안전장치다.
-- **공식 도메인이 모든 것을 덮는다.** `url.official` 이 `true` 이면 페이지에서
-  무엇이 나와도 `result` 는 `true` 다. 공식 도메인이 뚫린 경우를 놓치지만,
-  그 대신 화이트리스트가 맞으면 격리 환경 관측을 기다리지 않고 첫 응답에서
-  끝낼 수 있다 (`CLAUDE.md` 의 5초 제약). 둘 중 하나를 골라야 하는 자리다.
+`result = url.official`
 
-## 공통 어휘
+LLM 출력, RAG 유사도, `message.answer`, `env.answer`, 브랜드·분야의 일치 여부가 이 값을 뒤집지 않는다.
 
-`message` 와 `env` 가 같은 값을 골라야 비교가 성립한다. 어휘가 갈리면 같은
-사실을 다르게 적어 불일치로 잡힌다.
+| `url.official` | 메시지·페이지 상태 | `result` | 응답 처리 |
+| --- | --- | --- | --- |
+| `true` | 완료, 의심 신호 또는 실패 여부와 무관 | `true` | 두 부분 객체와 키를 유지하고 말단 값 10개를 모두 `null`로 반환 |
+| `false` | 두 `answer`가 모두 `true` | `false` | 완료한 분류와 출처별 근거를 제공 |
+| `false` | 하나 이상에서 검증된 의심 신호 확인 | `false` | 확인한 신호와 근거를 제공 |
+| `false` | 실패·시간 초과·결과 누락 | `false` | 실패한 부분은 `answer=false`, 이미 확보한 결과는 보존 |
 
-### brand
+`result=false`는 이 서비스의 기준에 따른 의심이다. 악성 또는 스미싱 확정으로 바꾸어 표현하지 않는다. 점수 기준을 통과하지 못했다는 사실을 공식 도메인이 아니라고 확인한 것으로 표현해서도 안 된다.
 
-회사 이름은 **정식 표기 하나로 고정**한다. 표기 흔들림을 잡을 별칭 표를 코드에
-둔다.
+## 정형값 허용 목록
 
-| 정식 표기 | 같은 것으로 보는 표기 |
-| --- | --- |
-| 한진택배 | 한진, HANJIN |
-| 로젠택배 | 로젠 |
-| CJ대한통운 | 대한통운, CJ Logistics |
-| KB국민은행 | 국민은행, KB |
+다음 목록은 기준 구현의 Enum과 정확히 같다. 빈 문자열과 자유 문자열은 출력 정형값으로 사용하지 않는다.
 
-확인하지 못하면 빈 문자열을 넣는다. 빈 문자열은 비교에서 제외된다.
+### `Brand`
 
-### category
+| 허용 값 |
+| --- |
+| `CJ대한통운` |
+| `CJ택배` |
+| `CJ익스프레스` |
+| `CJ오쇼핑` |
+| `한진택배` |
+| `로젠택배` |
+| `우체국택배` |
+| `DHL` |
+| `현대택배` |
+| `롯데택배` |
+| `CU` |
+| `대신택배` |
+| `KGB택배` |
+| `경동택배` |
+| `합동택배` |
+| `쿠팡` |
+| `옥션` |
+| `롯데몰` |
+| `카카오톡 선물하기` |
+| `7-11` |
+| `라쿠텐 익스프레스` |
+| `KISA` |
+| `검찰청` |
+| `unknown` |
 
-| 값 | 뜻 |
-| --- | --- |
-| 택배 | 배송·주소 수정·운송장 안내 |
-| 은행 | 계좌·카드·금융 |
-| 배달 | 음식 배달 주문 |
-| 공공 | 과태료·환급·지원금 등 공공기관 |
-| 통신 | 통신요금·요금제 |
-| 계정 | 로그인·인증·계정 정지 안내 |
-| 경조사 | 청첩장·부고 |
-| 이벤트 | 경품·당첨·할인 |
-| 기타 | 위에 없는 종류 |
-| 확인불가 | 종류를 알 수 없음 |
+### `Topic`
 
-`택배` 와 `배달` 처럼 헷갈리는 쌍은 같은 것으로 보지 않는다. 문자가 택배라고
-하는데 페이지가 배달이면 그건 불일치가 맞다.
+| 허용 값 |
+| --- |
+| `택배` |
+| `쇼핑` |
+| `금융` |
+| `공공기관` |
+| `의료·건강` |
+| `보안` |
+| `선물·이벤트` |
+| `unknown` |
 
-### doubt
+### `MessageDoubt`
 
-`message` 는 "문자가 링크로 유도하는 사유", `env` 는 "페이지에서 실제로 하는
-일"을 고른다. 같은 목록을 쓰므로 두 값을 나란히 놓고 볼 수 있다.
+| 허용 값 |
+| --- |
+| `앱 설치` |
+| `주소 입력·수정` |
+| `주소 확인` |
+| `본인 확인` |
+| `정보 입력` |
+| `사진 확인` |
+| `배송 조회` |
+| `상세 내용 확인` |
+| `주문 취소·환불` |
+| `수령·일정 확인` |
+| `금전 인출` |
+| `전화 응대` |
+| `링크 접속` |
+| `없음` |
+| `unknown` |
 
-| 값 | message 쪽 뜻 | env 쪽 뜻 |
-| --- | --- | --- |
-| 앱 설치 | 앱·APK 설치를 유도 | 설치 파일 내려받기·설치 안내가 있음 |
-| 결제 유도 | 결제·송금을 요구 | 결제 버튼·계좌 안내가 있음 |
-| 정보 입력 | 개인정보·비밀번호 입력을 요구 | 로그인 UI·입력 폼이 떠 있음 |
-| 권한 요구 | 권한 허용을 요구 | 접근성·SMS 등 권한을 요구함 |
-| 원격 제어 | 원격제어 앱을 안내 | 원격제어 앱 설치·연결을 안내함 |
-| 기한 압박 | 기한·불이익을 들어 재촉 | — |
+### `EnvDoubt`
 
-`answer` 가 `true` 이면 `doubt` 는 빈 문자열이다.
+| 허용 값 |
+| --- |
+| `앱 다운로드 링크` |
+| `로그인·인증 입력폼` |
+| `결제 요청 요소` |
+| `개인정보 입력폼` |
+| `주소 입력폼` |
+| `배송 조회 요소` |
+| `사진·문서 열람 요소` |
+| `없음` |
+| `unknown` |
 
-## 남은 것
+`MessageDoubt`와 `EnvDoubt`는 서로 바꿔 쓰지 않는다. 각 목록의 `없음`은 해당 출처의 분석을 완료했지만 분류 대상 요구나 요소를 확인하지 못했다는 뜻이다. `unknown`은 식별 불가, 목록 밖 또는 실패로 확인하지 못한 상태다. `null`은 `official=true` 조기 반환으로 분석 결과를 제공하지 않은 상태다.
 
-- **`answer` 와 `result` 가 boolean이라 "확인하지 못함"을 표현할 수 없다.**
-  링크에 접속하지 못했거나, 관측을 수행하지 못했거나, 문자에 URL이 없는 경우
-  `true`(안전) 아니면 `false`(의심) 중 하나로 찍어야 한다. `true` 로 두면
-  확인하지 않은 것을 안전하다고 말하게 되고, `false` 로 두면 접속 실패가 전부
-  의심으로 나간다. 값을 3상태로 넓히거나, 상태를 담을 필드를 따로 두어야 한다.
-- **`result` 가 boolean이라 근거를 싣지 못한다.** 사용자에게 보여줄 문장은
-  `message.details` 와 `env.details` 에서 BE가 조립해야 한다. 어느 쪽을 먼저
-  쓸지, 둘 다 `false` 면 무엇을 보여줄지 정해야 한다.
-- **`url.official` 이 boolean이라 "대조하지 못함"을 표현할 수 없다.** `domain`
-  이 비어 있는데 `official: false` 로 오면 "목록에 없음"과 "대조 자체를 못 함"이
-  같은 값이 된다.
-- `details.reason` 의 대조에 최소 길이가 필요하다. `"확인"` 같은 두 글자는
-  본문 안에서 우연히 일치해 대조를 통과한다.
-- `env.details.reason` 은 페이지 원본이 넘어오지 않아 대조할 수 없다.
-  `message.details.reason` 만 본문과 맞춰볼 수 있다.
-- 격리 환경 관측 시간이 카카오 스킬 5초 예산에 들어가지 않으면 콜백 경로를
-  탄다. `docs/latency-budget.md` 갱신이 필요하다.
+## 근거와 실패 처리
+
+문자, 페이지, RAG 참고 자료는 역할이 다르다.
+
+- 문자 근거는 URL을 제거해 전달받은 현재 본문에 실제로 있는 표현이어야 한다. 다른 문자나 페이지의 문구를 복사하지 않는다.
+- RAG 검색 결과는 참고 자료다. 검색된 사례의 브랜드·분야·행동을 현재 입력에서 관측한 사실처럼 복사하지 않는다.
+- 페이지 근거는 전달받은 HTML과 별도로 전달된 수집 사실에 한정한다. HTML 요소가 있다는 사실을 실제 화면 노출, 클릭, 다운로드, 폼 제출 또는 정보 전송을 확인했다는 문장으로 확대하지 않는다.
+- 일반 로그인 폼, 결제 UI 또는 문자·페이지 분류의 차이는 그 자체로 위험 신호가 아니다. 별도로 검증된 근거가 있어야 해당 부분의 `answer`에 반영한다.
+- 하나의 추출·검색·신호 분석이 실패해도 다른 단계에서 확인한 분류와 근거를 보존한다. 실패 이유는 확인한 사실에 맞는 결정적 평문으로 추가한다.
+- `reason`은 사용자에게 표시할 수 있는 평문이다. 원본 HTML을 설명 대신 넣거나 실행 가능한 형태로 렌더링하지 않는다.
+
+## 연동 책임
+
+아래 항목은 기준 인계 문서의 연동 요구사항이다. 현재 temp2 브랜치에 BE·FE·격리 환경 구현이 완료됐다는 뜻은 아니다.
+
+### BE
+
+- 원본 메시지에서 URL과 URL을 제거한 본문을 분리하고 입력 타입을 검증한다.
+- URL 분석·메시지 분석·격리 환경 수집을 병렬로 시작한다. URL 분석이 끝나 `official`이 도착한 뒤 그 값에 따라 후속 처리를 결정한다.
+- `official=true`가 도착하면 불필요한 작업을 취소하고 `assemble_analysis(url)`로 조기 반환한다. 늦게 끝난 결과가 저장된 응답을 덮어쓰지 않게 한다.
+- `official=false`이면 확보한 두 부분 결과를 조립한다. 알려진 수집 실패를 단순 누락으로 바꾸지 않고 구체적인 `FailureCode`로 전달한다.
+- `response.model_dump(mode="json")`으로 직렬화하며 `exclude_none=True`나 `exclude_unset=True`로 조기 반환 키를 제거하지 않는다.
+- 콜백, 저장, 결과 조회 폴백과 외부 시간 제한을 관리한다.
+
+### 격리 환경 수집기
+
+- 성공 시 `{brand, category, info}` 자료를 제공하고 실패·시간 초과·부분 수집을 구별해 BE에 전달한다.
+- `info`에는 수집한 HTML을 넣는다. 실제 화면 노출이나 사용자 동작을 관측했다면 HTML과 구분되는 별도 계약이 필요하다.
+- 취소와 입력 크기 제한을 BE·AI와 합의한다.
+
+### FE와 사용자 응답 가공
+
+- `result=false`를 의심으로 표시하고 개별 `answer`와 최종 결과를 구분한다.
+- `null`, `unknown`, `없음`을 서로 다른 상태로 표시한다.
+- 문자와 페이지의 `doubt` 목록을 분리하고, 두 값의 차이나 일반 UI를 악성 확정 문구로 바꾸지 않는다.
+- 실패의 `answer=false`에는 `reason`을 함께 표시해 의심 신호 발견과 확인 실패를 구별한다.
