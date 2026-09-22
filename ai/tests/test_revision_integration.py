@@ -186,6 +186,25 @@ async def test_page_app_local_adverbs_preserve_request_scope(text, code, answer,
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("text,code,answer", [
+    ("앱을 설치하지 말고, 다운로드하세요", RiskSignalCode.INSTALL_PROMPT, False),
+    ("원격 지원 앱을 설치하지 말고, 연결하세요", RiskSignalCode.REMOTE_CONTROL, False),
+    ("앱을 설치하고, 연결하세요", RiskSignalCode.INSTALL_PROMPT, False),
+    ("앱을 설치하지 말고, 자료를 다운로드하세요", RiskSignalCode.INSTALL_PROMPT, True),
+    ("원격 지원 앱을 설치하지 말고, 배송 앱을 설치하세요", RiskSignalCode.REMOTE_CONTROL, True),
+], ids=["same-app", "same-remote", "same-app-positive", "independent-material", "independent-app"])
+async def test_page_app_comma_coordination_keeps_subject_scope(text, code, answer, make_parse_client):
+    html = f'<a href="/target">{text}</a>'
+    proposal = PageProposal(signals=[signal(
+        code, EvidenceSource.OBSERVATION, inspect_html(html).elements[0].element_id)])
+    client, _ = make_parse_client(parsed=proposal)
+
+    result = await analyze_environment_part(page(html), client=client, model="test")
+
+    assert result.answer is answer
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("text,doubt,quote", [
     ("배송 조회를 하지 마세요", MessageDoubt.NONE, None),
     ("링크를 클릭하지 마세요", MessageDoubt.NONE, None),

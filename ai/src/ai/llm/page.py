@@ -98,10 +98,10 @@ _CONNECTED_WARNING_RE = re.compile(
     r"(?:하|해)?지\s*(?:말|마|않)|무시\s*(?:하|해)?(?:세요|하십시오)",
     re.IGNORECASE,
 )
-_COORDINATOR_RE = re.compile(r"^\s*(?:하고|한\s*뒤|후|및)\s*")
+_COORDINATOR_RE = re.compile(r"^\s*(?:하고|한\s*뒤|후|및)\s*,?\s*")
 _APP_ACTION_CONTINUATION_RE = re.compile(
     r"^\s*(?:하고|한\s*뒤|후|및|하지\s*말고|"
-    r"(?:[은는이가]\s*)?필요(?:가|는)?\s*없고)\s*"
+    r"(?:[은는이가]\s*)?필요(?:가|는)?\s*없고)\s*,?\s*"
 )
 _BARE_CONTROL_TAIL_RE = re.compile(r"^\s*(?:하기)?\s*$")
 _FINANCIAL_CREDENTIAL_RE = re.compile(
