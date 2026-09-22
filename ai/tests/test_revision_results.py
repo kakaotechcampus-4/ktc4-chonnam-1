@@ -220,6 +220,15 @@ def test_message_reason_keeps_malformed_or_encoded_markup_inert(text):
     assert part.details.reason.startswith("문자에서 '")
 
 
+def test_message_reason_preserves_ordinary_ampersand_in_actual_quote():
+    text = "A&B 상담 예약을 진행하세요"
+    part = message_part(text, extracted=MessageAnalysis(
+        analysis_status=AnalysisStatus.COMPLETED,
+        requested_actions=[EvidenceField(value="예약 진행", evidence=text)],
+    ))
+    assert part.details.reason == f"문자에서 '{text}'라고 안내했습니다."
+
+
 def test_negated_app_request_does_not_create_a_doubt_candidate():
     part = message_part("앱을 설치하지 마세요", signals=SignalAnalysis(
         status=AnalysisStatus.COMPLETED, signals=[signal("앱을 설치")]))

@@ -122,7 +122,7 @@ def _plain_quote(quote: str) -> str:
     plain = " ".join(re.sub(r"<[^>]*>", "", html.unescape(quote)).split())
     # Broken tags must not remain raw markup; escaping preserves their text
     # without guessing how to repair or interpret the source.
-    return html.escape(plain, quote=False)
+    return plain.replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _join_reasons(reasons: list[str]) -> str:
