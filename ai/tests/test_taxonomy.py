@@ -265,6 +265,12 @@ def test_independent_requests_use_original_order_instead_of_label_priority():
         "주소 변경이 완료되었습니다",
         "본인 확인이 완료되었습니다",
         "계좌 인출이 완료되었습니다",
+        "앱 다운로드가 완료되었습니다",
+        "앱 다운로드를 완료했습니다",
+        "사진 보기가 완료되었습니다",
+        "배송 조회가 완료되었습니다",
+        "공지 확인이 완료되었습니다",
+        "링크 클릭이 완료되었습니다",
         "택배가 문 앞에 배송되었습니다",
     ],
 )
@@ -354,10 +360,32 @@ def test_select_doubt_preserves_earlier_independent_generic_request():
     assert select_message_doubt(candidates) is MessageDoubt.OPEN_LINK
 
 
-def test_select_doubt_prefers_overlapping_detail_request_to_link_click():
-    candidates = [
-        MessageCandidate(MessageDoubt.OPEN_LINK, "링크를 클릭", 0),
-        MessageCandidate(MessageDoubt.DETAIL_VIEW, "클릭하여 공지 확인", 4),
-    ]
+def test_connected_link_click_and_detail_are_one_specific_request():
+    text = "링크를 클릭하여 공지 확인해주세요"
+    candidates = message_candidates(text, analysis())
 
     assert select_message_doubt(candidates) is MessageDoubt.DETAIL_VIEW
+    assert any(
+        item.doubt is MessageDoubt.DETAIL_VIEW and "클릭하여 공지 확인" in item.evidence
+        for item in candidates
+    )
+
+
+def test_separate_link_click_and_detail_keep_source_order():
+    text = "링크를 클릭한 후 별도로 공지 내용을 확인해주세요"
+
+    assert (
+        select_message_doubt(message_candidates(text, analysis()))
+        is MessageDoubt.OPEN_LINK
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("은행 카드로 구매한 상품을 환불해주세요", Topic.SHOPPING),
+        ("택배 배송 조회와 주문 취소를 각각 확인하세요", Topic.UNKNOWN),
+    ],
+)
+def test_topic_uses_bounded_request_context_for_overlaps(text, expected):
+    assert classify_topic(text) is expected

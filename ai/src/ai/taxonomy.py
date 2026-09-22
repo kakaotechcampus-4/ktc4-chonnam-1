@@ -101,6 +101,17 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text for term in terms)
 
 
+_BANK_CARD_SHOPPING_REQUEST_RE = re.compile(
+    r"은행카드로(?:구매|결제).*?(?:취소|환불)"
+)
+_INDEPENDENT_PARCEL_SHOPPING_RE = re.compile(
+    r"(?:(?:택배|배송|운송)(?:상태)?(?:조회|확인)(?:와|과)"
+    r"(?:주문|구매)?취소(?:를)?|"
+    r"(?:주문|구매)?취소(?:와|과)(?:택배|배송|운송)(?:상태)?(?:조회|확인))"
+    r".*각각"
+)
+
+
 def classify_topic(text: str, extracted: MessageAnalysis | None = None) -> Topic:
     """현재 입력의 핵심 용건과 검증된 기존 추출 결과를 사용한다."""
 
@@ -138,9 +149,17 @@ def classify_topic(text: str, extracted: MessageAnalysis | None = None) -> Topic
     if gift:
         topics.add(Topic.GIFT)
 
+    if (
+        {Topic.PARCEL, Topic.SHOPPING} <= topics
+        and _INDEPENDENT_PARCEL_SHOPPING_RE.search(normalized)
+    ):
+        return Topic.UNKNOWN
     if Topic.PUBLIC in topics and topics <= {Topic.PUBLIC, Topic.FINANCE}:
         return Topic.PUBLIC
-    if cancel_or_refund and topics <= {Topic.SHOPPING, Topic.PARCEL, Topic.GIFT}:
+    shopping_context = {Topic.SHOPPING, Topic.PARCEL, Topic.GIFT}
+    if _BANK_CARD_SHOPPING_REQUEST_RE.search(normalized):
+        shopping_context.add(Topic.FINANCE)
+    if cancel_or_refund and topics <= shopping_context:
         return Topic.SHOPPING
     if Topic.PARCEL in topics and topics <= {Topic.PARCEL, Topic.SHOPPING, Topic.GIFT}:
         return Topic.PARCEL
@@ -200,7 +219,8 @@ _REQUEST = (
     r"(?:부탁(?:드립니다|합니다)?|해?주세요|하세요|하십시오|으십시오|"
     r"하시길바랍니다|바랍니다)"
 )
-_OPTIONAL_REQUEST = rf"(?:{_REQUEST})?"
+_NOT_COMPLETED = r"(?![이가을를]?완료)"
+_REQUEST_OR_INCOMPLETE_BARE_ACTION = rf"(?:{_REQUEST}|{_NOT_COMPLETED})"
 _ACTION_RULES: tuple[tuple[MessageDoubt, re.Pattern[str]], ...] = (
     (
         MessageDoubt.DATA_INPUT,
@@ -214,7 +234,7 @@ _ACTION_RULES: tuple[tuple[MessageDoubt, re.Pattern[str]], ...] = (
     ),
     (
         MessageDoubt.APP_INSTALL,
-        re.compile(r"앱(?:을)?(?:다운로드|설치)"),
+        re.compile(rf"앱(?:을)?(?:다운로드|설치){_NOT_COMPLETED}"),
     ),
     (
         MessageDoubt.ADDRESS_EDIT,
@@ -230,16 +250,22 @@ _ACTION_RULES: tuple[tuple[MessageDoubt, re.Pattern[str]], ...] = (
     ),
     (
         MessageDoubt.PHOTO_VIEW,
-        re.compile(rf"(?:클릭하여)?사진(?:보기|확인){_OPTIONAL_REQUEST}"),
+        re.compile(
+            rf"(?:클릭하여)?사진(?:보기|확인){_REQUEST_OR_INCOMPLETE_BARE_ACTION}"
+        ),
     ),
     (
         MessageDoubt.PARCEL_LOOKUP,
-        re.compile(rf"(?:택배|배송|운송)(?:상태)?(?:조회|확인){_OPTIONAL_REQUEST}"),
+        re.compile(
+            rf"(?:택배|배송|운송)(?:상태)?(?:조회|확인)"
+            rf"{_REQUEST_OR_INCOMPLETE_BARE_ACTION}"
+        ),
     ),
     (
         MessageDoubt.DETAIL_VIEW,
         re.compile(
-            rf"(?:상세내용|거래내역|교환내역|공지|안내|내용)(?:을)?(?:확인|조회){_OPTIONAL_REQUEST}"
+            rf"(?:클릭하여)?(?:상세내용|거래내역|교환내역|공지|안내|내용)(?:을)?"
+            rf"(?:확인|조회){_REQUEST_OR_INCOMPLETE_BARE_ACTION}"
         ),
     ),
     (
@@ -267,8 +293,9 @@ _ACTION_RULES: tuple[tuple[MessageDoubt, re.Pattern[str]], ...] = (
     (
         MessageDoubt.OPEN_LINK,
         re.compile(
-            rf"(?:(?:아래)?(?:url|링크)(?:을)?(?:클릭|접속){_OPTIONAL_REQUEST}|"
-            rf"클릭{_OPTIONAL_REQUEST})"
+            rf"(?:(?:아래)?(?:url|링크)(?:을|를)?(?:클릭|접속)"
+            rf"{_REQUEST_OR_INCOMPLETE_BARE_ACTION}|"
+            rf"클릭{_REQUEST_OR_INCOMPLETE_BARE_ACTION})"
         ),
     ),
 )
