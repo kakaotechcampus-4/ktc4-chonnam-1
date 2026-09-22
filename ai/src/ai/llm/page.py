@@ -52,9 +52,12 @@ _QUOTED_TEXT_RE = re.compile(r'''‘[^’]*’|“[^”]*”|'[^']*'|"[^"]*"|「
 _CLAUSE_TOKEN_RE = re.compile(
     rf"(?P<quote>{_QUOTED_TEXT_RE.pattern})|{_CLAUSE_SPLIT_RE.pattern}"
 )
-_APP_RE = re.compile(r"(?:앱|어플|app|application)", re.IGNORECASE)
+_APP_RE = re.compile(r"(?:앱|어플|application|app)", re.IGNORECASE)
 _INSTALL_RE = re.compile(r"(?:설치|다운로드|내려받|install|download)", re.IGNORECASE)
 _REMOTE_RE = re.compile(r"(?:원격\s*(?:제어|지원|접속)|remote\s*(?:control|support|access))", re.IGNORECASE)
+_REMOTE_APP_RE = re.compile(rf"{_REMOTE_RE.pattern}\s*{_APP_RE.pattern}", re.IGNORECASE)
+_APP_PARTICLE_RE = re.compile(r"^\s*(?:[을를은는이가에]\s*)?")
+_ACTION_ADVERBS_RE = re.compile(r"^\s*(?:(?:지금|바로|먼저|다시)\s+)*")
 _REMOTE_ACTION_RE = re.compile(r"(?:설치|연결|접속|실행|install|connect|run)", re.IGNORECASE)
 _INPUT_RE = re.compile(r"(?:입력|제공|제출|enter|submit)", re.IGNORECASE)
 _CREDENTIAL_MODIFIERS_RE = re.compile(
@@ -96,6 +99,10 @@ _CONNECTED_WARNING_RE = re.compile(
     re.IGNORECASE,
 )
 _COORDINATOR_RE = re.compile(r"^\s*(?:하고|한\s*뒤|후|및)\s*")
+_APP_ACTION_CONTINUATION_RE = re.compile(
+    r"^\s*(?:하고|한\s*뒤|후|및|하지\s*말고|"
+    r"(?:[은는이가]\s*)?필요(?:가|는)?\s*없고)\s*"
+)
 _BARE_CONTROL_TAIL_RE = re.compile(r"^\s*(?:하기)?\s*$")
 _FINANCIAL_CREDENTIAL_RE = re.compile(
     r"(?:(?:은행\s*)?계좌|신용\s*카드|체크\s*카드|카드)\s*(?:의\s*)?"
@@ -215,8 +222,8 @@ def _action_match_is_request(
 
     coordinator = _COORDINATOR_RE.match(tail)
     if coordinator is not None:
-        coordinated = tail[coordinator.end() :]
-        later = _ANY_ACTION_RE.search(coordinated)
+        coordinated = _ACTION_ADVERBS_RE.sub("", tail[coordinator.end() :], count=1)
+        later = _ANY_ACTION_RE.match(coordinated)
         if later is not None and _action_match_is_request(
             coordinated, later, allow_bare=False
         ):
@@ -225,13 +232,28 @@ def _action_match_is_request(
     return allow_bare and _BARE_CONTROL_TAIL_RE.fullmatch(tail) is not None
 
 
-def _has_requested_action(
-    text: str, action_pattern: re.Pattern[str], *, allow_bare: bool
+def _app_is_requested(
+    clause: str, subject_pattern: re.Pattern[str], action_pattern: re.Pattern[str]
 ) -> bool:
-    return any(
-        _action_match_is_request(text, match, allow_bare=allow_bare)
-        for match in action_pattern.finditer(text)
-    )
+    for subject in subject_pattern.finditer(clause):
+        context = _APP_PARTICLE_RE.sub("", clause[subject.end() :], count=1)
+        # Only adjacent actions can retain this app as their subject. A new
+        # noun phrase stops the chain; later apps are considered independently.
+        while True:
+            context = _ACTION_ADVERBS_RE.sub("", context, count=1)
+            action = _ANY_ACTION_RE.match(context)
+            if action is None:
+                break
+            if action_pattern.fullmatch(action.group()) and _action_match_is_request(
+                context, action, allow_bare=True
+            ):
+                return True
+            tail = context[action.end() :]
+            continuation = _APP_ACTION_CONTINUATION_RE.match(tail)
+            if continuation is None:
+                break
+            context = tail[continuation.end() :]
+    return False
 
 
 def _credential_is_requested(clause: str) -> bool:
@@ -266,8 +288,7 @@ def _valid_signal(signal: RiskSignal, elements: dict[str, PageElement]) -> bool:
             element.doubt is EnvDoubt.APP_LINK
             and "href" in element.attributes
             and any(
-                _APP_RE.search(clause)
-                and _has_requested_action(clause, _INSTALL_RE, allow_bare=True)
+                _app_is_requested(clause, _APP_RE, _INSTALL_RE)
                 for clause in clauses
             )
         )
@@ -277,13 +298,8 @@ def _valid_signal(signal: RiskSignal, elements: dict[str, PageElement]) -> bool:
         )
     if signal.code is RiskSignalCode.REMOTE_CONTROL:
         return any(
-            _APP_RE.search(remote_context)
-            and _has_requested_action(
-                remote_context, _REMOTE_ACTION_RE, allow_bare=True
-            )
+            _app_is_requested(clause, _REMOTE_APP_RE, _REMOTE_ACTION_RE)
             for clause in clauses
-            for remote in _REMOTE_RE.finditer(clause)
-            if (remote_context := clause[remote.start() :])
         )
     return False
 

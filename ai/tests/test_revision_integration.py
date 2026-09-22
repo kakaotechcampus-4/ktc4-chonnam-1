@@ -111,6 +111,81 @@ async def test_field_grounding_and_subject_local_negation_survive_pipeline(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("html,code,answer", [
+    ('<a href="/manual.pdf">앱 설치하지 마세요, 자료를 다운로드하세요</a>',
+     RiskSignalCode.INSTALL_PROMPT, True),
+    ('<a href="/manual.pdf">앱 설치는 필요 없고 설명서를 다운로드하세요</a>',
+     RiskSignalCode.INSTALL_PROMPT, True),
+    ('<a href="/parcel">원격 지원 앱은 설치하지 마세요, 배송 앱을 설치하세요</a>',
+     RiskSignalCode.REMOTE_CONTROL, True),
+    ('<a href="/target">자료는 다운로드하지 말고 앱을 설치하세요</a>',
+     RiskSignalCode.INSTALL_PROMPT, False),
+    ('<a href="/target">앱을 설치하지 말고 원격 지원 앱에 연결하세요</a>',
+     RiskSignalCode.REMOTE_CONTROL, False),
+    ('<a href="/target">원격 지원 앱을 설치하고 연결하세요</a>',
+     RiskSignalCode.REMOTE_CONTROL, False),
+], ids=["denied-app-material", "unneeded-app-manual", "denied-remote-parcel",
+        "later-app", "later-remote", "same-remote-coordination"])
+async def test_page_app_subject_keeps_its_own_action(html, code, answer, make_parse_client):
+    inspected = inspect_html(html)
+    proposal = PageProposal(signals=[signal(
+        code, EvidenceSource.OBSERVATION, inspected.elements[0].element_id)])
+    client, _ = make_parse_client(parsed=proposal)
+
+    result = await analyze_environment_part(page(html), client=client, model="test")
+
+    assert result.answer is answer
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text,code,answer", [
+    ("원격 지원 앱은 설치하지 마세요, 배송 앱을 설치하세요",
+     RiskSignalCode.INSTALL_PROMPT, False),
+    ("원격 지원 앱을 설치하지 말고 연결하세요", RiskSignalCode.REMOTE_CONTROL, False),
+    ("앱을 설치하지 말고 다운로드하세요", RiskSignalCode.INSTALL_PROMPT, False),
+    ("앱 설치는 필요 없고 다운로드하세요", RiskSignalCode.INSTALL_PROMPT, False),
+    ("앱을 다운로드하고 설치해 주시기 바랍니다", RiskSignalCode.INSTALL_PROMPT, False),
+    ("앱을 설치하고 다운로드하지 마세요", RiskSignalCode.INSTALL_PROMPT, True),
+    ("앱을 설치하지 말고 자료를 다운로드하세요", RiskSignalCode.INSTALL_PROMPT, True),
+    ("원격 지원 앱은 필요 없고 배송 앱을 설치하세요", RiskSignalCode.REMOTE_CONTROL, True),
+    ("앱은 필요 없고 다른 프로그램을 다운로드하세요", RiskSignalCode.INSTALL_PROMPT, True),
+    ("application 다운로드하세요", RiskSignalCode.INSTALL_PROMPT, False),
+    ("remote support application 설치하세요", RiskSignalCode.REMOTE_CONTROL, False),
+])
+async def test_page_app_action_chains_stop_at_independent_subject(
+    text, code, answer, make_parse_client,
+):
+    html = f'<a href="/target">{text}</a>'
+    inspected = inspect_html(html)
+    proposal = PageProposal(signals=[signal(
+        code, EvidenceSource.OBSERVATION, inspected.elements[0].element_id)])
+    client, _ = make_parse_client(parsed=proposal)
+
+    result = await analyze_environment_part(page(html), client=client, model="test")
+
+    assert result.answer is answer
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text,code,answer", [
+    ("앱을 지금 바로 설치해 주시기 바랍니다", RiskSignalCode.INSTALL_PROMPT, False),
+    ("앱 설치는 필요 없고 원격 지원 앱에 바로 연결하세요", RiskSignalCode.REMOTE_CONTROL, False),
+    ("앱을 설치하고 바로 연결하세요", RiskSignalCode.INSTALL_PROMPT, False),
+    ("원격 지원 앱을 설치하지 말고 바로 연결하세요", RiskSignalCode.REMOTE_CONTROL, False),
+    ("앱을 지금 설치하지 말고 자료를 바로 다운로드하세요", RiskSignalCode.INSTALL_PROMPT, True),
+])
+async def test_page_app_local_adverbs_preserve_request_scope(text, code, answer, make_parse_client):
+    html = f'<a href="/client.apk">{text}</a>'
+    proposal = PageProposal(signals=[signal(
+        code, EvidenceSource.OBSERVATION, inspect_html(html).elements[0].element_id)])
+    client, _ = make_parse_client(parsed=proposal)
+
+    result = await analyze_environment_part(page(html), client=client, model="test")
+
+    assert result.answer is answer
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("text,doubt,quote", [
     ("배송 조회를 하지 마세요", MessageDoubt.NONE, None),
     ("링크를 클릭하지 마세요", MessageDoubt.NONE, None),
