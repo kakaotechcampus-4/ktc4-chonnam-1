@@ -48,17 +48,36 @@ PAGE_SYSTEM_PROMPT = (
 
 _PROMPT_ATTRIBUTES = frozenset({"type", "name", "autocomplete", "aria-label"})
 _CLAUSE_SPLIT_RE = re.compile(r"[.!?\n。！？]")
-_NEGATED_ACTION_RE = re.compile(
-    r"(?:설치|다운로드|입력|연결|접속|실행|제공|제출)(?:하|해|하지|하지\s*)?"
-    r"(?:지\s*)?(?:말|마세요|않)|"
-    r"(?:금지|주의|피하세요)|"
-    r"(?:do\s+not|don't|never)\s+(?:install|download|enter|connect|run|submit)",
-    re.IGNORECASE,
-)
 _APP_RE = re.compile(r"(?:앱|어플|app|application)", re.IGNORECASE)
 _INSTALL_RE = re.compile(r"(?:설치|다운로드|내려받|install|download)", re.IGNORECASE)
 _REMOTE_RE = re.compile(r"(?:원격\s*(?:제어|지원|접속)|remote\s*(?:control|support|access))", re.IGNORECASE)
 _REMOTE_ACTION_RE = re.compile(r"(?:설치|연결|접속|실행|install|connect|run)", re.IGNORECASE)
+_INPUT_RE = re.compile(r"(?:입력|제공|제출|enter|submit)", re.IGNORECASE)
+_ANY_ACTION_RE = re.compile(
+    r"(?:설치|다운로드|내려받|입력|제공|제출|연결|접속|실행|"
+    r"install|download|enter|submit|connect|run)",
+    re.IGNORECASE,
+)
+_NON_REQUEST_AFTER_ACTION_RE = re.compile(
+    r"^\s*"
+    r"(?:(?:하거나|하고|또는|및)\s*(?:설치|다운로드|입력|연결|접속|실행)\s*)?"
+    r"(?:을|를|은|는|이|가|도|할|하는|하기)?\s*"
+    r"(?:하지\s*(?:말|마|않)|"
+    r"필요(?:가|는)?\s*(?:없|하지\s*않)|불필요|금지|"
+    r"완료(?:되었|됐|됨|입니다|되었습니다|됐습니다|\s*$)|"
+    r"성공|종료|상태|여부|내역|방법|안내|(?:is\s+)?not\s+required|"
+    r"(?:do\s+not|don't|never)\b)",
+    re.IGNORECASE,
+)
+_REQUEST_AFTER_ACTION_RE = re.compile(
+    r"^\s*(?:을|를)?\s*(?:"
+    r"하(?:세요|십시오|라)|해\s*(?:주세요|주십시오)|해야\s*(?:합니다|해요)|"
+    r"완료(?:하(?:세요|십시오)|해\s*(?:주세요|주십시오))|"
+    r"바랍니다|(?:이|가)?\s*필요(?:합니다|해요)|please\b|now\b)",
+    re.IGNORECASE,
+)
+_COORDINATOR_RE = re.compile(r"^\s*(?:하고|한\s*뒤|후|및)\s*")
+_BARE_CONTROL_TAIL_RE = re.compile(r"^\s*(?:하기)?\s*$")
 _FINANCIAL_CREDENTIAL_RE = re.compile(
     r"(?:(?:은행\s*)?계좌|신용\s*카드|체크\s*카드|카드)\s*(?:의\s*)?"
     r"(?:비밀번호|비번|password|pin)|"
@@ -123,12 +142,61 @@ def _supported_category(inspection: PageInspection, proposal: PageProposal) -> T
         return Topic.UNKNOWN
 
 
-def _positive_clauses(context: str) -> list[str]:
+def _clauses(context: str) -> list[str]:
     return [
         clause
         for raw in _CLAUSE_SPLIT_RE.split(context)
-        if (clause := " ".join(raw.split())) and not _NEGATED_ACTION_RE.search(clause)
+        if (clause := " ".join(raw.split()))
     ]
+
+
+def _action_match_is_request(
+    text: str,
+    match: re.Match[str],
+    *,
+    allow_bare: bool,
+) -> bool:
+    tail = text[match.end() :]
+    if _NON_REQUEST_AFTER_ACTION_RE.match(tail):
+        return False
+    if _REQUEST_AFTER_ACTION_RE.match(tail):
+        return True
+
+    coordinator = _COORDINATOR_RE.match(tail)
+    if coordinator is not None:
+        coordinated = tail[coordinator.end() :]
+        later = _ANY_ACTION_RE.search(coordinated)
+        if later is not None and _action_match_is_request(
+            coordinated, later, allow_bare=False
+        ):
+            return True
+
+    return allow_bare and _BARE_CONTROL_TAIL_RE.fullmatch(tail) is not None
+
+
+def _has_requested_action(
+    text: str, action_pattern: re.Pattern[str], *, allow_bare: bool
+) -> bool:
+    return any(
+        _action_match_is_request(text, match, allow_bare=allow_bare)
+        for match in action_pattern.finditer(text)
+    )
+
+
+def _credential_is_requested(clause: str) -> bool:
+    for credential in _FINANCIAL_CREDENTIAL_RE.finditer(clause):
+        context = clause[credential.end() :]
+        actions = list(_INPUT_RE.finditer(context))
+        if actions:
+            if any(
+                _action_match_is_request(context, action, allow_bare=True)
+                for action in actions
+            ):
+                return True
+            continue
+        if _NON_REQUEST_AFTER_ACTION_RE.match(context) is None:
+            return True
+    return False
 
 
 def _valid_signal(signal: RiskSignal, elements: dict[str, PageElement]) -> bool:
@@ -138,23 +206,30 @@ def _valid_signal(signal: RiskSignal, elements: dict[str, PageElement]) -> bool:
     if element is None:
         return False
 
-    clauses = _positive_clauses(_element_context(element))
+    clauses = _clauses(_element_context(element))
     if signal.code is RiskSignalCode.INSTALL_PROMPT:
         return (
             element.doubt is EnvDoubt.APP_LINK
             and "href" in element.attributes
-            and any(_APP_RE.search(clause) and _INSTALL_RE.search(clause) for clause in clauses)
+            and any(
+                _APP_RE.search(clause)
+                and _has_requested_action(clause, _INSTALL_RE, allow_bare=True)
+                for clause in clauses
+            )
         )
     if signal.code is RiskSignalCode.CREDENTIAL_REQUEST:
         return element.doubt is EnvDoubt.LOGIN_FORM and any(
-            _FINANCIAL_CREDENTIAL_RE.search(clause) for clause in clauses
+            _credential_is_requested(clause) for clause in clauses
         )
     if signal.code is RiskSignalCode.REMOTE_CONTROL:
         return any(
-            _REMOTE_RE.search(clause)
-            and _APP_RE.search(clause)
-            and _REMOTE_ACTION_RE.search(clause)
+            _APP_RE.search(remote_context)
+            and _has_requested_action(
+                remote_context, _REMOTE_ACTION_RE, allow_bare=True
+            )
             for clause in clauses
+            for remote in _REMOTE_RE.finditer(clause)
+            if (remote_context := clause[remote.start() :])
         )
     return False
 
