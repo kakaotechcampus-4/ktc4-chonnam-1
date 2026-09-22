@@ -272,7 +272,9 @@ def test_independent_requests_use_original_order_instead_of_label_priority():
         "계좌 인출이 완료되었습니다",
         "앱 다운로드가 완료되었습니다",
         "앱 다운로드를 완료했습니다",
+        "앱 다운로드를 완료하였습니다",
         "앱 다운로드 처리가 완료되었습니다",
+        "앱 다운로드 처리 완료 안내입니다",
         "사진 보기가 완료되었습니다",
         "배송 조회가 완료되었습니다",
         "배송 조회 작업이 완료되었습니다",
@@ -342,6 +344,15 @@ def test_completed_action_clause_preserves_following_independent_request():
     assert all(item.doubt is not MessageDoubt.APP_INSTALL for item in candidates)
 
 
+def test_request_to_complete_download_remains_an_install_action():
+    text = "앱 다운로드를 완료해주세요"
+
+    assert (
+        select_message_doubt(message_candidates(text, analysis()))
+        is MessageDoubt.APP_INSTALL
+    )
+
+
 def test_normalized_match_restores_html_entity_source_span():
     text = "&#xC571;·다 운.로-드 부탁드립니다"
 
@@ -400,8 +411,10 @@ def test_separate_link_click_and_detail_keep_source_order():
     [
         ("은행 카드로 구매한 상품을 환불해주세요", Topic.SHOPPING),
         ("계좌로 결제한 주문을 환불해주세요", Topic.SHOPPING),
+        ("은행 계좌로 주문 상품을 결제하고 환불해주세요", Topic.SHOPPING),
         ("택배 배송 조회와 주문 취소를 각각 확인하세요", Topic.UNKNOWN),
         ("택배 배송 조회와 주문 취소를 확인하세요", Topic.UNKNOWN),
+        ("택배 배송 조회 및 주문 취소를 확인하세요", Topic.UNKNOWN),
     ],
 )
 def test_topic_uses_bounded_request_context_for_overlaps(text, expected):

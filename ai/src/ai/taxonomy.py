@@ -105,14 +105,44 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text for term in terms)
 
 
-_PAYMENT_INSTRUMENT_SHOPPING_REQUEST_RE = re.compile(
-    r"(?:은행카드|카드|계좌)로(?:구매|결제).*?(?:주문|상품|취소|환불)"
-)
-_INDEPENDENT_PARCEL_SHOPPING_RE = re.compile(
-    r"(?:(?:택배|배송|운송)(?:상태)?(?:조회|확인)(?:와|과)"
-    r"(?:주문|구매)?취소(?:를)?|"
-    r"(?:주문|구매)?취소(?:와|과)(?:택배|배송|운송)(?:상태)?(?:조회|확인))"
-)
+_TOPIC_CLAUSE_SPLIT_RE = re.compile(r"[.!?\n。！？]")
+_PAYMENT_INSTRUMENT_RE = re.compile(r"(?:은행카드|카드|(?:은행)?계좌)로")
+_PARCEL_REQUEST_RE = re.compile(r"(?:택배|배송|운송)(?:상태)?(?:조회|확인)")
+_SHOPPING_CANCEL_RE = re.compile(r"(?:주문|구매)?취소")
+_PURPOSE_CONNECTOR_RE = re.compile(r"(?:요청|안내)?(?:와|과|및)(?:별도)?")
+
+
+def _topic_clauses(text: str) -> list[str]:
+    return [
+        normalized
+        for clause in _TOPIC_CLAUSE_SPLIT_RE.split(text)
+        if (normalized := normalize(clause))
+    ]
+
+
+def _has_payment_instrument_shopping_request(text: str) -> bool:
+    for clause in _topic_clauses(text):
+        if (
+            _PAYMENT_INSTRUMENT_RE.search(clause)
+            and _contains_any(clause, ("결제", "구매"))
+            and _contains_any(clause, ("주문", "상품", "구매"))
+            and _contains_any(clause, ("취소", "환불"))
+        ):
+            return True
+    return False
+
+
+def _has_independent_parcel_and_shopping_requests(text: str) -> bool:
+    for clause in _topic_clauses(text):
+        parcel_matches = tuple(_PARCEL_REQUEST_RE.finditer(clause))
+        shopping_matches = tuple(_SHOPPING_CANCEL_RE.finditer(clause))
+        for parcel in parcel_matches:
+            for shopping in shopping_matches:
+                first, second = sorted((parcel, shopping), key=lambda item: item.start())
+                between = clause[first.end() : second.start()]
+                if _PURPOSE_CONNECTOR_RE.fullmatch(between):
+                    return True
+    return False
 
 
 def classify_topic(text: str, extracted: MessageAnalysis | None = None) -> Topic:
@@ -154,13 +184,13 @@ def classify_topic(text: str, extracted: MessageAnalysis | None = None) -> Topic
 
     if (
         {Topic.PARCEL, Topic.SHOPPING} <= topics
-        and _INDEPENDENT_PARCEL_SHOPPING_RE.search(normalized)
+        and _has_independent_parcel_and_shopping_requests(text)
     ):
         return Topic.UNKNOWN
     if Topic.PUBLIC in topics and topics <= {Topic.PUBLIC, Topic.FINANCE}:
         return Topic.PUBLIC
     shopping_context = {Topic.SHOPPING, Topic.PARCEL, Topic.GIFT}
-    if _PAYMENT_INSTRUMENT_SHOPPING_REQUEST_RE.search(normalized):
+    if _has_payment_instrument_shopping_request(text):
         shopping_context.add(Topic.FINANCE)
     if cancel_or_refund and topics <= shopping_context:
         return Topic.SHOPPING
@@ -309,7 +339,7 @@ _CLAUSE_END_RE = re.compile(r"[.!?\n。！？]")
 _COMPLETION_TAIL_RE = re.compile(
     r"^(?:(?:처리|작업)(?:[이가을를])?)?"
     r"(?:(?:정상적으로|성공적으로|모두))?(?:[이가을를])?"
-    r"완료(?:$|되었|됐|했|됨)"
+    r"완료(?:$|되었|됐|했|하였|됨|(?:안내|알림)(?:입니다)?)"
 )
 
 
