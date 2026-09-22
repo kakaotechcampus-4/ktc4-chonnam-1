@@ -77,6 +77,15 @@ _REQUEST_AFTER_ACTION_RE = re.compile(
     r"바랍니다|(?:이|가)?\s*필요(?:합니다|해요)|please\b|now\b)",
     re.IGNORECASE,
 )
+_MENTION_AFTER_REQUEST_RE = re.compile(
+    r"^\s*[’”'\"」』]\s*(?:라는|이라는|이라고\s*(?:한|하는))\s*"
+    r"(?:문구|메시지|안내|표현)"
+)
+_CONNECTED_WARNING_RE = re.compile(
+    r"(?:설치|다운로드|입력|연결|접속|실행|따르|응하)\s*"
+    r"(?:하|해)?지\s*(?:말|마|않)|무시\s*(?:하|해)?(?:세요|하십시오)",
+    re.IGNORECASE,
+)
 _COORDINATOR_RE = re.compile(r"^\s*(?:하고|한\s*뒤|후|및)\s*")
 _BARE_CONTROL_TAIL_RE = re.compile(r"^\s*(?:하기)?\s*$")
 _FINANCIAL_CREDENTIAL_RE = re.compile(
@@ -160,8 +169,14 @@ def _action_match_is_request(
     tail = text[match.end() :]
     if _NON_REQUEST_AFTER_ACTION_RE.match(tail):
         return False
-    if _REQUEST_AFTER_ACTION_RE.match(tail):
-        return True
+    request = _REQUEST_AFTER_ACTION_RE.match(tail)
+    if request is not None:
+        remainder = tail[request.end() :]
+        mention = _MENTION_AFTER_REQUEST_RE.match(remainder)
+        if mention is None or _CONNECTED_WARNING_RE.search(
+            remainder[mention.end() :]
+        ) is None:
+            return True
 
     coordinator = _COORDINATOR_RE.match(tail)
     if coordinator is not None:

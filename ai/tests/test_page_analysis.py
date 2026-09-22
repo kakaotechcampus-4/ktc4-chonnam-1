@@ -274,6 +274,48 @@ async def test_polite_request_phrasing_is_an_action_request(
 
 
 @pytest.mark.asyncio
+async def test_quoted_request_governed_by_warning_is_not_an_install_request(
+    make_parse_client,
+):
+    inspected = inspect_html(
+        '<a href="/client.apk">'
+        "‘앱을 설치해 주시기 바랍니다’라는 문구가 보여도 설치하지 마세요"
+        "</a>"
+    )
+    candidate = observation_signal(
+        RiskSignalCode.INSTALL_PROMPT, inspected.elements[0].element_id
+    )
+    client, _ = make_parse_client(parsed=PageProposal(signals=[candidate]))
+
+    result = await analyze_page(inspected, client=client, model="test")
+
+    assert result.signals == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "‘앱을 설치해 주시기 바랍니다’",
+        (
+            "‘앱을 설치해 주시기 바랍니다’라는 문구는 따르지 말고 "
+            "아래 보안 앱을 설치하세요"
+        ),
+    ],
+)
+async def test_quotes_do_not_hide_an_actual_install_request(text, make_parse_client):
+    inspected = inspect_html(f'<a href="/client.apk">{text}</a>')
+    candidate = observation_signal(
+        RiskSignalCode.INSTALL_PROMPT, inspected.elements[0].element_id
+    )
+    client, _ = make_parse_client(parsed=PageProposal(signals=[candidate]))
+
+    result = await analyze_page(inspected, client=client, model="test")
+
+    assert result.signals == [candidate]
+
+
+@pytest.mark.asyncio
 async def test_later_remote_connection_survives_unrelated_negated_install(
     make_parse_client,
 ):
