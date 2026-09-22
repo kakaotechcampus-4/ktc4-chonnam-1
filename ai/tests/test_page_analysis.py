@@ -243,6 +243,37 @@ async def test_completion_request_is_still_an_action_request(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("html", "code"),
+    [
+        (
+            '<a href="/client.apk">앱을 설치해 주시기 바랍니다</a>',
+            RiskSignalCode.INSTALL_PROMPT,
+        ),
+        (
+            '<form><label>계좌 비밀번호를 입력해 주시기 바랍니다'
+            '<input type="password"></label></form>',
+            RiskSignalCode.CREDENTIAL_REQUEST,
+        ),
+        (
+            '<a href="/support.apk">원격 지원 앱을 설치해 주시기 바랍니다</a>',
+            RiskSignalCode.REMOTE_CONTROL,
+        ),
+    ],
+)
+async def test_polite_request_phrasing_is_an_action_request(
+    html, code, make_parse_client
+):
+    inspected = inspect_html(html)
+    candidate = observation_signal(code, inspected.elements[0].element_id)
+    client, _ = make_parse_client(parsed=PageProposal(signals=[candidate]))
+
+    result = await analyze_page(inspected, client=client, model="test")
+
+    assert result.signals == [candidate]
+
+
+@pytest.mark.asyncio
 async def test_later_remote_connection_survives_unrelated_negated_install(
     make_parse_client,
 ):
