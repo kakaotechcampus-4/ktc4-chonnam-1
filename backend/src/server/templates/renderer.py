@@ -45,5 +45,5 @@ def render_r1_lookalike() -> dict:
     """
 
     return load_kakao_template(
-        "r1_lookalike"
+        "r1-lookalike"
     )
