@@ -3,7 +3,14 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    field_validator,
+    model_validator,
+)
 
 
 class ReasonCode(str, Enum):
@@ -36,6 +43,86 @@ class Verdict:
 class AnalysisStatus(str, Enum):
     COMPLETED = "completed"
     FALLBACK = "fallback"
+
+
+class Brand(str, Enum):
+    CJ_LOGISTICS = "CJ대한통운"
+    CJ_PARCEL = "CJ택배"
+    CJ_EXPRESS = "CJ익스프레스"
+    CJ_SHOPPING = "CJ오쇼핑"
+    HANJIN = "한진택배"
+    LOGEN = "로젠택배"
+    EPOST = "우체국택배"
+    DHL = "DHL"
+    HYUNDAI = "현대택배"
+    LOTTE_PARCEL = "롯데택배"
+    CU = "CU"
+    DAESHIN = "대신택배"
+    KGB = "KGB택배"
+    KYUNGDONG = "경동택배"
+    HAPDONG = "합동택배"
+    COUPANG = "쿠팡"
+    AUCTION = "옥션"
+    LOTTE_MALL = "롯데몰"
+    KAKAO_GIFT = "카카오톡 선물하기"
+    SEVEN_ELEVEN = "7-11"
+    RAKUTEN_EXPRESS = "라쿠텐 익스프레스"
+    KISA = "KISA"
+    PROSECUTION = "검찰청"
+    UNKNOWN = "unknown"
+
+
+class Topic(str, Enum):
+    PARCEL = "택배"
+    SHOPPING = "쇼핑"
+    FINANCE = "금융"
+    PUBLIC = "공공기관"
+    HEALTH = "의료·건강"
+    SECURITY = "보안"
+    GIFT = "선물·이벤트"
+    UNKNOWN = "unknown"
+
+
+class MessageDoubt(str, Enum):
+    APP_INSTALL = "앱 설치"
+    ADDRESS_EDIT = "주소 입력·수정"
+    ADDRESS_CHECK = "주소 확인"
+    IDENTITY_CHECK = "본인 확인"
+    DATA_INPUT = "정보 입력"
+    PHOTO_VIEW = "사진 확인"
+    PARCEL_LOOKUP = "배송 조회"
+    DETAIL_VIEW = "상세 내용 확인"
+    CANCEL_REFUND = "주문 취소·환불"
+    PICKUP = "수령·일정 확인"
+    WITHDRAW = "금전 인출"
+    ANSWER_PHONE = "전화 응대"
+    OPEN_LINK = "링크 접속"
+    NONE = "없음"
+    UNKNOWN = "unknown"
+
+
+class EnvDoubt(str, Enum):
+    APP_LINK = "앱 다운로드 링크"
+    LOGIN_FORM = "로그인·인증 입력폼"
+    PAYMENT = "결제 요청 요소"
+    PERSONAL_FORM = "개인정보 입력폼"
+    ADDRESS_FORM = "주소 입력폼"
+    PARCEL_WIDGET = "배송 조회 요소"
+    DOCUMENT_VIEW = "사진·문서 열람 요소"
+    NONE = "없음"
+    UNKNOWN = "unknown"
+
+
+class FailureCode(str, Enum):
+    EMPTY_INPUT = "empty_input"
+    MISSING_RESULT = "missing_result"
+    COLLECTION_FAILED = "collection_failed"
+    TIMEOUT = "timeout"
+    LLM_ERROR = "llm_error"
+    REFUSED = "refused"
+    INVALID_OUTPUT = "invalid_output"
+    INPUT_TOO_LARGE = "input_too_large"
+    PARTIAL_CONTENT = "partial_content"
 
 
 class CategoryCode(str, Enum):
@@ -188,6 +275,25 @@ class DomainCheck(InboundModel):
     carrier_name: str | None = None
 
 
+class UrlAnalysis(InboundModel):
+    final_url: str = Field(min_length=1)
+    domain: str = Field(min_length=1)
+    official: StrictBool
+
+    @field_validator("final_url", "domain")
+    @classmethod
+    def reject_blank_value(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be blank")
+        return value
+
+
+class IsolatedPage(InboundModel):
+    brand: str
+    category: str
+    info: str
+
+
 # ── LLM 출력 (환각 방어를 위해 strict) ──────────────────────────
 
 
@@ -225,6 +331,109 @@ class RiskSignal(StrictModel):
 
 class SignalProposal(StrictModel):
     signals: list[RiskSignal] = Field(default_factory=list)
+
+
+class MessageDetails(StrictModel):
+    doubt: MessageDoubt | None = None
+    reason: str | None = None
+
+
+class EnvironmentDetails(StrictModel):
+    doubt: EnvDoubt | None = None
+    reason: str | None = None
+
+
+def _all_null(part: BaseModel) -> bool:
+    data = part.model_dump()
+    return all(data[key] is None for key in ("brand", "category", "answer")) and all(
+        value is None for value in data["details"].values()
+    )
+
+
+class MessagePart(StrictModel):
+    brand: Brand | None = None
+    category: Topic | None = None
+    answer: StrictBool | None = None
+    details: MessageDetails = Field(default_factory=MessageDetails)
+
+    @model_validator(mode="after")
+    def require_complete_or_skipped(self) -> "MessagePart":
+        values = (*self.model_dump().values(),)
+        details = values[-1]
+        leaf_values = (*values[:-1], *details.values())
+        if any(value is None for value in leaf_values) and any(
+            value is not None for value in leaf_values
+        ):
+            raise ValueError("part must be entirely null or entirely populated")
+        return self
+
+
+class EnvironmentPart(StrictModel):
+    brand: Brand | None = None
+    category: Topic | None = None
+    answer: StrictBool | None = None
+    details: EnvironmentDetails = Field(default_factory=EnvironmentDetails)
+
+    @model_validator(mode="after")
+    def require_complete_or_skipped(self) -> "EnvironmentPart":
+        values = (*self.model_dump().values(),)
+        details = values[-1]
+        leaf_values = (*values[:-1], *details.values())
+        if any(value is None for value in leaf_values) and any(
+            value is not None for value in leaf_values
+        ):
+            raise ValueError("part must be entirely null or entirely populated")
+        return self
+
+
+class AnalysisResponse(StrictModel):
+    url: UrlAnalysis
+    message: MessagePart
+    env: EnvironmentPart
+    result: StrictBool
+
+    @model_validator(mode="after")
+    def validate_result_and_parts(self) -> "AnalysisResponse":
+        if self.result is not self.url.official:
+            raise ValueError("result must match url.official")
+        if self.url.official:
+            if not _all_null(self.message) or not _all_null(self.env):
+                raise ValueError("official responses must skip both analyses")
+        elif _all_null(self.message) or _all_null(self.env):
+            raise ValueError("unofficial responses require both analyses")
+        return self
+
+
+class SignalAnalysis(StrictModel):
+    status: AnalysisStatus
+    signals: list[RiskSignal] = Field(default_factory=list)
+    failure: FailureCode | None = None
+
+    @model_validator(mode="after")
+    def validate_failure(self) -> "SignalAnalysis":
+        if (self.status is AnalysisStatus.COMPLETED) != (self.failure is None):
+            raise ValueError("completed analyses have no failure; fallback analyses require one")
+        return self
+
+
+class PageProposal(StrictModel):
+    brand: EvidenceField = Field(default_factory=EvidenceField)
+    category: EvidenceField = Field(default_factory=EvidenceField)
+    signals: list[RiskSignal] = Field(default_factory=list)
+
+
+class PageAnalysis(StrictModel):
+    status: AnalysisStatus
+    brand: Brand = Brand.UNKNOWN
+    category: Topic = Topic.UNKNOWN
+    signals: list[RiskSignal] = Field(default_factory=list)
+    failure: FailureCode | None = None
+
+    @model_validator(mode="after")
+    def validate_failure(self) -> "PageAnalysis":
+        if (self.status is AnalysisStatus.COMPLETED) != (self.failure is None):
+            raise ValueError("completed analyses have no failure; fallback analyses require one")
+        return self
 
 
 # ── 사례 검색 ────────────────────────────────────────────────
