@@ -44,7 +44,9 @@ _REQUEST = re.compile(
     r"^\s*(?:을|를)?\s*(?:하(?:세요|십시오|라)|해\s*(?:주세요|주십시오|주시기\s*바랍니다)|"
     r"주세요|주십시오|야\s*(?:합니다|해요)|해야\s*(?:합니다|해요)|"
     r"완료(?:하(?:세요|십시오)|해\s*(?:주세요|주십시오))|"
-    r"바랍니다|(?:이|가)?\s*필요(?:합니다|해요)|요청|please\b|now\b)", re.I,
+    r"바랍니다|(?:이|가)?\s*필요(?:합니다|해요)|"
+    r"(?:부탁|요청)\s*(?:드립니다|합니다|하(?:세요|십시오))|"
+    r"받(?:으세요|아\s*주세요)|please\b|now\b)", re.I,
 )
 _COORDINATOR = re.compile(r"^\s*(?:하고|한\s*뒤|후|및)\s*")
 _SUBJECT_ACTION = {
@@ -85,7 +87,7 @@ def _action_requested(text: str, action_end: int) -> bool:
         following = tail[coordinator.end():]
         action = _ACTIONS.search(following)
         return bool(action and _action_requested(following, action.end()))
-    return re.fullmatch(r"\s*(?:하기)?\s*", tail) is not None
+    return False
 
 
 def validate_message_signals(text: str, signals: list[RiskSignal]) -> list[RiskSignal]:
@@ -117,7 +119,10 @@ def validate_message_signals(text: str, signals: list[RiskSignal]) -> list[RiskS
 
 
 def _plain_quote(quote: str) -> str:
-    return " ".join(re.sub(r"<[^>]*>", "", html.unescape(quote)).split())
+    plain = " ".join(re.sub(r"<[^>]*>", "", html.unescape(quote)).split())
+    # Broken tags must not remain raw markup; escaping preserves their text
+    # without guessing how to repair or interpret the source.
+    return html.escape(plain, quote=False)
 
 
 def _join_reasons(reasons: list[str]) -> str:

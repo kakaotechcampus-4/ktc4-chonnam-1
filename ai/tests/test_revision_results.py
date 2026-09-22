@@ -89,6 +89,11 @@ def test_missing_parts_are_false_unknown_and_not_timeout(parts):
     (RiskSignalCode.REMOTE_CONTROL, "원격 지원 앱 설치가 완료되었습니다", "원격 지원 앱 설치"),
     (RiskSignalCode.REMOTE_CONTROL, "원격 지원 안내입니다. 일반 앱을 설치하세요", "원격 지원 안내입니다. 일반 앱을 설치하세요"),
     (RiskSignalCode.INSTALL_PROMPT, "앱을 설치하지 마세요. 주소를 입력하세요", "앱을 설치하지 마세요. 주소를 입력하세요"),
+    (RiskSignalCode.INSTALL_PROMPT, "앱 설치", "앱 설치"),
+    (RiskSignalCode.CREDENTIAL_REQUEST, "비밀번호 입력", "비밀번호 입력"),
+    (RiskSignalCode.REMOTE_CONTROL, "원격 지원 앱 연결", "원격 지원 앱 연결"),
+    (RiskSignalCode.INSTALL_PROMPT, "앱 설치를 요청하지 않습니다", "앱 설치"),
+    (RiskSignalCode.INSTALL_PROMPT, "앱 설치 요청이 완료되었습니다", "앱 설치 요청"),
 ])
 def test_semantically_unsupported_or_non_request_quotes_are_rejected(code, text, quote):
     assert validate_message_signals(text, [signal(quote, code)]) == []
@@ -106,6 +111,10 @@ def test_semantically_unsupported_or_non_request_quotes_are_rejected(code, text,
     (RiskSignalCode.CREDENTIAL_REQUEST, "보안카드 번호를 보내주세요", "보안카드 번호를 보내주세요"),
     (RiskSignalCode.REMOTE_CONTROL, "원격 제어 앱을 설치하세요", "원격 제어 앱을 설치하세요"),
     (RiskSignalCode.REMOTE_CONTROL, "원격 지원 앱에 연결해주세요", "원격 지원 앱에 연결해주세요"),
+    (RiskSignalCode.INSTALL_PROMPT, "앱 설치 부탁드립니다", "앱 설치"),
+    (RiskSignalCode.CREDENTIAL_REQUEST, "비밀번호 입력 부탁드립니다", "비밀번호 입력"),
+    (RiskSignalCode.INSTALL_PROMPT, "앱을 다운로드 받으세요", "앱을 다운로드"),
+    (RiskSignalCode.INSTALL_PROMPT, "앱 설치를 요청드립니다", "앱 설치"),
 ])
 def test_explicit_code_specific_requests_are_accepted(code, text, quote):
     candidate = signal(quote, code)
@@ -192,6 +201,23 @@ def test_message_reason_quotes_plain_text_even_when_input_contains_markup():
     ))
     assert "<" not in part.details.reason
     assert "상담 예약을 진행하세요" in part.details.reason
+
+
+@pytest.mark.parametrize("text", [
+    "<img src=x 상담 예약을 진행하세요",
+    "&lt;img src=x 상담 예약을 진행하세요",
+    "&lt;b&gt;상담 예약을 진행하세요&lt;/b&gt;",
+    "&amp;lt;img src=x 상담 예약을 진행하세요",
+])
+def test_message_reason_keeps_malformed_or_encoded_markup_inert(text):
+    part = message_part(text, extracted=MessageAnalysis(
+        analysis_status=AnalysisStatus.COMPLETED,
+        requested_actions=[EvidenceField(value="예약 진행", evidence=text)],
+    ))
+    assert "<" not in part.details.reason
+    assert ">" not in part.details.reason
+    assert "상담 예약을 진행하세요" in part.details.reason
+    assert part.details.reason.startswith("문자에서 '")
 
 
 def test_negated_app_request_does_not_create_a_doubt_candidate():
