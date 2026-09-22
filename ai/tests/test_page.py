@@ -193,6 +193,16 @@ def test_source_order_and_ids_do_not_depend_on_nested_closure_order():
     assert result.elements[0].element_id < result.elements[1].element_id
 
 
+def test_form_forced_closed_by_ancestor_is_partial_and_preserved():
+    html = '<label><form><input type="password"></label>'
+
+    result = inspect_html(html)
+
+    assert result.failure is FailureCode.PARTIAL_CONTENT
+    assert [item.doubt for item in result.elements] == [EnvDoubt.LOGIN_FORM]
+    assert result.elements[0].evidence == html[html.index("<form") :]
+
+
 def test_unclosed_important_form_preserves_observed_element_as_partial():
     html = '<p>먼저 확인함</p><form><label>비밀번호<input type="password">'
 
@@ -213,6 +223,16 @@ def test_element_limit_preserves_candidates_collected_before_limit():
     assert result.failure is FailureCode.PARTIAL_CONTENT
     assert [item.doubt for item in result.elements] == [EnvDoubt.LOGIN_FORM]
     assert result.elements[0].evidence == login
+
+
+def test_deep_valid_nesting_within_element_limit_does_not_use_python_recursion():
+    html = ("<div>" * 1_200) + "안내" + ("</div>" * 1_200)
+
+    result = inspect_html(html)
+
+    assert result.failure is None
+    assert result.text == "안내"
+    assert result.elements == ()
 
 
 def test_text_limit_preserves_text_prefix_and_prior_elements():
@@ -242,6 +262,13 @@ def test_completed_payment_text_and_bare_feature_titles_are_not_structures():
     html = "<h1>배송 조회</h1><p>결제 완료</p><p>앱 설치 안내</p>"
 
     result = inspect_html(html)
+
+    assert result.failure is None
+    assert result.elements == ()
+
+
+def test_apk_extension_without_visible_install_guidance_is_not_an_app_link():
+    result = inspect_html('<a href="/client.apk">고객센터</a>')
 
     assert result.failure is None
     assert result.elements == ()

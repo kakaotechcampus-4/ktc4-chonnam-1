@@ -51,7 +51,6 @@ _INPUT_CONTAINERS = frozenset(
 _DOCUMENT_EXTENSIONS = re.compile(
     r"\.(?:pdf|docx?|xlsx?|pptx?|txt|rtf|jpe?g|png|gif|webp)(?:[?#]|$)", re.I
 )
-_APP_EXTENSIONS = re.compile(r"\.(?:apk|aab|ipa)(?:[?#]|$)", re.I)
 
 
 @dataclass(frozen=True)
@@ -190,6 +189,8 @@ class _Collector(HTMLParser):
         for node in intervening:
             node.incomplete = True
             node.end = end
+            if node.tag == "form" and not node.ignored:
+                self.malformed_important = True
         if matched.tag == "form" and intervening and not matched.ignored:
             matched.incomplete = True
             self.malformed_important = True
@@ -230,11 +231,13 @@ def _normalize_text(parts: list[str] | tuple[str, ...] | str) -> str:
 
 def _node_text(node: _Node) -> str:
     parts: list[str] = []
-    for item in node.content:
+    pending = list(reversed(node.content))
+    while pending:
+        item = pending.pop()
         if isinstance(item, str):
             parts.append(item)
         elif not item.ignored:
-            parts.append(_node_text(item))
+            pending.extend(reversed(item.content))
     return _normalize_text(parts)
 
 
@@ -423,11 +426,11 @@ def _link_doubt(node: _Node) -> EnvDoubt | None:
     if not href:
         return None
     context = _normalize_text(
-        [_node_text(node), node.raw_attributes.get("aria-label", ""), href]
+        [_node_text(node), node.raw_attributes.get("aria-label", "")]
     ).casefold()
     app_words = any(word in context for word in ("앱", "어플", "app", "설치"))
     download_words = any(word in context for word in ("다운로드", "download", "설치"))
-    if _APP_EXTENSIONS.search(href) or (app_words and download_words):
+    if app_words and download_words:
         return EnvDoubt.APP_LINK
     document_words = any(
         word in context
