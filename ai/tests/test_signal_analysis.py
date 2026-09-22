@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from openai import LengthFinishReasonError
 
 import ai.llm.signals as signals_module
 from ai.llm.signals import analyze_signals, extract_signals
@@ -12,7 +13,10 @@ from ai.types import (
     CaseMatch,
     CaseSearchResult,
     FailureCode,
+    EvidenceSource,
     MessageAnalysis,
+    RiskSignal,
+    RiskSignalCode,
     SignalProposal,
 )
 
@@ -75,6 +79,17 @@ async def test_missing_parsed_output_has_invalid_output_failure(make_parse_clien
 @pytest.mark.asyncio
 async def test_malformed_parsed_output_has_invalid_output_failure(make_parse_client):
     client, _ = make_parse_client(parsed=object())
+
+    result = await analyze_signals("배송 안내", extracted(), None, client=client, model="test")
+
+    assert result.failure is FailureCode.INVALID_OUTPUT
+
+
+@pytest.mark.asyncio
+async def test_truncated_structured_output_has_invalid_output_failure(make_parse_client):
+    client, _ = make_parse_client(
+        side_effect=LengthFinishReasonError(completion=SimpleNamespace(usage=None))
+    )
 
     result = await analyze_signals("배송 안내", extracted(), None, client=client, model="test")
 
@@ -150,6 +165,33 @@ async def test_empty_case_search_is_encoded_as_empty_reference_cases(make_parse_
     )
 
     assert json.loads(captured["messages"][1]["content"])["reference_cases"] == []
+
+
+@pytest.mark.asyncio
+async def test_reference_only_message_evidence_remains_a_candidate(make_parse_client):
+    candidate = RiskSignal(
+        code=RiskSignalCode.INSTALL_PROMPT,
+        evidence_source=EvidenceSource.MESSAGE,
+        evidence_ref="reference-only-evidence",
+    )
+    client, _ = make_parse_client(parsed=SignalProposal(signals=[candidate]))
+    cases = CaseSearchResult(
+        status=AnalysisStatus.COMPLETED,
+        matches=[
+            CaseMatch(
+                case_id="reference-case",
+                similarity=0.9,
+                matched_variant="reference-only-evidence",
+            )
+        ],
+    )
+
+    result = await analyze_signals(
+        "배송 안내", extracted(), None, case_search=cases, client=client, model="test"
+    )
+
+    assert result.status is AnalysisStatus.COMPLETED
+    assert result.signals == [candidate]
 
 
 @pytest.mark.asyncio

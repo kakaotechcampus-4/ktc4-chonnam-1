@@ -10,7 +10,12 @@ import logging
 from contextlib import AsyncExitStack
 from pathlib import Path
 
-from openai import APIResponseValidationError, APITimeoutError, AsyncOpenAI
+from openai import (
+    APIResponseValidationError,
+    APITimeoutError,
+    AsyncOpenAI,
+    LengthFinishReasonError,
+)
 from pydantic import ValidationError
 
 from ai.llm._client import create_client, required_env
@@ -125,7 +130,7 @@ async def analyze_signals(
     except (asyncio.TimeoutError, TimeoutError, APITimeoutError) as exc:
         LOGGER.warning("signal extraction failed: %s", type(exc).__name__)
         return _failure(FailureCode.TIMEOUT)
-    except (ValidationError, APIResponseValidationError) as exc:
+    except (ValidationError, APIResponseValidationError, LengthFinishReasonError) as exc:
         LOGGER.warning("signal extraction failed: %s", type(exc).__name__)
         return _failure(FailureCode.INVALID_OUTPUT)
     except Exception as exc:
