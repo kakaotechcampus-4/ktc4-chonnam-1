@@ -107,7 +107,7 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
 
 _TOPIC_CLAUSE_SPLIT_RE = re.compile(r"[.!?\n。！？]")
 _PAYMENT_INSTRUMENT_RE = re.compile(r"(?:은행카드|카드|(?:은행)?계좌)로")
-_PARCEL_REQUEST_RE = re.compile(r"(?:택배|배송|운송)(?:상태)?(?:조회|확인)")
+_PARCEL_REQUEST_RE = re.compile(r"(?:택배|배송|운송)(?:상태|현황)?(?:을|를)?(?:조회|확인)")
 _SHOPPING_CANCEL_RE = re.compile(r"(?:주문|구매)?취소")
 _PURPOSE_CONNECTOR_RE = re.compile(r"(?:요청|안내)?(?:와|과|및)(?:별도)?")
 
@@ -286,7 +286,7 @@ _ACTION_RULES: tuple[tuple[MessageDoubt, re.Pattern[str]], ...] = (
     ),
     (
         MessageDoubt.PARCEL_LOOKUP,
-        re.compile(rf"(?:택배|배송|운송)(?:상태)?(?:조회|확인){_OPTIONAL_REQUEST}"),
+        re.compile(rf"{_PARCEL_REQUEST_RE.pattern}{_OPTIONAL_REQUEST}"),
     ),
     (
         MessageDoubt.DETAIL_VIEW,
@@ -339,7 +339,7 @@ _CLAUSE_END_RE = re.compile(r"[.!?\n。！？]")
 _COMPLETION_TAIL_RE = re.compile(
     r"^(?:(?:처리|작업)(?:[이가을를])?)?"
     r"(?:(?:정상적으로|성공적으로|모두))?(?:[이가을를])?"
-    r"완료(?:$|되었|됐|했|하였|됨|(?:안내|알림)(?:입니다)?)"
+    r"완료(?:$|입니다|되었|됐|했|하였|됨|(?:안내|알림)(?:입니다)?)"
 )
 
 
