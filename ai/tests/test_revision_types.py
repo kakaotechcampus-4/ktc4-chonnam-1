@@ -85,6 +85,27 @@ def test_enums_reject_integer_values():
         EnvironmentDetails(doubt=1)
 
 
+def test_revisions_enums_match_the_closed_contract():
+    assert {item.value for item in Brand} == {
+        "CJ대한통운", "CJ택배", "CJ익스프레스", "CJ오쇼핑", "한진택배", "로젠택배",
+        "우체국택배", "DHL", "현대택배", "롯데택배", "CU", "대신택배", "KGB택배",
+        "경동택배", "합동택배", "쿠팡", "옥션", "롯데몰", "카카오톡 선물하기", "7-11",
+        "라쿠텐 익스프레스", "KISA", "검찰청", "unknown",
+    }
+    assert {item.value for item in Topic} == {
+        "택배", "쇼핑", "금융", "공공기관", "의료·건강", "보안", "선물·이벤트", "unknown",
+    }
+    assert {item.value for item in MessageDoubt} == {
+        "앱 설치", "주소 입력·수정", "주소 확인", "본인 확인", "정보 입력", "사진 확인",
+        "배송 조회", "상세 내용 확인", "주문 취소·환불", "수령·일정 확인", "금전 인출",
+        "전화 응대", "링크 접속", "없음", "unknown",
+    }
+    assert {item.value for item in EnvDoubt} == {
+        "앱 다운로드 링크", "로그인·인증 입력폼", "결제 요청 요소", "개인정보 입력폼", "주소 입력폼",
+        "배송 조회 요소", "사진·문서 열람 요소", "없음", "unknown",
+    }
+
+
 def test_analysis_response_requires_all_null_parts_for_official_url():
     url = UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=True)
     response = AnalysisResponse(url=url, message=MessagePart(), env=EnvironmentPart(), result=True)
@@ -93,6 +114,18 @@ def test_analysis_response_requires_all_null_parts_for_official_url():
     }
     with pytest.raises(ValidationError):
         AnalysisResponse(url=url, message=valid_message_part(), env=EnvironmentPart(), result=True)
+
+
+@pytest.mark.parametrize(
+    ("factory", "overrides"),
+    [
+        (valid_message_part, {"answer": None}),
+        (valid_environment_part, {"answer": None}),
+    ],
+)
+def test_parts_reject_mixed_null_leaf_values(factory, overrides):
+    with pytest.raises(ValidationError):
+        factory(**overrides)
 
 
 def test_analysis_response_rejects_mixed_null_parts_and_null_false_result_parts():

@@ -350,6 +350,17 @@ def _all_null(part: BaseModel) -> bool:
     )
 
 
+def _require_complete_or_skipped(part: BaseModel) -> None:
+    data = part.model_dump()
+    leaf_values = *(data[key] for key in ("brand", "category", "answer")), *data[
+        "details"
+    ].values()
+    if any(value is None for value in leaf_values) and any(
+        value is not None for value in leaf_values
+    ):
+        raise ValueError("part must be entirely null or entirely populated")
+
+
 class MessagePart(StrictModel):
     brand: Brand | None = None
     category: Topic | None = None
@@ -358,13 +369,7 @@ class MessagePart(StrictModel):
 
     @model_validator(mode="after")
     def require_complete_or_skipped(self) -> "MessagePart":
-        values = (*self.model_dump().values(),)
-        details = values[-1]
-        leaf_values = (*values[:-1], *details.values())
-        if any(value is None for value in leaf_values) and any(
-            value is not None for value in leaf_values
-        ):
-            raise ValueError("part must be entirely null or entirely populated")
+        _require_complete_or_skipped(self)
         return self
 
 
@@ -376,13 +381,7 @@ class EnvironmentPart(StrictModel):
 
     @model_validator(mode="after")
     def require_complete_or_skipped(self) -> "EnvironmentPart":
-        values = (*self.model_dump().values(),)
-        details = values[-1]
-        leaf_values = (*values[:-1], *details.values())
-        if any(value is None for value in leaf_values) and any(
-            value is not None for value in leaf_values
-        ):
-            raise ValueError("part must be entirely null or entirely populated")
+        _require_complete_or_skipped(self)
         return self
 
 
