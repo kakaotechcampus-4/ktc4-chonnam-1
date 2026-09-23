@@ -183,7 +183,7 @@ async def test_success_closes_only_owned_client(entrypoint, owned, monkeypatch):
     assert client.closed is owned
     assert client.entered == int(owned)
     if owned:
-        factory.assert_called_once_with(2.0)
+        factory.assert_called_once_with(30.0 if entrypoint == "message" else 2.0)
     else:
         factory.assert_not_called()
 
@@ -345,7 +345,7 @@ async def test_actual_stage_waits_keep_declared_budgets(monkeypatch):
     monkeypatch.setattr(asyncio, "wait_for", record_wait)
     await module.analyze_message_part(TEXT, client=FakeClient(), model="test")
     await module.analyze_environment_part(page(), client=FakeClient(), model="test")
-    assert sorted(budgets) == [0.05, 1.5, 2.0, 2.0]
+    assert sorted(budgets) == [0.05, 2.0, 30.0, 30.0]
 
 
 def test_public_surface_is_independent_and_assembly_is_pure():

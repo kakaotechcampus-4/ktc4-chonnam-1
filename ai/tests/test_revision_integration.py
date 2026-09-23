@@ -442,7 +442,9 @@ async def test_plain_login_rejects_sdk_risk_candidate(make_parse_client):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("timed_out", ["message", "env"])
-async def test_actual_timeout_preserves_other_completed_part(timed_out, make_parse_client):
+async def test_actual_timeout_preserves_other_completed_part(timed_out, make_parse_client, monkeypatch):
+    monkeypatch.setattr("ai.llm.signals.TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("ai.llm.page.TIMEOUT_SECONDS", 0.01)
     cancelled = asyncio.Event()
 
     async def parse(**kwargs):
@@ -620,7 +622,7 @@ async def test_real_sdk_stages_and_search_keep_existing_budgets(monkeypatch, mak
     env = await analyze_environment_part(page(), client=client, model="test")
     assert message.answer is True
     assert env.answer is True
-    assert sorted(deadlines) == [0.05, 1.5, 2.0, 2.0]
+    assert sorted(deadlines) == [0.05, 2.0, 30.0, 30.0]
 
 
 @pytest.mark.asyncio
