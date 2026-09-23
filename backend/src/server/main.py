@@ -192,6 +192,19 @@ async def run_analysis(
                 f"{parsed_result}"
             )
 
+            # -----------------------------------
+            # urlscan score 실험
+            # -----------------------------------
+            
+            score = parsed_result.get("score")
+            
+            if score is None:
+                test_official = None
+            else:
+                test_official = (
+                    score <= TEST_SCORE_THRESHOLD
+                )
+
             print("========== URLSCAN SCORE TEST ==========")
             print(f"[INPUT URL]   {parsed_result.get('url')}")
             print(f"[FINAL URL]   {parsed_result.get('final_url')}")
