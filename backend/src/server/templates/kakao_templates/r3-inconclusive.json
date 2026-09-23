@@ -1,0 +1,37 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "basicCard": {
+          "title": "확인할 정보가 부족해요",
+          "description": "문자에서 확인할 주소를 찾지 못했어요.\n주소가 없어서 위험한지 확인할 수 없어요. 주소가 있는 부분을 함께 보내주세요.",
+          "thumbnail": {
+            "imageUrl": "{{ image_url }}",
+            "altText": "확인할 정보가 부족한 상태를 나타내는 물음표 그림",
+            "fixedRatio": false
+          },
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "다시 보내기",
+              "action": "block",
+              "blockId": "6aa6a4436d537a3eabb81ad5"
+            },
+            {
+              "label": "자세히 보기",
+              "action": "block",
+              "blockId": "6aad3abfe745d3358bd90c8d"
+            }
+          ]
+        }
+      },
+      {
+        "textCard": {
+          "title": "🧐 확인할 정보가 부족해요",
+          "description": "보내주신 내용만으로는 주소를 확인하기 어려웠어요. 문자를 자르지 말고 전체를 그대로 다시 보내주세요."
+        }
+      }
+    ]
+  }
+}

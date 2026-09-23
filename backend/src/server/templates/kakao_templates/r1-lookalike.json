@@ -1,0 +1,31 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "basicCard": {
+          "title": "공식 주소와 달라요",
+          "description": "문자 속 주소가 누리택배 공식 홈페이지 주소와 달라요.\n\n주소 1개만 확인했고, 페이지 내용은 확인하지 않았어요.",
+          "thumbnail": {
+            "imageUrl": "{{ image_url }}",
+            "altText": "공식 주소와 다른 링크를 나타내는 끊어진 고리 그림",
+            "fixedRatio": false
+          },
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "신고·상담 받기",
+              "action": "block",
+              "blockId": "6aad5cc1d29c9829bcc2adb6"
+            },
+            {
+              "label": "자세히 보기",
+              "action": "block",
+              "blockId": "6aad3abfe745d3358bd90c8d"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
