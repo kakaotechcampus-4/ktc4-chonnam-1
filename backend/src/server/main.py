@@ -24,6 +24,7 @@ RUNNING_USERS: set[str] = set()
 # 보낸다 (docs/latency-budget.md: "예산 초과 시 거기까지의 결과로 응답한다.
 # 전체 실패로 만들지 않는다"와 같은 원칙).
 CALLBACK_DEADLINE_SECONDS = 45.0
+TEST_SCORE_THRESHOLD = 0
 
 
 @app.post("/kakao/skill")
@@ -190,6 +191,18 @@ async def run_analysis(
                 f"[PARSED RESULT] "
                 f"{parsed_result}"
             )
+
+            print("========== URLSCAN SCORE TEST ==========")
+            print(f"[INPUT URL]   {parsed_result.get('url')}")
+            print(f"[FINAL URL]   {parsed_result.get('final_url')}")
+            print(f"[DOMAIN]      {parsed_result.get('domain')}")
+            print(f"[SCORE]       {score}")
+            print(f"[MALICIOUS]   {parsed_result.get('malicious')}")
+            print(f"[CATEGORIES]  {parsed_result.get('categories')}")
+            print(f"[BRANDS]      {parsed_result.get('brands')}")
+            print(f"[TEST T]      {TEST_SCORE_THRESHOLD}")
+            print(f"[OFFICIAL?]   {test_official}")
+            print("========================================")
 
             result_lines.append(
                 f"✅ 검사 완료: {link}"
@@ -378,23 +391,25 @@ def kakao_response(text: str) -> dict:
 
 
 def parse_urlscan_result(result: dict) -> dict:
-    """
-    urlscan Result API 응답 중
-    현재 분석에 필요한 데이터만 추출한다.
-    """
-
     task = result.get("task", {})
     page = result.get("page", {})
     verdicts = result.get("verdicts", {})
     urlscan = verdicts.get("urlscan", {})
 
     return {
+        # 기존 값
         "url": task.get("url"),
         "title": page.get("title"),
-        "brands": urlscan.get(
-            "brands",
-            []
-        )
+        "brands": urlscan.get("brands", []),
+
+        # AI-BE URL 스키마 검토용
+        "final_url": page.get("url"),
+        "domain": page.get("domain"),
+
+        # urlscan verdict 확인용
+        "score": urlscan.get("score"),
+        "malicious": urlscan.get("malicious"),
+        "categories": urlscan.get("categories", [])
     }
 
 @app.post("/test/kakao/r1-lookalike")
