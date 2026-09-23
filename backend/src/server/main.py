@@ -397,7 +397,7 @@ def parse_urlscan_result(result: dict) -> dict:
         )
     }
 
-@app.get("/test/kakao/r1-lookalike")
+@app.post("/test/kakao/r1-lookalike")
 async def test_r1_lookalike():
     """
     FE-BE Kakao 카드 연동 테스트용.
