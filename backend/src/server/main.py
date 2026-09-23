@@ -409,6 +409,11 @@ def parse_urlscan_result(result: dict) -> dict:
     verdicts = result.get("verdicts", {})
     urlscan = verdicts.get("urlscan", {})
 
+    print(
+        "[URLSCAN VERDICTS]",
+        result.get("verdicts", {})
+    )
+
     return {
         # 기존 값
         "url": task.get("url"),
