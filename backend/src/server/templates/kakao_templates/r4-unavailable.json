@@ -1,0 +1,20 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "🙏 지금은 확인을 못 마쳤어요",
+          "description": "저희 쪽 문제로 확인을 끝내지 못했어요. 보내주신 문자에 문제가 있는지는 확인하지 못했어요. 잠시 뒤에 그대로 다시 보내주세요.",
+          "buttons": [
+            {
+              "label": "다시 해보기",
+              "action": "block",
+              "blockId": "6aa6a4436d537a3eabb81ad5"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

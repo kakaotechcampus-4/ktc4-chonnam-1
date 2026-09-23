@@ -9,7 +9,7 @@ from ai.types import AnalysisStatus, EvidenceField, ExtractedMessage, MessageAna
 
 
 LOGGER = logging.getLogger(__name__)
-TIMEOUT_SECONDS = 1.5
+TIMEOUT_SECONDS = 30.0
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "v1" / "parse_classify.md"
 
 
