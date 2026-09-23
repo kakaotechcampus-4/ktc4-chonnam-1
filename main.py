@@ -15,9 +15,6 @@ from ai.pipeline import analyze_message_part, finalize_analysis
 from ai.types import FailureCode, UrlAnalysis
 
 
-import os
-from openai import AsyncOpenAI
-
 app = FastAPI()
 
 
@@ -760,61 +757,3 @@ async def test_r1_lookalike():
     """
 
     return render_r1_lookalike()
-
-
-
-
-
-
-
-
-@app.get("/test/models")
-async def test_gemini_models():
-    """
-    현재 LLM_API_KEY로 접근 가능한 Gemini 모델 목록 확인용.
-    테스트 완료 후 삭제 예정.
-    """
-
-    api_key = os.getenv("LLM_API_KEY")
-    base_url = os.getenv(
-        "LLM_BASE_URL",
-        "https://generativelanguage.googleapis.com/v1beta/openai/"
-    )
-
-    if not api_key:
-        return {
-            "success": False,
-            "error": "LLM_API_KEY 환경변수가 설정되지 않았습니다."
-        }
-
-    try:
-        client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=base_url
-        )
-
-        models = await client.models.list()
-
-        model_ids = sorted(
-            model.id
-            for model in models.data
-        )
-
-        return {
-            "success": True,
-            "base_url": base_url,
-            "count": len(model_ids),
-            "models": model_ids
-        }
-
-    except Exception as e:
-        print(
-            f"[LLM MODEL TEST ERROR] "
-            f"{type(e).__name__}: {e}"
-        )
-
-        return {
-            "success": False,
-            "error_type": type(e).__name__,
-            "error": str(e)
-        }
