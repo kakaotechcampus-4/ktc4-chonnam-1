@@ -75,7 +75,7 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 - Produces: `async finalize_analysis(url: UrlAnalysis, message: MessagePart | None = None, page: IsolatedPage | None = None, *, failure: FailureCode | None = None, client: AsyncOpenAI | None = None, model: str | None = None) -> AnalysisResponse` from `ai.pipeline`.
 - Test fixture: `ai/tests/conftest.py::make_parse_client`를 그대로 재사용한다.
 
-- [ ] **Step 1: 최종 호출 계약을 검증할 실패 테스트를 작성한다.**
+- [x] **Step 1: 최종 호출 계약을 검증할 실패 테스트를 작성한다.**
 
 `ai/tests/test_pipeline_finalize.py`를 다음 내용으로 작성한다. 함수 호출 검사에 더해 실제 페이지 분석·조립을 대체 SDK로 실행한다.
 
@@ -267,7 +267,7 @@ async def test_client_ownership_and_cancellation(owned, cancel, monkeypatch, mak
         factory.assert_not_called()
 ```
 
-- [ ] **Step 2: 기존 공개 목록 검사를 확장하고 RED를 확인한다.**
+- [x] **Step 2: 기존 공개 목록 검사를 확장하고 RED를 확인한다.**
 
 `ai/tests/test_revision_pipeline.py`의 마지막 공개 API 테스트를 다음으로 교체한다. import와 기존 세 함수의 계약도 함께 확인한다.
 
@@ -293,7 +293,7 @@ def test_public_surface_is_independent_and_assembly_is_pure():
 
 예상: 새 `ai.pipeline.finalize` 모듈 부재로 수집 실패. 모듈이 이미 있으면 실패 원인을 확인하고 기존 작업을 덮어쓰지 않는다.
 
-- [ ] **Step 3: 최소 구현과 export를 추가한다.**
+- [x] **Step 3: 최소 구현과 export를 추가한다.**
 
 `ai/src/ai/pipeline/finalize.py`:
 
@@ -338,7 +338,7 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 4: 새 테스트와 연관 회귀 테스트를 실행한다.**
+- [x] **Step 4: 새 테스트와 연관 회귀 테스트를 실행한다.**
 
 ```powershell
 & 'ai/.venv/revisions/Scripts/python.exe' -X utf8 -m pytest ai/tests/test_pipeline_finalize.py ai/tests/test_revision_pipeline.py ai/tests/test_revision_results.py ai/tests/test_revision_integration.py -q
@@ -347,7 +347,7 @@ git diff --check
 
 예상: 모두 통과. 기존 PageProposal·입력폼 검증을 바꾸지 않고 새 함수에 필요한 문제만 수정한다. TDD 중 실패·성공 결과를 기록한다.
 
-- [ ] **Step 5: 작업 단위 리뷰와 커밋을 완료한다.**
+- [x] **Step 5: 작업 단위 리뷰와 커밋을 완료한다.**
 
 선택한 실행 방식의 명세·코드 품질 리뷰를 수행하고 발견된 문제를 수정·검증한다.
 
@@ -370,7 +370,7 @@ git commit -m "feat(ai): 격리 분석을 포함한 최종 결과 호출 추가"
 - Produces: 문서의 `async analyze_request(message_text: str, get_url_result: Callable[[], Awaitable[UrlAnalysis]], collect_page: Callable[[], Awaitable[tuple[IsolatedPage | None, FailureCode | None]]]) -> AnalysisResponse` 예제. BE 제품 함수가 아니라 참조 예제다.
 - Produces: `response.model_dump(mode="json")`으로 전체 응답을 직렬화하는 사용법.
 
-- [ ] **Step 1: 문서 예제의 동작 검사부터 작성한다.**
+- [x] **Step 1: 문서 예제의 동작 검사부터 작성한다.**
 
 `ai/tests/test_be_integration_examples.py`에 다음을 작성한다. 문서 문자열 모양을 고정하는 테스트가 아니라, BE가 복사할 비동기 예제의 결과·취소 정리를 검증한다. 메시지 분석만 대체하고 최종 함수와 페이지 실패 처리는 실제 구현을 실행한다.
 
@@ -464,7 +464,7 @@ async def test_example_cleans_started_tasks_on_every_exit(example, outcome):
         await asyncio.gather(task, return_exceptions=True)
 ```
 
-- [ ] **Step 2: 문서가 없어서 실패하는 것을 확인한다.**
+- [x] **Step 2: 문서가 없어서 실패하는 것을 확인한다.**
 
 ```powershell
 & 'ai/.venv/revisions/Scripts/python.exe' -X utf8 -m pytest ai/tests/test_be_integration_examples.py -q
@@ -472,7 +472,7 @@ async def test_example_cleans_started_tasks_on_every_exit(example, outcome):
 
 예상: `docs/ai-be-python-integration.md` 부재로 실패. 파일이 이미 생겼다면 사용자가 작성했는지 확인하고 내용을 보존한다.
 
-- [ ] **Step 3: 세 구간과 하나의 연결 예제로 가이드를 작성한다.**
+- [x] **Step 3: 세 구간과 하나의 연결 예제로 가이드를 작성한다.**
 
 승인된 설계의 세 구간 코드를 가이드에 반영한다. 독립적으로 복사 가능한 import를 각 구간에 포함하고 입력 변수의 출처를 설명한다. 아래 연결 코드는 하나의 Python 코드 블록으로 넣는다.
 
@@ -530,13 +530,13 @@ async def analyze_request(
 
 본문에 HTTP AI 수신 엔드포인트나 AI 내부 설정을 BE가 재구현하는 구문을 만들지 않는다. 수집 자료 JSON 예시의 HTML은 합성 자료로 명시한다. 판정·Enum 상세는 결과 계약 문서로 링크하고 복제하지 않는다.
 
-- [ ] **Step 4: 기존 문서의 진입점과 책임을 맞춘다.**
+- [x] **Step 4: 기존 문서의 진입점과 책임을 맞춘다.**
 
 - `ai/src/ai/pipeline/README.md`: Revisions 기준을 우선 안내하고 문자 분석 → 최종 함수 호출 예제를 넣는다. 이전 decide/화이트리스트 기반 내용은 legacy 흐름으로 구분해 남기거나 기존 설계 링크로 대체한다. 두 정책을 혼합하지 않는다.
 - `docs/ai-be-final-result-schema.md`: 기존 고정 커밋은 응답 계약의 기준으로 남기고 이번 함수는 현재 `../ai/src/ai/pipeline/finalize.py`로 연결한다. 공개 함수 3개라는 문장을 갱신해 4개를 표기한다. finalize를 권장, 나머지 페이지 분석·조립은 기존 호출 호환용으로 설명한다. true/false 연동 예제를 최종 함수 중심으로 바꾸고 temp2 현재 브랜치라는 오래된 표현을 제거한다. 응답 JSON과 Enum은 변경하지 않는다.
 - `docs/ai/Revisions-handoff.md`: 새 함수 시그니처와 호출 가이드를 추가한다. BE는 완료한 문자 결과·수집 자료·실패 코드를 전달하고 AI가 페이지 분석 후 전체 결과를 만든다고 수정한다. true는 `await finalize_analysis(url)`. AI API가 전부 미구현 제안이라는 설명은 현재 상태에 맞추되 BE·FE 배포 완료를 주장하지 않는다. 기존 BE 체크박스를 구현 완료로 표시하지 않는다.
 
-- [ ] **Step 5: 정상 수집 연결 사례를 추가하고 문서 예제를 검증한다.**
+- [x] **Step 5: 정상 수집 연결 사례를 추가하고 문서 예제를 검증한다.**
 
 Task 2 테스트 파일에 다음 테스트를 추가한다. 최종 함수의 API 성공만 확인하는 것과 별도로 문서의 provider 전달이 올바른지 실제 페이지 분석까지 검사한다.
 
@@ -598,7 +598,7 @@ print("Document syntax, JSON and local links passed")
 git diff --check
 ```
 
-- [ ] **Step 6: AI 전체 회귀·문서 리뷰를 통과하고 커밋한다.**
+- [x] **Step 6: AI 전체 회귀·문서 리뷰를 통과하고 커밋한다.**
 
 ```powershell
 & 'ai/.venv/revisions/Scripts/python.exe' -X utf8 -m pytest ai/tests -q
@@ -615,12 +615,20 @@ git commit -m "docs(ai): BE 최종 분석 호출 예제와 인계 문서 정리"
 
 ## 최종 리뷰와 완료 보고
 
-- [ ] `superpowers:requesting-code-review`로 구현 시작 직전 SHA부터 최종 SHA까지 전체 변경을 리뷰한다. 승인된 설계·계획·테스트 결과·ai 코드 범위를 리뷰어에게 전달한다.
-- [ ] 리뷰에서 보완 사항이 확인되면 기존 요청대로 subagent-driven-development의 해당 작업 단계로 돌아가 수정 → 명세 리뷰 → 코드 품질 리뷰 → 검증 → 최종 리뷰를 반복한다. 발견 내용을 확인한 뒤 필요한 수정만 수행한다.
-- [ ] 수정 후 영향받는 테스트를 실행한다. 코드 또는 실행 예제가 바뀌면 AI 전체 회귀도 다시 확인한다. 마지막 검증 이후 변경이 없으면 동일 검사를 이유 없이 반복하지 않는다.
-- [ ] `git diff --check`, `git status --short`, `git log -3 --oneline`으로 최종 상태·커밋을 확인한다. 사용자 변경은 별도로 남겨두고 이번 변경 파일만 커밋됐는지 확인한다.
-- [ ] 최종 답변에 `await finalize_analysis(...)` 한 번으로 받는 결과, BE 가이드 경로, 실제 테스트 결과, 리뷰 결과, 한글 커밋을 요약한다. BE 제품 연동은 문서 인계 범위임을 명시한다. 새 PR·push·merge는 이 계획의 작업에 포함하지 않는다.
+- [x] `superpowers:requesting-code-review`로 구현 시작 직전 SHA부터 최종 SHA까지 전체 변경을 리뷰한다. 승인된 설계·계획·테스트 결과·ai 코드 범위를 리뷰어에게 전달한다.
+- [x] 리뷰에서 보완 사항이 확인되면 수정·검증·최종 리뷰를 반복한다. 이번 리뷰는 지적 없음으로 수정 단계가 필요하지 않았다.
+- [x] 마지막 코드·실행 예제 변경 후 전체 AI 회귀를 통과했다. 이후에는 검증·완료 상태만 문서에 기록했으므로 같은 테스트를 반복하지 않는다.
+- [x] `git diff --check`, `git status --short`, `git log -3 --oneline`으로 최종 상태·커밋을 확인한다. 사용자 변경은 별도로 남겨두고 이번 변경 파일만 커밋됐는지 확인한다.
+- [x] 완료 보고에 단일 최종 호출, BE 가이드 경로, 실제 테스트·리뷰 결과, 한글 커밋을 포함한다. BE 제품 연동은 문서 인계 범위이며 새 PR·push·merge는 수행하지 않는다.
 
 ## 실행 인계
 
-현재 단계는 구현 계획 작성·검토다. 사용자가 앞서 요청한 `superpowers:subagent-driven-development` 방식을 유지한다. 작성된 계획을 사용자에게 보여 주고 내용 확인을 받은 뒤 Task 1부터 순서대로 실행한다. 이 계획의 코드 블록은 구현 안내이며 계획 작성 단계에서 제품 파일로 생성하지 않는다.
+계획 검토 후 사용자가 BE 전달 문서 중심의 최소 보완으로 진행하도록 확인했다. `superpowers:executing-plans`로 직접 구현하고 작업별 별도 에이전트 리뷰 대신 `superpowers:requesting-code-review`의 최종 독립 리뷰를 수행한다. 코드·테스트 범위와 두 작업의 기능 요구사항은 유지한다. 현재 브랜치에 커밋을 남기며 새 PR·push·merge는 수행하지 않는다.
+
+## 실행 기록
+
+- Task 1: `4103761`, 새 함수 부재의 RED 확인 후 관련 테스트 265개 통과.
+- Task 2: `f115229`, 가이드 부재의 RED 확인 후 신규 테스트 22개와 전체 AI 테스트 627개 통과(10.36초).
+- 문서 Python 구문·JSON·로컬 링크 검증 통과. 세 짧은 호출 예제도 실제 실행해 부분 수집 실패와 true 조기 반환의 전체 응답을 검증했다.
+- 테스트는 대체 SDK·provider와 합성 HTML로 수행했으며 실제 외부 연동 검증은 포함하지 않는다.
+- 최종 독립 리뷰: `de55e79..f115229`, Critical·Important·Minor 모두 없음, 추가 수정 불필요. 실제 LLM 정확도·외부 연결·BE 점수 정책·BE 제품 연동은 별도 담당 범위로 유지한다. 기존 HTML 규칙 전체의 재평가는 하지 않았고 이번 연결에 필요한 실패·부분 자료·취소 경로를 대조했다.

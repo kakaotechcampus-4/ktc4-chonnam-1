@@ -10,7 +10,7 @@ BE가 다음 세 구간을 연결할 수 있도록 AI 코드와 문서를 함께
 
 별도 HTTP 서버 없이 같은 Python 환경에서 `ai.pipeline`을 import한다. BE가 페이지 분석과 결과 조립을 각각 호출하도록 요구하지 않는다. AI는 앞서 받은 문자 결과를 재사용하고 격리 자료를 분석해 완성된 응답을 반환한다. 내부 분석·조립 함수 분리는 구현 세부사항이다.
 
-현재 구현에는 `analyze_message_part()`, `analyze_environment_part()`, `assemble_analysis()`만 있다. **아래 `finalize_analysis()`는 이번에 추가할 함수이며 아직 구현되지 않았다.** 이 문서는 설계이며 BE 서비스의 구현·배포 완료를 뜻하지 않는다.
+설계 확정 당시에는 `analyze_message_part()`, `analyze_environment_part()`, `assemble_analysis()`만 있었다. 이후 이 설계에 따른 `finalize_analysis()`와 [BE 연동 코드](../../ai-be-python-integration.md)를 추가했다. 아래는 구현의 설계 기준이며 BE 서비스의 구현·배포 완료를 뜻하지 않는다.
 
 기준은 [Revisions](../../ai/Revisions.md), [인계 문서](../../ai/Revisions-handoff.md), [결과 계약](../../ai-be-final-result-schema.md)다. 코드·테스트는 `ai/` 안에서 수정하고 관련 Markdown 문서를 함께 수정한다. BE·FE·격리 서버 제품 코드는 각 담당자가 구현한다. 작업 브랜치는 `feature/scenario-message-test-ai`, 커밋 메시지는 한글이다.
 
