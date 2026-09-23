@@ -15,6 +15,7 @@ from ai.pipeline import analyze_message_part, finalize_analysis
 from ai.types import FailureCode, UrlAnalysis
 
 
+import os
 from openai import AsyncOpenAI
 
 app = FastAPI()
