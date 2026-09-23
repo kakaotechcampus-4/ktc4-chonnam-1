@@ -3,10 +3,12 @@ import asyncio
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Request
 
-from urlscan_service import submit_url_scan, wait_for_url_scan_result
-from url_utils import split_message
-
-from templates.renderer import render_r1_lookalike
+from backend.src.server.urlscan_service import (
+    submit_url_scan,
+    wait_for_url_scan_result,
+)
+from backend.src.server.url_utils import split_message
+from backend.src.server.templates.renderer import render_r1_lookalike
 
 # AI 연결
 from ai.pipeline import analyze_message_part, finalize_analysis
