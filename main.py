@@ -626,38 +626,80 @@ def format_ai_result(
     url_result = payload.get(
         "url",
         {}
-    )
+    ) or {}
 
     message_result = payload.get(
         "message",
         {}
-    )
+    ) or {}
 
     env_result = payload.get(
         "env",
         {}
-    )
+    ) or {}
+
+    message_details = message_result.get(
+        "details",
+        {}
+    ) or {}
+
+    env_details = env_result.get(
+        "details",
+        {}
+    ) or {}
 
     final_result = payload.get(
         "result"
     )
 
+    def display(value):
+        """
+        테스트 출력용.
+        None인 경우 알아보기 쉽게 표시한다.
+        """
+        return "없음" if value is None else str(value)
+
     return (
         "🔎 AI 분석 완료\n\n"
+
+        "[URL 분석]\n"
         f"입력 URL: {link}\n"
         f"최종 URL: "
-        f"{url_result.get('final_url')}\n"
+        f"{display(url_result.get('final_url'))}\n"
         f"도메인: "
-        f"{url_result.get('domain')}\n"
-        f"urlscan score: {score}\n"
+        f"{display(url_result.get('domain'))}\n"
+        f"urlscan score: "
+        f"{display(score)}\n"
         f"official: "
-        f"{url_result.get('official')}\n\n"
-        f"문자 분석 answer: "
-        f"{message_result.get('answer')}\n"
-        f"환경 분석 answer: "
-        f"{env_result.get('answer')}\n\n"
-        f"최종 result: "
-        f"{final_result}"
+        f"{display(url_result.get('official'))}\n\n"
+
+        "[문자 분석]\n"
+        f"brand: "
+        f"{display(message_result.get('brand'))}\n"
+        f"category: "
+        f"{display(message_result.get('category'))}\n"
+        f"answer: "
+        f"{display(message_result.get('answer'))}\n"
+        f"doubt: "
+        f"{display(message_details.get('doubt'))}\n"
+        f"reason: "
+        f"{display(message_details.get('reason'))}\n\n"
+
+        "[환경 분석]\n"
+        f"brand: "
+        f"{display(env_result.get('brand'))}\n"
+        f"category: "
+        f"{display(env_result.get('category'))}\n"
+        f"answer: "
+        f"{display(env_result.get('answer'))}\n"
+        f"doubt: "
+        f"{display(env_details.get('doubt'))}\n"
+        f"reason: "
+        f"{display(env_details.get('reason'))}\n\n"
+
+        "[최종 판정]\n"
+        f"result: "
+        f"{display(final_result)}"
     )
 
 
