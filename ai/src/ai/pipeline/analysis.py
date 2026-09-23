@@ -56,7 +56,7 @@ async def analyze_message_part(
         async with AsyncExitStack() as stack:
             llm = client
             if llm is None:
-                llm = await stack.enter_async_context(create_client(2.0))
+                llm = await stack.enter_async_context(create_client(30.0))
             tasks = (
                 asyncio.create_task(analyze_message(text, client=llm, model=model)),
                 asyncio.create_task(_search_with_budget(text)),
