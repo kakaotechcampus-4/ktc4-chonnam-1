@@ -1,10 +1,10 @@
 # BE ↔ AI `ai.pipeline` 결과 계약
 
-이 문서는 새 `ai.pipeline`이 받는 입력과 BE에 반환하는 `AnalysisResponse`를 설명한다. 기준은 커밋 [`9a85dfb`](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/commit/9a85dfbf057e29f22f5b512d09113fa8787116a5)에서 구현된 계약과 [PR #17](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/pull/17)이다. 이 문서의 수정 대상은 [PR #18](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/pull/18)이다.
+이 문서는 `ai.pipeline`이 받는 입력과 BE에 반환하는 `AnalysisResponse`를 설명한다. 응답 계약의 기준은 커밋 [`9a85dfb`](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/commit/9a85dfbf057e29f22f5b512d09113fa8787116a5)에서 구현된 계약과 [PR #17](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/pull/17)이다. 이후 추가한 [finalize_analysis()](../ai/src/ai/pipeline/finalize.py)는 같은 응답 계약을 유지하면서 격리 페이지 분석과 결과 조립을 한 번의 호출로 제공한다. BE가 작성할 구문은 [Python 연동 코드](./ai-be-python-integration.md)를 참고한다.
 
 기존 화이트리스트 기반 API의 정책을 바꾸거나 그 결과를 새 파이프라인에 자동으로 연결하는 계약이 아니다. 여기서 `official`은 공식 도메인 여부가 아니라 BE가 URL 분석 점수를 임계값과 비교해 만든 엄격한 boolean이다. 기존 `DomainCheck`, `DomainMatch`, `decide()`의 화이트리스트 판정과 구분해서 사용한다.
 
-근거 자료는 기준 커밋에 고정한다.
+기존 응답 규칙의 근거 자료는 아래 기준 커밋에 고정한다. 새 최종 함수는 위의 현재 소스 링크를 기준으로 한다.
 
 - [Revisions 요구사항](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/blob/9a85dfbf057e29f22f5b512d09113fa8787116a5/docs/ai/Revisions.md)
 - [연동 책임과 호출 계약](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/blob/9a85dfbf057e29f22f5b512d09113fa8787116a5/docs/ai/Revisions-handoff.md)
@@ -14,11 +14,12 @@
 
 ## 입력과 공개 함수
 
-새 파이프라인은 하나의 원격 JSON envelope를 받는 API로 정의되지 않았다. 현재 계약은 다음 세 Python 함수다.
+파이프라인은 하나의 원격 JSON envelope를 받는 API로 정의되지 않았다. 현재 공개 API는 다음 네 Python 함수다. BE의 권장 흐름은 문자 분석 후 `finalize_analysis()`를 호출해 전체 결과를 받는 것이다. 페이지 분석과 조립 함수는 기존 호출 호환성과 개별 사용을 위해 유지한다.
 
 | 함수 | 입력 | 반환과 역할 |
 | --- | --- | --- |
 | `async analyze_message_part(text: str, *, client: AsyncOpenAI \| None = None, model: str \| None = None) -> MessagePart` | BE가 URL을 제거한 문자 본문 | 현재 문자만 분석한 `MessagePart` |
+| `async finalize_analysis(url: UrlAnalysis, message: MessagePart \| None = None, page: IsolatedPage \| None = None, *, failure: FailureCode \| None = None, client: AsyncOpenAI \| None = None, model: str \| None = None) -> AnalysisResponse` | 검증한 URL, 앞서 받은 문자 결과, 격리 수집 자료와 실패 코드 | 페이지 분석 후 전체 최종 결과 반환. true이면 분석 생략 |
 | `async analyze_environment_part(page: IsolatedPage \| None, *, failure: FailureCode \| None = None, client: AsyncOpenAI \| None = None, model: str \| None = None) -> EnvironmentPart` | 성공 시 수집 페이지, 실패 시 `page=None`과 구체적인 실패 코드 | 전달된 HTML과 수집 상태를 분석한 `EnvironmentPart` |
 | `assemble_analysis(url: UrlAnalysis, message: MessagePart \| None = None, env: EnvironmentPart \| None = None) -> AnalysisResponse` | 검증된 URL 결과와 두 부분 결과 | I/O 없이 최종 응답 조립 |
 
@@ -52,12 +53,14 @@ BE는 URL 분석의 악성 위험도 점수 `score`가 `score <= T`이면 `offic
 
 `brand`와 `category`는 수집기가 제공한 메타데이터다. 실제 발신자나 페이지의 진위를 확인한 값으로 해석하지 않는다. 페이지 분석이 실패했더라도 이 메타데이터가 아래 허용 목록의 값이면 확보한 정보로 보존할 수 있고, 그 출처를 `reason`에 명시한다. 목록 밖이거나 식별할 수 없는 값은 출력에서 `unknown`으로 남는다.
 
-수집 성공과 실패는 호출부터 구분한다.
+수집 성공과 실패는 최종 호출부터 구분한다. 아래 호출은 모두 async이므로 BE의 async 함수 안에서 `await`한다. `url`은 검증한 UrlAnalysis, `message`는 앞서 받은 문자 결과다.
 
-- 성공: `analyze_environment_part(IsolatedPage(...))`
-- 수집 실패: `analyze_environment_part(None, failure=FailureCode.COLLECTION_FAILED)`
-- 시간 초과: `analyze_environment_part(None, failure=FailureCode.TIMEOUT)`
-- 부분 자료와 알려진 실패가 함께 있음: `analyze_environment_part(page, failure=...)`
+- 성공: `await finalize_analysis(url, message, page)`
+- 수집 실패: `await finalize_analysis(url, message, None, failure=FailureCode.COLLECTION_FAILED)`
+- 시간 초과: `await finalize_analysis(url, message, None, failure=FailureCode.TIMEOUT)`
+- 부분 자료와 알려진 실패가 함께 있음: `await finalize_analysis(url, message, page, failure=FailureCode.PARTIAL_CONTENT)`
+
+AI가 페이지 분석과 결과 조립을 내부에서 수행하며 문자를 재분석하지 않는다. true는 `await finalize_analysis(url)`만으로 전체 구조와 null 10개를 반환한다. false에서 미제공 문자 결과는 결과 미제공으로, 미제공 페이지는 확보하지 못한 자료로 처리한다. 알려진 실패 코드와 부분 자료는 함께 전달한다. 요청 취소인 `CancelledError`는 전파된다.
 
 이는 Python 호출 계약이다. HTTP 요청이나 원격 JSON으로 옮길 때 사용할 오류 envelope는 아직 정의되지 않았다.
 
@@ -277,14 +280,14 @@ LLM 출력, RAG 유사도, `message.answer`, `env.answer`, 브랜드·분야의 
 
 ## 연동 책임
 
-아래 항목은 기준 인계 문서의 연동 요구사항이다. 현재 temp2 브랜치에 BE·FE·격리 환경 구현이 완료됐다는 뜻은 아니다.
+아래 항목은 [현재 인계 문서](./ai/Revisions-handoff.md)의 연동 요구사항이다. BE·FE·격리 환경 구현이 완료됐다는 뜻은 아니다.
 
 ### BE
 
 - 원본 메시지에서 URL과 URL을 제거한 본문을 분리하고 입력 타입을 검증한다.
 - URL 분석·메시지 분석·격리 환경 수집을 병렬로 시작한다. URL 분석이 끝나 `official`이 도착한 뒤 그 값에 따라 후속 처리를 결정한다.
-- `official=true`가 도착하면 불필요한 작업을 취소하고 `assemble_analysis(url)`로 조기 반환한다. 늦게 끝난 결과가 저장된 응답을 덮어쓰지 않게 한다.
-- `official=false`이면 확보한 두 부분 결과를 조립한다. 알려진 수집 실패를 단순 누락으로 바꾸지 않고 구체적인 `FailureCode`로 전달한다.
+- `official=true`가 도착하면 `await finalize_analysis(url)`로 전체 결과를 받고 불필요한 작업을 취소·정리한다. 늦게 끝난 결과가 저장된 응답을 덮어쓰지 않게 한다.
+- `official=false`이면 문자 결과·격리 수집 자료·구체적인 `FailureCode`를 최종 함수에 전달한다. AI가 페이지 분석과 조립을 수행하므로 BE가 두 작업을 따로 호출할 필요는 없다.
 - `response.model_dump(mode="json")`으로 직렬화하며 `exclude_none=True`나 `exclude_unset=True`로 조기 반환 키를 제거하지 않는다.
 - 콜백, 저장, 결과 조회 폴백과 외부 시간 제한을 관리한다.
 

@@ -1,6 +1,6 @@
 # Revisions 연동 작업 인계
 
-기준: [Revisions.md](./Revisions.md). 브레인스토밍에서 확정한 계약과 타 파트의 작업을 기록한다. 이 문서는 구현 완료를 뜻하지 않는다. 이번 코드 변경 범위는 `ai/` 내부이며 BE·FE·격리 환경 코드는 각 담당 파트에서 수정한다.
+기준: [Revisions.md](./Revisions.md). 확정한 계약과 타 파트의 작업을 기록한다. AI 공개 함수는 구현돼 있으며, 이 문서는 BE·FE·격리 환경의 연동 완료를 뜻하지 않는다. 코드 변경 범위는 `ai/` 내부이며 타 파트 코드는 각 담당자가 수정한다. BE가 작성할 구문은 [Python 연동 코드](../ai-be-python-integration.md)를 참고한다.
 
 ## 확정된 계약
 
@@ -19,9 +19,9 @@
 2. urlscan의 사용할 score 필드, 임계값 및 경계값 처리를 정한다. 누락·조회 실패·범위 초과를 정상 점수로 간주하지 않도록 별도 처리 계약을 확정한다.
 3. `final_url`, `domain`, `official`을 AI 입력 타입에 맞게 전달한다. AI 내부에 urlscan 조회나 임계값 비교를 넣지 않는다.
 4. URL 분석·메시지 분석·격리 환경 수집을 병렬로 시작하고, `official=true`이면 불필요해진 작업을 취소한다. 외부 요청과 태스크의 생성·취소는 BE 오케스트레이션에서 담당한다.
-5. `official=false`이면 정해진 시간 예산 안에서 확보한 분석 결과를 AI의 결과 조립 경로로 전달한다. 콜백·저장·결과 조회는 BE에서 담당한다.
+5. `official=false`이면 확보한 문자 분석 결과·격리 수집 자료·실패 코드를 `await finalize_analysis(...)`에 전달한다. AI가 페이지 분석과 결과 조립을 끝내고 전체 응답을 반환한다. 정해진 시간 예산에는 이 페이지 분석 시간도 포함한다. 콜백·저장·결과 조회는 BE에서 담당한다.
 6. AI의 `null` 필드를 제거하지 않고 FE로 전달한다. `message.answer`와 `env.answer`가 최종 `result`와 다를 수 있음을 반영한다.
-7. 접속 실패·타임아웃 등의 사실을 AI가 구별할 수 있도록 전달한다. 빈 HTML만으로 실패 원인을 추정하게 하지 않는다. 구체적인 입력 필드와 오류 전달 방식은 연동 시 확정한다.
+7. 접속 실패·타임아웃 등을 `failure: FailureCode | None`으로 전달하고 부분 자료가 있으면 page도 함께 전달한다. 빈 HTML만으로 실패 원인을 추정하게 하지 않는다. 수집기의 원격 응답을 이 Python 인자로 옮기는 방법은 BE·수집기 연동에서 확정한다.
 
 ## 격리 환경 담당
 
@@ -39,17 +39,18 @@
 5. `answer=false`에는 의심 근거 발견뿐 아니라 확인 실패에 따른 의심 처리도 포함된다. `details.reason`을 함께 표시하여 원인을 구별한다. 접속 실패만으로 분석 회피나 악성을 확정했다고 표시하지 않는다.
 6. 문자에는 '접속 목적·요구', 페이지에는 '확인한 페이지 요소·요구'라는 의미로 `doubt`를 표시한다. 두 값이 다르다는 이유만으로 악성 확정이나 사칭 확인으로 표시하지 않는다.
 
-## 구현 계획과 연동 경계 제안
+## AI 공개 함수와 연동 경계
 
-구현 순서·타입·테스트는 [AI 구현 계획](./2026-09-23-revisions-implementation-plan.md)에 있다. 아래는 그 계획에서 구체화한 연동 제안이며 아직 배포된 인터페이스가 아니다. BE·FE 코드는 이번 작업에서 수정하지 않는다.
+기존 구현 배경은 [AI 구현 계획](./2026-09-23-revisions-implementation-plan.md), 최종 호출 통합은 [후속 계획](../superpowers/plans/2026-09-23-ai-finalize-be-integration.md)에 있다. 아래는 현재 코드에서 사용할 수 있는 Python API이며 BE·FE 서비스 배포를 뜻하지 않는다. 새 연동은 문자 분석과 최종 함수 호출을 기본 경로로 사용한다.
 
 | AI 공개 함수 | BE의 입력 | 반환·역할 |
 |---|---|---|
 | `analyze_message_part(text, *, client=None, model=None)` | URL을 제거한 본문 | async `MessagePart` |
+| `finalize_analysis(url, message=None, page=None, *, failure=None, client=None, model=None)` | 검증한 URL·앞선 문자 결과·격리 자료·실패 코드 | async `AnalysisResponse`, 페이지 분석과 조립을 내부 수행 |
 | `analyze_environment_part(page, *, failure=None, client=None, model=None)` | `IsolatedPage(brand, category, info)` 또는 수집 실패 | async `EnvironmentPart` |
 | `assemble_analysis(url, message=None, env=None)` | 검증된 `UrlAnalysis`와 부분 결과 | 순수 함수, `AnalysisResponse` |
 
-`client`와 `model`은 테스트·설정 주입용 선택 인자다. BE가 AI 내부 환경변수를 복제하거나 LLM 호출을 직접 구현할 필요는 없다.
+`analyze_environment_part()`와 `assemble_analysis()`는 개별 사용과 기존 호출 호환성을 위해 유지한다. BE가 새 연동에서 페이지 분석과 조립을 각각 호출할 필요는 없다. `client`와 `model`은 테스트·설정 주입용 선택 인자다. BE가 LLM 호출을 직접 구현할 필요는 없다.
 
 ### BE 작업 목록
 
@@ -57,9 +58,9 @@
 - [ ] 성공한 페이지는 기존 세 필드 `{brand, category, info}`로 전달한다. 수집 실패는 `page=None, failure=FailureCode.COLLECTION_FAILED`, 시간 초과는 `failure=FailureCode.TIMEOUT`으로 전달한다. 부분 자료가 있으면 page도 함께 넘긴다. 이 Python 호출 계약을 원격 JSON으로 옮길 경우 별도 envelope를 정한다.
 - [ ] 본문·URL 분리와 개인정보 마스킹을 유지한다. AI의 근거는 실제 전달받은 본문을 기준으로 하므로 전달 전후 텍스트가 달라지지 않도록 관리한다.
 - [ ] 시작 시 기존 `ai.kb.search.load_cases()`로 검색 캐시를 준비한다. 메시지 분석은 추출 1.5초와 검색 50ms를 병렬 실행한 뒤 신호 제안 2.0초를 수행한다. AI의 검색 timeout이 로컬 작업 스레드를 강제 종료하지는 않으므로 요청량 제한은 BE에서 관리한다.
-- [ ] URL 분석·메시지 분석·격리 수집을 병렬 관리한다. `official=true`가 도착하면 두 분석 결과를 기다리지 않고 `assemble_analysis(url)`을 사용한다. 불필요 작업을 취소하고 늦게 완료된 결과가 저장된 응답을 덮어쓰지 않게 한다.
+- [ ] URL 분석·메시지 분석·격리 수집을 병렬 관리한다. `official=true`가 도착하면 두 분석 결과를 기다리지 않고 `await finalize_analysis(url)`을 사용한다. 불필요 작업을 취소·정리하고 늦게 완료된 결과가 저장된 응답을 덮어쓰지 않게 한다.
 - [ ] urlscan 점수 도착 전에는 이 규칙으로 안전을 반환하지 않는다. 여기서 '조기 반환'은 boolean 도착 이후이며, 기존 화이트리스트 즉답과 같은 시점이라는 뜻이 아니다.
-- [ ] `official=false`이면 확보한 두 part를 조립한다. 누락 part는 AI가 '결과 미제공' 의심으로 채우므로, 알고 있는 구체적 실패는 누락으로 숨기지 말고 해당 분석 함수에 failure로 전달한다.
+- [ ] `official=false`이면 확보한 문자 결과와 격리 수집 자료를 `await finalize_analysis(url, message, page, failure=...)`에 전달한다. AI가 페이지 분석 후 전체 결과를 돌려준다. 알고 있는 수집 실패를 자료 누락으로 숨기지 않고 failure로 전달한다. 이미 완료한 문자 결과를 버리거나 다시 분석하지 않는다.
 - [ ] `response.model_dump(mode="json")`으로 직렬화한다. `exclude_none=True`나 `exclude_unset=True`로 조기 반환 키를 제거하지 않는다.
 - [ ] 기존 AI 공개 함수는 호환용으로 남는다. 새 워크플로우는 `ai.pipeline`의 위 함수로 전환하고 기존 `decide(DomainCheck, Observations, ...)` 판정을 새 `result`와 섞지 않는다. 기존 `DomainMatch.OFFICIAL`을 점수 기반 `official`로 자동 변환하지 않는다.
 - [ ] 콜백·캐시·저장·조회 폴백과 외부 deadline을 기존 BE 영역에서 구현·검증한다.
