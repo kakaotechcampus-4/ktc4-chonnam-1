@@ -137,6 +137,27 @@ async def test_collection_failure_keeps_message_and_partial_facts(official, fail
 
 
 @pytest.mark.asyncio
+async def test_html_limit_preserves_message_and_sets_null(monkeypatch):
+    import ai.page as page_module
+
+    monkeypatch.setattr(page_module, "MAX_ELEMENTS", 2)
+    source_message = message()
+    source_page = IsolatedPage(
+        brand="unknown",
+        category="unknown",
+        info='<form><input type="password"><div>미확인</div></form>',
+    )
+
+    result = await public.finalize_analysis(url(True), source_message, source_page)
+
+    assert result.result is False
+    assert result.message == source_message
+    assert result.env.answer is None
+    assert result.env.details.doubt is EnvDoubt.LOGIN_FORM
+    assert result.env.details.reason
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("error,fragment", [(TimeoutError(), "시간"), (RuntimeError(), "오류")])
 async def test_page_sdk_failure_keeps_completed_message(error, fragment, make_parse_client):
     client, _ = make_parse_client(side_effect=error)

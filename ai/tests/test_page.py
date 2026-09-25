@@ -443,3 +443,21 @@ def test_invalid_numeric_entity_cannot_break_result_encoding():
 
     assert encoded
     assert result.failure is FailureCode.PARTIAL_CONTENT
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "배송이 완료되었습니다.",
+        "예약 일정을 확인하세요.",
+        "결제가 완료되었습니다.",
+        "행사 장소와 일정을 안내합니다.",
+        "인증번호를 누구에게도 알려주지 마세요.",
+        "채용 직무와 근무 시간을 안내합니다.",
+    ],
+)
+def test_generic_normal_content_is_not_missing(body):
+    result = inspect_html(f"<main><h1>안내</h1><p>{body}</p></main>")
+
+    assert result.failure is None
+    assert body in result.text
