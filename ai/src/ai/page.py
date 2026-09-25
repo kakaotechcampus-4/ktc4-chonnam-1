@@ -108,9 +108,8 @@ class _Collector(HTMLParser):
         self.text_chars = 0
         self.limit_reached = False
         self.malformed_important = False
-        self._line_offsets = [0]
-        for line in source.splitlines(keepends=True):
-            self._line_offsets.append(self._line_offsets[-1] + len(line))
+        self.processed_end = 0
+        self._line_offsets = [0, *(index + 1 for index, char in enumerate(source) if char == "\n")]
 
     def _offset(self) -> int:
         line, column = self.getpos()
@@ -123,6 +122,7 @@ class _Collector(HTMLParser):
     def _new_node(
         self, tag: str, attrs: list[tuple[str, str | None]], *, closes_itself: bool
     ) -> None:
+        self.processed_end = max(self.processed_end, self._offset())
         if len(self.nodes) >= MAX_ELEMENTS:
             self.limit_reached = True
             raise _InspectionLimit
@@ -164,6 +164,7 @@ class _Collector(HTMLParser):
             node.end = node.start_tag_end
         else:
             self.stack.append(node)
+        self.processed_end = max(self.processed_end, node.start_tag_end)
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]]
@@ -176,6 +177,8 @@ class _Collector(HTMLParser):
         self._new_node(tag.lower(), attrs, closes_itself=True)
 
     def handle_endtag(self, tag: str) -> None:
+        start = self._offset()
+        self.processed_end = max(self.processed_end, start)
         tag = tag.lower()
         match = next(
             (
@@ -190,7 +193,7 @@ class _Collector(HTMLParser):
                 self.malformed_important = True
             return
 
-        end = self._tag_end(self._offset())
+        end = self._tag_end(start)
         intervening = self.stack[match + 1 :]
         matched = self.stack[match]
         for node in intervening:
@@ -203,8 +206,10 @@ class _Collector(HTMLParser):
             self.malformed_important = True
         matched.end = end
         del self.stack[match:]
+        self.processed_end = max(self.processed_end, end)
 
     def handle_data(self, data: str) -> None:
+        self.processed_end = max(self.processed_end, self._offset())
         if not data or (self.stack and self.stack[-1].ignored):
             return
         remaining = MAX_PAGE_TEXT_CHARS - self.text_chars
@@ -222,7 +227,7 @@ class _Collector(HTMLParser):
 
     def finish(self) -> None:
         for node in self.stack:
-            node.end = len(self.source)
+            node.end = max(node.start_tag_end, self.processed_end)
             node.incomplete = True
             if node.tag == "form" and not node.ignored:
                 self.malformed_important = True
@@ -547,13 +552,20 @@ def inspect_html(info: str) -> PageInspection:
 
     if not info:
         return PageInspection(text="", elements=(), failure=FailureCode.EMPTY_INPUT)
-    if len(info.encode("utf-8")) > MAX_HTML_BYTES:
+    if len(info) > MAX_HTML_BYTES:
+        return PageInspection(text="", elements=(), failure=FailureCode.INPUT_TOO_LARGE)
+    try:
+        size = len(info.encode("utf-8"))
+    except UnicodeEncodeError as error:
+        raise ValueError("HTML input must be valid UTF-8 text") from error
+    if size > MAX_HTML_BYTES:
         return PageInspection(text="", elements=(), failure=FailureCode.INPUT_TOO_LARGE)
 
     collector = _Collector(info)
     try:
         collector.feed(info)
         collector.close()
+        collector.processed_end = len(info)
     except _InspectionLimit:
         pass
     except Exception:

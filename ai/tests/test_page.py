@@ -5,6 +5,7 @@ import urllib.request
 import httpx
 import pytest
 
+import ai.page as page_module
 from ai.page import (
     MAX_ELEMENTS,
     MAX_PAGE_TEXT_CHARS,
@@ -293,3 +294,58 @@ def test_inspection_never_opens_links_or_submits_forms(monkeypatch: pytest.Monke
         EnvDoubt.LOGIN_FORM,
         EnvDoubt.APP_LINK,
     ]
+
+
+def test_uninspected_tail_is_not_evidence(monkeypatch):
+    monkeypatch.setattr(page_module, "MAX_ELEMENTS", 2)
+    html = '<form><input type="password"><div>UNREAD_SECRET</div></form>'
+
+    result = inspect_html(html)
+
+    assert result.failure is FailureCode.PARTIAL_CONTENT
+    assert result.elements
+    assert all("UNREAD_SECRET" not in element.evidence for element in result.elements)
+    for element in result.elements:
+        assert html[element.start : element.start + len(element.evidence)] == element.evidence
+
+
+def test_entity_text_cut_does_not_include_tail(monkeypatch):
+    monkeypatch.setattr(page_module, "MAX_PAGE_TEXT_CHARS", 2)
+    html = '<form><input type="password">&amp;&amp;&amp;UNREAD</form>'
+
+    result = inspect_html(html)
+
+    assert result.failure is FailureCode.PARTIAL_CONTENT
+    assert all("UNREAD" not in element.evidence for element in result.elements)
+
+
+def test_invalid_unicode_is_explicit_input_error():
+    with pytest.raises(ValueError, match="UTF-8"):
+        inspect_html("\ud800")
+
+
+def test_utf8_boundary(monkeypatch):
+    monkeypatch.setattr(page_module, "MAX_HTML_BYTES", 3)
+
+    assert inspect_html("가").failure is None
+    assert inspect_html("가a").failure is FailureCode.INPUT_TOO_LARGE
+
+
+@pytest.mark.parametrize("line_break", ["\n", "\r", "\r\n"])
+def test_evidence_offset_matches_source_with_all_line_endings(line_break):
+    html = f'prefix{line_break}break{line_break}<form><input type="password"></form>'
+
+    result = inspect_html(html)
+
+    element = result.elements[0]
+    assert element.start == html.index("<form>")
+    assert html[element.start : element.start + len(element.evidence)] == element.evidence
+
+
+def test_evidence_offset_matches_source_with_mixed_cr_lf():
+    html = 'prefix\rbreak\n<form><input type="password"></form>'
+
+    result = inspect_html(html)
+
+    assert result.elements[0].start == 13
+    assert result.elements[0].evidence == '<form><input type="password"></form>'
