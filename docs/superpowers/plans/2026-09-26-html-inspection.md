@@ -1,6 +1,6 @@
 # HTML Inspection Limits Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 수집 HTML을 유한한 비용으로 검사하고, 실제 확인한 근거와 미완료 상태를 보존해 최종 env에 반영한다.
 
@@ -51,7 +51,7 @@
 
 **Interfaces:** 공개 함수는 유지. 내부 `_Collector`에 `processed_end: int`를 추가한다. `finish()`는 이 원문 경계를 사용한다. 정상 파싱을 모두 마친 경우에만 `processed_end=len(source)`로 설정한다.
 
-- [ ] 기존 imports에 `import ai.page as page_module`을 추가하고 회귀 테스트를 작성한다.
+- [x] 기존 imports에 `import ai.page as page_module`을 추가하고 회귀 테스트를 작성한다.
 
 ```python
 def test_uninspected_tail_is_not_evidence(monkeypatch):
@@ -78,8 +78,8 @@ def test_invalid_unicode_is_explicit_input_error():
         inspect_html("\ud800")
 ```
 
-- [ ] Run: `python -m pytest ai/tests/test_page.py -k "uninspected_tail or entity_text_cut or invalid_unicode" -q`. 기존 동작과의 차이로 FAIL하는지 확인한다.
-- [ ] 함수 시작 부분에 문자 수 사전 검사와 UTF-8 검증을 구현한다.
+- [x] Run: `python -m pytest ai/tests/test_page.py -k "uninspected_tail or entity_text_cut or invalid_unicode" -q`. 기존 동작과의 차이로 FAIL하는지 확인한다.
+- [x] 함수 시작 부분에 문자 수 사전 검사와 UTF-8 검증을 구현한다.
 
 ```python
 if len(info) > MAX_HTML_BYTES:
@@ -92,7 +92,7 @@ if size > MAX_HTML_BYTES:
     return PageInspection(text="", elements=(), failure=FailureCode.INPUT_TOO_LARGE)
 ```
 
-- [ ] `processed_end`를 콜백 진입 시 현재 토큰 시작 위치까지 갱신한다. 성공한 시작·종료 태그는 알려진 원문 토큰 끝까지 갱신한다. 데이터 토큰 길이는 디코딩된 data 길이로 원문 끝을 계산하지 않는다. 데이터 도중 초과면 토큰 시작까지만 evidence를 인정하고 retained page text는 기존 제한 안에서 보존한다. `finish()`의 열린 노드는 다음처럼 닫는다.
+- [x] `processed_end`를 콜백 진입 시 현재 토큰 시작 위치까지 갱신한다. 성공한 시작·종료 태그는 알려진 원문 토큰 끝까지 갱신한다. 데이터 토큰 길이는 디코딩된 data 길이로 원문 끝을 계산하지 않는다. 데이터 도중 초과면 토큰 시작까지만 evidence를 인정하고 retained page text는 기존 제한 안에서 보존한다. `finish()`의 열린 노드는 다음처럼 닫는다.
 
 ```python
 for node in self.stack:
@@ -102,7 +102,7 @@ for node in self.stack:
         self.malformed_important = True
 ```
 
-- [ ] 원문 그대로 끝난 미완성 HTML은 기존처럼 PARTIAL_CONTENT로 남기되 이미 읽은 원문 끝까지 보존한다. 기존 `test_unclosed_important_form_preserves_observed_element_as_partial`을 유지한다. 다바이트 크기 경계와 1byte 초과 테스트를 추가한다.
+- [x] 원문 그대로 끝난 미완성 HTML은 기존처럼 PARTIAL_CONTENT로 남기되 이미 읽은 원문 끝까지 보존한다. 기존 `test_unclosed_important_form_preserves_observed_element_as_partial`을 유지한다. 다바이트 크기 경계와 1byte 초과 테스트를 추가한다.
 
 ```python
 def test_utf8_boundary(monkeypatch):
@@ -111,8 +111,8 @@ def test_utf8_boundary(monkeypatch):
     assert inspect_html("가a").failure is FailureCode.INPUT_TOO_LARGE
 ```
 
-- [ ] Run: `python -m pytest ai/tests/test_page.py -q`. 해당 테스트 전체 PASS.
-- [ ] 변경을 검토하고 관련 파일만 stage/commit: `git commit -m "fix: bound HTML input and preserve inspected evidence ranges"`.
+- [x] Run: `python -m pytest ai/tests/test_page.py -q`. 해당 테스트 전체 PASS.
+- [x] 변경을 검토하고 관련 파일만 stage/commit: `git commit -m "fix: bound HTML input and preserve inspected evidence ranges"`.
 
 ## Task 2: 구조 깊이와 검사 전체 시간 예산
 
@@ -120,7 +120,7 @@ def test_utf8_boundary(monkeypatch):
 
 **Interfaces:** `MAX_DEPTH=64`, `INSPECTION_TIMEOUT_SECONDS=0.100` 추가. 내부 `_InspectionTimeout` 예외와 `_check_deadline(deadline: float) -> None` 함수 추가. collector와 분류 helper가 하나의 deadline을 공유한다. 공개 함수 인자에는 deadline을 추가하지 않는다.
 
-- [ ] 깊이 1은 최상위 요소로 정의한다. void/self-closing 요소도 현재 부모보다 한 단계 깊은 노드이므로 `len(stack)+1`로 확인한다. 깊이 64 허용·65 거부 테스트를 추가하고, 기존 1,200단계 정상 테스트는 새 정책의 PARTIAL_CONTENT 기대값으로 변경한다.
+- [x] 깊이 1은 최상위 요소로 정의한다. void/self-closing 요소도 현재 부모보다 한 단계 깊은 노드이므로 `len(stack)+1`로 확인한다. 깊이 64 허용·65 거부 테스트를 추가하고, 기존 1,200단계 정상 테스트는 새 정책의 PARTIAL_CONTENT 기대값으로 변경한다.
 
 ```python
 @pytest.mark.parametrize("depth,partial", [(64, False), (65, True)])
@@ -136,8 +136,8 @@ def test_deadline_uses_monotonic_clock(monkeypatch):
         page_module._check_deadline(2.0)
 ```
 
-- [ ] Run: `python -m pytest ai/tests/test_page.py -k "depth_boundary or deadline_uses" -q`. 새 제한과 함수가 없어 FAIL해야 한다.
-- [ ] 입력 검증 전에 deadline을 생성하고 각 단계에서 확인한다.
+- [x] Run: `python -m pytest ai/tests/test_page.py -k "depth_boundary or deadline_uses" -q`. 새 제한과 함수가 없어 FAIL해야 한다.
+- [x] 입력 검증 전에 deadline을 생성하고 각 단계에서 확인한다.
 
 ```python
 from time import monotonic
@@ -157,9 +157,9 @@ if len(self.stack) + 1 > MAX_DEPTH:
     raise _InspectionLimit
 ```
 
-- [ ] `_Collector` 콜백, `_node_text`, `_descendants`, 조상 탐색, label 순회, `_classify`, `_element`, 결과 정규화에서 같은 deadline을 확인한다. 내부 helper의 모든 호출부에 인자를 전달한다. `_classify`는 후보를 순차 생성하고 검증된 요소만 inspect_html의 리스트에 추가하는 방식으로 변경한다. 시간 초과 후 전체를 다시 분류하지 않는다.
-- [ ] 파싱·분류·근거 생성 예외 경로에서 TIMEOUT을 PARTIAL_CONTENT로 덮지 않는다. 기존 catch-all 앞에서 `_InspectionTimeout`을 처리하고 이미 확정한 요소와 텍스트만 반환한다.
-- [ ] 테스트를 실제 sleep에 의존시키지 않는다. 다음 모킹으로 분류 도중 중단을 검증한다.
+- [x] `_Collector` 콜백, `_node_text`, `_descendants`, 조상 탐색, label 순회, `_classify`, `_element`, 결과 정규화에서 같은 deadline을 확인한다. 내부 helper의 모든 호출부에 인자를 전달한다. `_classify`는 후보를 순차 생성하고 검증된 요소만 inspect_html의 리스트에 추가하는 방식으로 변경한다. 시간 초과 후 전체를 다시 분류하지 않는다.
+- [x] 파싱·분류·근거 생성 예외 경로에서 TIMEOUT을 PARTIAL_CONTENT로 덮지 않는다. 기존 catch-all 앞에서 `_InspectionTimeout`을 처리하고 이미 확정한 요소와 텍스트만 반환한다.
+- [x] 테스트를 실제 sleep에 의존시키지 않는다. 다음 모킹으로 분류 도중 중단을 검증한다.
 
 ```python
 def test_classification_timeout_preserves_completed_candidates(monkeypatch):
@@ -173,9 +173,9 @@ def test_classification_timeout_preserves_completed_candidates(monkeypatch):
     assert result.elements == (previous,)
 ```
 
-- [ ] 파싱 도중 중단 테스트는 `_Collector.handle_starttag`를 모킹해 `_InspectionTimeout`을 발생시킨다. 반환 실패가 TIMEOUT이며 이후 분류를 실행하지 않는지 확인한다. 큰 attrs·많은 labels·중첩 form 입력도 시간 확인 경로를 통과시킨다.
-- [ ] Run: `python -m pytest ai/tests/test_page.py -q`. PASS. 테스트 반복에서 실제 100ms 경과에 따른 흔들림이 있으면 비시간 테스트의 시계만 고정하며 운영 제한을 테스트 때문에 늘리지 않는다.
-- [ ] 검토 후 관련 파일 커밋: `git commit -m "fix: bound HTML depth and inspection work"`.
+- [x] 파싱 도중 중단 테스트는 `_Collector.handle_starttag`를 모킹해 `_InspectionTimeout`을 발생시킨다. 반환 실패가 TIMEOUT이며 이후 분류를 실행하지 않는지 확인한다. 큰 attrs·많은 labels·중첩 form 입력도 시간 확인 경로를 통과시킨다.
+- [x] Run: `python -m pytest ai/tests/test_page.py -q`. PASS. 테스트 반복에서 실제 100ms 경과에 따른 흔들림이 있으면 비시간 테스트의 시계만 고정하며 운영 제한을 테스트 때문에 늘리지 않는다.
+- [x] 검토 후 관련 파일 커밋: `git commit -m "fix: bound HTML depth and inspection work"`.
 
 ## Task 3: 검사 결과와 LLM 입력 총량
 
@@ -183,7 +183,7 @@ def test_classification_timeout_preserves_completed_candidates(monkeypatch):
 
 **Interfaces:** `MAX_INSPECTION_BYTES=262_144`와 `MAX_PAGE_PAYLOAD_BYTES=131_072`를 각 소유 모듈에 추가한다. 기존 `_safe_elements`와 PageInspection 형태는 유지한다. 직렬화 예산은 ensure_ascii=False, separators=(",", ":") 기준이다.
 
-- [ ] 출력 상한 테스트를 추가한다. existing imports에 `json`, `dataclasses.asdict`를 추가한다.
+- [x] 출력 상한 테스트를 추가한다. existing imports에 `json`, `dataclasses.asdict`를 추가한다.
 
 ```python
 def test_result_byte_limit_marks_partial(monkeypatch):
@@ -197,7 +197,7 @@ def test_result_byte_limit_marks_partial(monkeypatch):
     assert result.elements
 ```
 
-- [ ] LLM 입력 상한 초과 시 외부 호출을 하지 않는지 고정한다. 기존 `make_parse_client` fixture와 PageProposal을 재사용하고 `import ai.llm.page as page_llm`을 추가한다.
+- [x] LLM 입력 상한 초과 시 외부 호출을 하지 않는지 고정한다. 기존 `make_parse_client` fixture와 PageProposal을 재사용하고 `import ai.llm.page as page_llm`을 추가한다.
 
 ```python
 @pytest.mark.asyncio
@@ -210,9 +210,9 @@ async def test_payload_limit_skips_llm(monkeypatch, make_parse_client):
     parse.assert_not_awaited()
 ```
 
-- [ ] Run: `python -m pytest ai/tests/test_page.py ai/tests/test_page_analysis.py -k "byte_limit or payload_limit" -q`. 상한이 없어 FAIL.
-- [ ] 후보를 추가하기 전 각 요소의 JSON byte 크기를 계산하고 누적한다. 원문 evidence·text·attributes·fields를 모두 포함한다. 매 요소마다 전체 리스트를 다시 직렬화하는 O(n²) 방식을 피한다. wrapper·콤마·failure 값 공간까지 예약하고, text만으로 초과하면 UTF-8 문자를 깨지 않게 줄인다. 마지막 전체 JSON 길이 검증은 한 번 수행하며 예산 초과 시 뒤의 요소를 제거한다. 검사 완료 항목만 남기고 PARTIAL_CONTENT를 설정한다. TIMEOUT이 있으면 TIMEOUT 유지.
-- [ ] LLM user JSON은 기존 직렬화 직후, 클라이언트 생성·모델 조회 전에 상한을 확인한다.
+- [x] Run: `python -m pytest ai/tests/test_page.py ai/tests/test_page_analysis.py -k "byte_limit or payload_limit" -q`. 상한이 없어 FAIL.
+- [x] 후보를 추가하기 전 각 요소의 JSON byte 크기를 계산하고 누적한다. 원문 evidence·text·attributes·fields를 모두 포함한다. 매 요소마다 전체 리스트를 다시 직렬화하는 O(n²) 방식을 피한다. wrapper·콤마·failure 값 공간까지 예약하고, text만으로 초과하면 UTF-8 문자를 깨지 않게 줄인다. 마지막 전체 JSON 길이 검증은 한 번 수행하며 예산 초과 시 뒤의 요소를 제거한다. 검사 완료 항목만 남기고 PARTIAL_CONTENT를 설정한다. TIMEOUT이 있으면 TIMEOUT 유지.
+- [x] LLM user JSON은 기존 직렬화 직후, 클라이언트 생성·모델 조회 전에 상한을 확인한다.
 
 ```python
 user_content = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -220,9 +220,9 @@ if len(user_content.encode("utf-8")) > MAX_PAGE_PAYLOAD_BYTES:
     return _failure(FailureCode.INPUT_TOO_LARGE)
 ```
 
-- [ ] 검사 결과에 남은 source-grounded 요소는 LLM 입력 초과로 지우지 않는다. 이후 env builder가 inspection과 실패한 PageAnalysis를 함께 받아 부분 근거를 설명하게 한다.
-- [ ] Run: `python -m pytest ai/tests/test_page.py ai/tests/test_page_analysis.py -q`. PASS.
-- [ ] 검토 후 커밋: `git commit -m "fix: cap inspected HTML evidence and page model payloads"`.
+- [x] 검사 결과에 남은 source-grounded 요소는 LLM 입력 초과로 지우지 않는다. 이후 env builder가 inspection과 실패한 PageAnalysis를 함께 받아 부분 근거를 설명하게 한다.
+- [x] Run: `python -m pytest ai/tests/test_page.py ai/tests/test_page_analysis.py -q`. PASS.
+- [x] 검토 후 커밋: `git commit -m "fix: cap inspected HTML evidence and page model payloads"`.
 
 ## Task 4: 최종 결과 연결과 정상 사례 회귀
 
@@ -232,7 +232,7 @@ if len(user_content.encode("utf-8")) > MAX_PAGE_PAYLOAD_BYTES:
 
 **Interfaces:** 기존 `analyze_environment_part(page, failure=...)`는 PageInspection 실패를 전달하며 추가 LLM 호출 없이 부분 env를 만든다. 실패 시 message는 그대로 보존한다.
 
-- [ ] 최종 함수 테스트 파일의 기존 url/message helper를 사용해 통합 테스트를 추가한다.
+- [x] 최종 함수 테스트 파일의 기존 url/message helper를 사용해 통합 테스트를 추가한다.
 
 ```python
 @pytest.mark.asyncio
@@ -250,8 +250,8 @@ async def test_html_limit_preserves_message_and_sets_null(monkeypatch):
     assert result.env.details.reason
 ```
 
-- [ ] Run: `python -m pytest ai/tests/test_pipeline_finalize.py -k html_limit -q`. 필요 시 failure 전달 경로만 수정한다. 이미 PASS라면 제품 코드를 추가하지 않는다.
-- [ ] 아래 정상 콘텐츠를 `test_page.py`에 매개변수화해 의미 있는 일반 페이지가 EMPTY_INPUT이 아님을 검증한다. 이 테스트는 악성 판정 정확도 테스트가 아니다.
+- [x] Run: `python -m pytest ai/tests/test_pipeline_finalize.py -k html_limit -q`. 필요 시 failure 전달 경로만 수정한다. 이미 PASS라면 제품 코드를 추가하지 않는다.
+- [x] 아래 정상 콘텐츠를 `test_page.py`에 매개변수화해 의미 있는 일반 페이지가 EMPTY_INPUT이 아님을 검증한다. 이 테스트는 악성 판정 정확도 테스트가 아니다.
 
 ```python
 @pytest.mark.parametrize("body", [
@@ -266,9 +266,9 @@ def test_generic_normal_content_is_not_missing(body):
     assert body in result.text
 ```
 
-- [ ] `test_page_analysis.py`의 일반 로그인·결제 UI·인용·금지문과 명시적 위험 요구 테스트를 유지해 제한 수정이 위험 판정을 확대하지 않는지 검증한다. 새로운 업종 enum이나 판정 규칙을 추가하지 않는다.
-- [ ] Run: `python -m pytest ai/tests/test_page.py ai/tests/test_page_analysis.py ai/tests/test_pipeline_finalize.py -q`, 이어 `python -m pytest ai/tests -q`. 모두 PASS. 의미 회귀나 신규 실패가 없으면 중복 실행하지 않는다.
-- [ ] 검토 후 커밋: `git commit -m "test: preserve partial page evidence in final analysis"`.
+- [x] `test_page_analysis.py`의 일반 로그인·결제 UI·인용·금지문과 명시적 위험 요구 테스트를 유지해 제한 수정이 위험 판정을 확대하지 않는지 검증한다. 새로운 업종 enum이나 판정 규칙을 추가하지 않는다.
+- [x] Run: `python -m pytest ai/tests/test_page.py ai/tests/test_page_analysis.py ai/tests/test_pipeline_finalize.py -q`, 이어 `python -m pytest ai/tests -q`. 모두 PASS. 의미 회귀나 신규 실패가 없으면 중복 실행하지 않는다.
+- [x] 검토 후 커밋: `git commit -m "test: preserve partial page evidence in final analysis"`.
 
 ## Task 5: DOM 수집 인계 문서와 기존 정책 충돌 표시
 
@@ -276,8 +276,8 @@ def test_generic_normal_content_is_not_missing(body):
 
 **Interfaces:** 기존 IsolatedPage(brand, category, info)와 Python failure 인자만 현재 인터페이스로 명시한다. 원격 스키마·BE 수신 상한·범용 PageElement 확장은 별도 합의 대상이다.
 
-- [ ] 설계의 ‘목적과 책임 경계’, ‘범용 DOM 수집 목록’, ‘정상·의심 사례 비교 기준’, ‘별도 메타데이터 요구사항’을 인계 문서에 담는다. 제목·본문·조건·입력·라벨 참조·폼 관계·목적지·연락·차단 화면·외부 콘텐츠 항목을 빠짐없이 포함한다.
-- [ ] 정책 상태를 다음 문구로 시작한다.
+- [x] 설계의 ‘목적과 책임 경계’, ‘범용 DOM 수집 목록’, ‘정상·의심 사례 비교 기준’, ‘별도 메타데이터 요구사항’을 인계 문서에 담는다. 제목·본문·조건·입력·라벨 참조·폼 관계·목적지·연락·차단 화면·외부 콘텐츠 항목을 빠짐없이 포함한다.
+- [x] 정책 상태를 다음 문구로 시작한다.
 
 ```text
 이 문서는 격리 수집기와 BE에 전달할 협의안이다. 수집 자료의 분석 주체는
@@ -286,14 +286,23 @@ def test_generic_normal_content_is_not_missing(body):
 여기에 적힌 DOM 항목 전부가 현재 AI 검사기에서 해석되는 것은 아니다.
 ```
 
-- [ ] 수집 단계와 AI 검사 단계의 제한표를 분리한다. 응답 전체 byte 상한은 HTML 128KiB와 별개라는 점, 인코딩 불가 자료는 수신 검증 오류라는 점을 적는다. 값과 형식이 합의되지 않은 원격 필드는 임의로 구현하지 않는다.
-- [ ] 저장한 DOM·URL·페이지 지시문도 불신 입력이며 관리자 화면·로그 출력에서 컨텍스트별 이스케이프가 필요하다고 명시한다. 입력 검증을 출력 방어의 대용으로 설명하지 않는다.
-- [ ] 실제 AWS 환경 검증 목록을 담는다: 동시 1건, cold start, peak RSS, p95, 과부하 거부, 내부 주소 차단, 컨테이너 강제 종료, 다음 작업 성공, 자료·로그 정리. 숫자는 결과가 아니라 초기 가설로 표시한다.
-- [ ] Run: `git diff --check`. 문서 링크와 수치가 설계 및 구현 상수와 일치하는지 확인한다. 과거 ADR은 삭제·재작성하지 않는다.
-- [ ] 검토 후 문서 커밋: `git commit -m "docs: define DOM collection handoff and inspection limits"`.
+- [x] 수집 단계와 AI 검사 단계의 제한표를 분리한다. 응답 전체 byte 상한은 HTML 128KiB와 별개라는 점, 인코딩 불가 자료는 수신 검증 오류라는 점을 적는다. 값과 형식이 합의되지 않은 원격 필드는 임의로 구현하지 않는다.
+- [x] 저장한 DOM·URL·페이지 지시문도 불신 입력이며 관리자 화면·로그 출력에서 컨텍스트별 이스케이프가 필요하다고 명시한다. 입력 검증을 출력 방어의 대용으로 설명하지 않는다.
+- [x] 실제 AWS 환경 검증 목록을 담는다: 동시 1건, cold start, peak RSS, p95, 과부하 거부, 내부 주소 차단, 컨테이너 강제 종료, 다음 작업 성공, 자료·로그 정리. 숫자는 결과가 아니라 초기 가설로 표시한다.
+- [x] Run: `git diff --check`. 문서 링크와 수치가 설계 및 구현 상수와 일치하는지 확인한다. 과거 ADR은 삭제·재작성하지 않는다.
+- [x] 검토 후 문서 커밋: `git commit -m "docs: define DOM collection handoff and inspection limits"`.
 
 ## 실행 전 검토와 완료 보고
 
 본 계획은 문서 작성 요청에 따른 산출물이며 자동으로 구현을 시작하지 않는다. 실행 시 같은 파서·근거 모델을 연속 수정하므로 단일 에이전트의 순차 실행을 권장한다.
 
 완료 보고에는 AI 테스트 결과, 초기 상한의 실측 여부, 인코딩 오류 처리, 아직 합의되지 않은 수집·BE 계약을 구분한다. 이 계획으로 AWS 격리 안전성·일반 스미싱 판별 정확도·100ms 강제 종료가 입증됐다고 보고하지 않는다.
+
+## ?? ?? (2026-09-26)
+
+- ??: a97850c, 6afa423, f36a43b, cc5343a, ca037aa.
+- AI ?? ??? 687? ??, HTML/LLM/?? ?? ?? ??? 135? ??.
+- ?? ?? ??: ?? ?? 1.17ms, ??64 1.54ms, ?200? 21.80ms, label400? 73.02ms. AWS ???? ??? ?? ?? ??? ???.
+- ?? ? 10,673byte ??? ??? ?? 1,037,395byte?? 259,572byte? ????? PARTIAL_CONTENT? ????.
+- ?? ??: ?? ? ??? ?? ? ??? ?? ?? ??? ?? ??? ??? ? ??. ??? ?? ??? ???? ??? ?? ??? ????.
+- ?? ??? ???? ?? ??? ?? ???? ?? ????. ?? ????? DOM ?? ?????? ??? ???? ???.
