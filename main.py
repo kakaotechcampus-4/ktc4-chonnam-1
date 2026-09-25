@@ -673,36 +673,67 @@ async def run_analysis_and_callback(
 
         try:
             callback_result = response.json()
-
-            callback_status = callback_result.get(
+        
+            callback_result_status = callback_result.get(
                 "status"
             )
-
+        
             print(
                 f"[CALLBACK RESULT STATUS] "
-                f"{callback_status}"
+                f"{callback_result_status}"
             )
-
-            if (
-                callback_status is not None
-                and callback_status != "SUCCESS"
-            ):
+        
+            job = ANALYSIS_JOBS.get(job_id)
+        
+            if callback_result_status == "SUCCESS":
+                if job:
+                    job["callback_status"] = "success"
+        
                 print(
-                    "[CALLBACK WARNING] "
-                    f"Kakao callback status="
-                    f"{callback_status}"
+                    f"[JOB CALLBACK SUCCESS] "
+                    f"job_id={job_id}"
                 )
-
+        
+            else:
+                if job:
+                    job["callback_status"] = "failed"
+        
+                print(
+                    f"[JOB CALLBACK FAILED] "
+                    f"job_id={job_id} "
+                    f"status={callback_result_status}"
+                )
+        
         except ValueError:
+            job = ANALYSIS_JOBS.get(job_id)
+        
+            if job:
+                job["callback_status"] = "failed"
+        
             print(
                 "[CALLBACK WARNING] "
                 "응답을 JSON으로 파싱할 수 없습니다."
             )
+        
+            print(
+                f"[JOB CALLBACK FAILED] "
+                f"job_id={job_id}"
+            )
 
     except Exception as e:
+        job = ANALYSIS_JOBS.get(job_id)
+    
+        if job:
+            job["callback_status"] = "failed"
+    
         print(
             f"[CALLBACK SEND FAILED] "
             f"{type(e).__name__}: {e}"
+        )
+    
+        print(
+            f"[JOB CALLBACK FAILED] "
+            f"job_id={job_id}"
         )
 
     finally:
