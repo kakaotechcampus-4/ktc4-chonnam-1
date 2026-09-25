@@ -1,7 +1,11 @@
 import asyncio
+import time
+
+import uuid
+from datetime import datetime, timezone
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 
 from backend.src.server.urlscan_service import (
     submit_url_scan,
@@ -24,6 +28,13 @@ app = FastAPI()
 RUNNING_USERS: set[str] = set()
 
 
+# TODO:
+# 프로토타입 검증용 인메모리 작업 저장소.
+# 서버 재시작 시 데이터가 소실된다.
+# 추후 PostgreSQL 기반 저장소로 교체한다.
+ANALYSIS_JOBS: dict[str, dict] = {}
+
+
 # 콜백 URL 유효 시간을 고려한 안전 마진
 CALLBACK_DEADLINE_SECONDS = 45.0
 
@@ -32,6 +43,71 @@ CALLBACK_DEADLINE_SECONDS = 45.0
 # AI-BE 연동 테스트를 위한 임시 threshold.
 # 실제 threshold는 urlscan 테스트 후 확정.
 TEST_SCORE_THRESHOLD = 0
+
+
+# ============================================================
+# Store Analysis Job
+# ============================================================
+
+def create_analysis_job(
+    user_id: str | None
+) -> str:
+    """
+    새로운 분석 작업을 생성하고 job_id를 반환한다.
+
+    현재는 인메모리 저장소를 사용하며,
+    추후 PostgreSQL 기반 저장소로 교체한다.
+    """
+
+    job_id = str(uuid.uuid4())
+
+    ANALYSIS_JOBS[job_id] = {
+        "job_id": job_id,
+        "user_id": user_id,
+        "status": "running",
+        "created_at": datetime.now(
+            timezone.utc
+        ).isoformat(),
+        "completed_at": None,
+        "result": None,
+        "error": None,
+        "callback_status": "pending"
+    }
+
+    print(
+        f"[JOB CREATED] "
+        f"job_id={job_id} "
+        f"user={user_id}"
+    )
+
+    return job_id
+
+
+# ============================================================
+# Analysis Job API
+# ============================================================
+
+@app.get("/api/analyses/{job_id}")
+async def get_analysis_job(job_id: str):
+    """
+    인메모리에 저장된 분석 작업 상태와 결과를 조회한다.
+
+    현재는 개발/테스트용 API이며,
+    서버 재시작 시 저장된 작업은 소실된다.
+    """
+
+    job = ANALYSIS_JOBS.get(job_id)
+
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Analysis job not found"
+        )
+
+    return {
+        "success": True,
+        "job": job
+    }
 
 
 # ============================================================
@@ -95,13 +171,19 @@ async def kakao_skill(
     if user_id:
         RUNNING_USERS.add(user_id)
 
+    # 분석 작업 생성
+    job_id = create_analysis_job(
+        user_id
+    )
+
     # 오래 걸리는 분석은 background task에서 수행
     background_tasks.add_task(
         run_analysis_and_callback,
         links,
         message,
         callback_url,
-        user_id
+        user_id,
+        job_id
     )
 
     # 카카오에는 즉시 callback 사용 응답
@@ -149,46 +231,41 @@ async def run_analysis(
         )
 
     현재 격리 페이지 수집기는 아직 연결하지 않는다.
+
+    문자 AI 분석과 urlscan은 서로의 입력을 필요로 하지 않는 독립적인
+    작업이므로, 문자 분석을 먼저 끝낸 뒤 URL을 처리하던 순차 실행을
+    asyncio.create_task로 동시에 시작하도록 바꿨다. urlscan이 문자
+    분석보다 훨씬 오래 걸리므로(공식 가이드 기준 최소 30초), URL 루프
+    안에서 message_result가 실제로 필요한 시점에는 이미 끝나 있을
+    가능성이 높다 (docs/experiments/ 에 전후 소요시간 비교 기록).
     """
 
     result_lines = []
 
+    total_start = time.monotonic()
+
     # ========================================================
-    # 1. 문자 AI 분석
+    # 1. 문자 AI 분석 — urlscan과 독립적이므로 "시작만" 해두고
+    #    결과가 실제로 필요한 시점(2-4 이후)에 가서 기다린다.
     # ========================================================
 
-    print("========== AI MESSAGE ANALYSIS ==========")
+    print("========== AI MESSAGE ANALYSIS (병렬 시작) ==========")
     print(f"[AI MESSAGE INPUT] {message!r}")
 
-    try:
-        message_result = await analyze_message_part(
-            message
-        )
-
-        print(
-            "[AI MESSAGE RESULT]",
-            message_result.model_dump(
-                mode="json"
-            )
-        )
-
-    except Exception as e:
-        print(
-            f"[AI MESSAGE ERROR] "
-            f"{type(e).__name__}: {e}"
-        )
-
-        # finalize_analysis는 message=None도 처리 가능
-        message_result = None
-
-    print("=========================================")
+    message_start = time.monotonic()
+    message_task = asyncio.create_task(
+        analyze_message_part(message)
+    )
+    message_logged = False
 
     # ========================================================
-    # 2. URL별 분석
+    # 2. URL별 분석 (문자 분석과 동시에 진행)
     # ========================================================
 
     for link in links:
         try:
+            urlscan_start = time.monotonic()
+
             # ------------------------------------------------
             # 2-1. urlscan 요청
             # ------------------------------------------------
@@ -238,6 +315,16 @@ async def run_analysis(
                 )
 
                 continue
+
+            urlscan_elapsed = (
+                time.monotonic() - urlscan_start
+            )
+
+            print(
+                f"[TIMING] urlscan 소요: "
+                f"{urlscan_elapsed:.2f}s "
+                f"({link})"
+            )
 
             # ------------------------------------------------
             # 2-3. 결과 파싱
@@ -302,6 +389,54 @@ async def run_analysis(
             print(
                 "========================================"
             )
+
+            # ------------------------------------------------
+            # 2-5. 병렬로 시작해둔 문자 분석 결과 대기
+            #
+            # urlscan이 문자 분석보다 훨씬 오래 걸리므로, 여기 도착할
+            # 때는 이미 message_task가 끝나 있을 가능성이 높다 —
+            # 이 await는 대부분 즉시 반환된다 (한 번 끝난 task는
+            # 몇 번을 다시 await해도 캐시된 결과를 즉시 돌려준다).
+            # ------------------------------------------------
+
+            message_wait_start = time.monotonic()
+
+            try:
+                message_result = await message_task
+
+                if not message_logged:
+                    message_elapsed = (
+                        time.monotonic() - message_start
+                    )
+
+                    print(
+                        f"[TIMING] 문자 분석 총 소요: "
+                        f"{message_elapsed:.2f}s "
+                        f"(urlscan과 겹친 시간 포함, "
+                        f"이 지점에서 실제로 기다린 시간: "
+                        f"{time.monotonic() - message_wait_start:.2f}s)"
+                    )
+
+                    print(
+                        "[AI MESSAGE RESULT]",
+                        message_result.model_dump(
+                            mode="json"
+                        )
+                    )
+
+                    message_logged = True
+
+            except Exception as e:
+                if not message_logged:
+                    print(
+                        f"[AI MESSAGE ERROR] "
+                        f"{type(e).__name__}: {e}"
+                    )
+
+                    message_logged = True
+
+                # finalize_analysis는 message=None도 처리 가능
+                message_result = None
 
             # =================================================
             # 3. AI 최종 분석
@@ -377,9 +512,34 @@ async def run_analysis(
                 f"⚠️ 분석 실패: {link}"
             )
 
+    # 모든 링크가 위에서 continue로 건너뛰어졌다면 message_task를
+    # 한 번도 await하지 않았을 수 있다 — 여기서 정리해서 background에
+    # 방치된 채로 남지 않게 한다 (asyncio가 아직 완료 안 된 task를
+    # 아무도 안 기다리면 경고를 남긴다).
+    if not message_task.done():
+        message_task.cancel()
+
+    try:
+        await message_task
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        if not message_logged:
+            print(
+                f"[AI MESSAGE ERROR] "
+                f"{type(e).__name__}: {e}"
+            )
+
     # ========================================================
     # 5. Kakao 응답
     # ========================================================
+
+    total_elapsed = time.monotonic() - total_start
+
+    print(
+        f"[TIMING] run_analysis 전체 소요: "
+        f"{total_elapsed:.2f}s"
+    )
 
     if not result_lines:
         return kakao_response(
@@ -467,7 +627,8 @@ async def run_analysis_and_callback(
     links: list[str],
     message: str,
     callback_url: str,
-    user_id: str | None
+    user_id: str | None,
+    job_id: str
 ):
     """
     백그라운드에서 분석을 수행한 뒤
@@ -488,6 +649,21 @@ async def run_analysis_and_callback(
                 timeout=CALLBACK_DEADLINE_SECONDS
             )
 
+            # callback 전송 전에 분석 결과 저장
+            job = ANALYSIS_JOBS.get(job_id)
+        
+            if job:
+                job["status"] = "completed"
+                job["result"] = result
+                job["completed_at"] = datetime.now(
+                    timezone.utc
+                ).isoformat()
+        
+                print(
+                    f"[JOB COMPLETED] "
+                    f"job_id={job_id}"
+                )
+
         except asyncio.TimeoutError:
             print(
                 f"[ANALYSIS TIMEOUT] "
@@ -500,6 +676,21 @@ async def run_analysis_and_callback(
                 "잠시 후 다시 확인해주세요."
             )
 
+            job = ANALYSIS_JOBS.get(job_id)
+
+            if job:
+                job["status"] = "timeout"
+                job["result"] = result
+                job["error"] = "analysis_timeout"
+                job["completed_at"] = datetime.now(
+                    timezone.utc
+                ).isoformat()
+
+            print(
+                f"[JOB TIMEOUT] "
+                f"job_id={job_id}"
+            )
+
         except Exception as e:
             print(
                 f"[ANALYSIS ERROR] "
@@ -510,6 +701,23 @@ async def run_analysis_and_callback(
                 "분석 중 문제가 발생했습니다. "
                 "잠시 후 다시 시도해주세요."
             )
+
+            job = ANALYSIS_JOBS.get(job_id)
+
+            if job:
+                job["status"] = "failed"
+                job["result"] = result
+                job["error"] = (
+                    f"{type(e).__name__}: {e}"
+                )
+                job["completed_at"] = datetime.now(
+                    timezone.utc
+                ).isoformat()
+        
+                print(
+                    f"[JOB FAILED] "
+                    f"job_id={job_id}"
+                )
 
         # ----------------------------------------------------
         # 2. 카카오 callback 전송
@@ -544,36 +752,67 @@ async def run_analysis_and_callback(
 
         try:
             callback_result = response.json()
-
-            callback_status = callback_result.get(
+        
+            callback_result_status = callback_result.get(
                 "status"
             )
-
+        
             print(
                 f"[CALLBACK RESULT STATUS] "
-                f"{callback_status}"
+                f"{callback_result_status}"
             )
-
-            if (
-                callback_status is not None
-                and callback_status != "SUCCESS"
-            ):
+        
+            job = ANALYSIS_JOBS.get(job_id)
+        
+            if callback_result_status == "SUCCESS":
+                if job:
+                    job["callback_status"] = "success"
+        
                 print(
-                    "[CALLBACK WARNING] "
-                    f"Kakao callback status="
-                    f"{callback_status}"
+                    f"[JOB CALLBACK SUCCESS] "
+                    f"job_id={job_id}"
                 )
-
+        
+            else:
+                if job:
+                    job["callback_status"] = "failed"
+        
+                print(
+                    f"[JOB CALLBACK FAILED] "
+                    f"job_id={job_id} "
+                    f"status={callback_result_status}"
+                )
+        
         except ValueError:
+            job = ANALYSIS_JOBS.get(job_id)
+        
+            if job:
+                job["callback_status"] = "failed"
+        
             print(
                 "[CALLBACK WARNING] "
                 "응답을 JSON으로 파싱할 수 없습니다."
             )
+        
+            print(
+                f"[JOB CALLBACK FAILED] "
+                f"job_id={job_id}"
+            )
 
     except Exception as e:
+        job = ANALYSIS_JOBS.get(job_id)
+    
+        if job:
+            job["callback_status"] = "failed"
+    
         print(
             f"[CALLBACK SEND FAILED] "
             f"{type(e).__name__}: {e}"
+        )
+    
+        print(
+            f"[JOB CALLBACK FAILED] "
+            f"job_id={job_id}"
         )
 
     finally:

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+import json
 import urllib.request
 
 import httpx
 import pytest
 
+import ai.page as page_module
 from ai.page import (
     MAX_ELEMENTS,
     MAX_PAGE_TEXT_CHARS,
@@ -230,8 +233,8 @@ def test_deep_valid_nesting_within_element_limit_does_not_use_python_recursion()
 
     result = inspect_html(html)
 
-    assert result.failure is None
-    assert result.text == "안내"
+    assert result.failure is FailureCode.PARTIAL_CONTENT
+    assert result.text == ""
     assert result.elements == ()
 
 
@@ -293,3 +296,179 @@ def test_inspection_never_opens_links_or_submits_forms(monkeypatch: pytest.Monke
         EnvDoubt.LOGIN_FORM,
         EnvDoubt.APP_LINK,
     ]
+
+
+def test_uninspected_tail_is_not_evidence(monkeypatch):
+    monkeypatch.setattr(page_module, "MAX_ELEMENTS", 2)
+    html = '<form><input type="password"><div>UNREAD_SECRET</div></form>'
+
+    result = inspect_html(html)
+
+    assert result.failure is FailureCode.PARTIAL_CONTENT
+    assert result.elements
+    assert all("UNREAD_SECRET" not in element.evidence for element in result.elements)
+    for element in result.elements:
+        assert html[element.start : element.start + len(element.evidence)] == element.evidence
+
+
+def test_entity_text_cut_does_not_include_tail(monkeypatch):
+    monkeypatch.setattr(page_module, "MAX_PAGE_TEXT_CHARS", 2)
+    html = '<form><input type="password">&amp;&amp;&amp;UNREAD</form>'
+
+    result = inspect_html(html)
+
+    assert result.failure is FailureCode.PARTIAL_CONTENT
+    assert all("UNREAD" not in element.evidence for element in result.elements)
+
+
+def test_invalid_unicode_is_explicit_input_error():
+    with pytest.raises(ValueError, match="UTF-8"):
+        inspect_html("\ud800")
+
+
+def test_utf8_boundary(monkeypatch):
+    monkeypatch.setattr(page_module, "MAX_HTML_BYTES", 3)
+
+    assert inspect_html("가").failure is None
+    assert inspect_html("가a").failure is FailureCode.INPUT_TOO_LARGE
+
+
+@pytest.mark.parametrize("line_break", ["\n", "\r", "\r\n"])
+def test_evidence_offset_matches_source_with_all_line_endings(line_break):
+    html = f'prefix{line_break}break{line_break}<form><input type="password"></form>'
+
+    result = inspect_html(html)
+
+    element = result.elements[0]
+    assert element.start == html.index("<form>")
+    assert html[element.start : element.start + len(element.evidence)] == element.evidence
+
+
+def test_evidence_offset_matches_source_with_mixed_cr_lf():
+    html = 'prefix\rbreak\n<form><input type="password"></form>'
+
+    result = inspect_html(html)
+
+    assert result.elements[0].start == 13
+    assert result.elements[0].evidence == '<form><input type="password"></form>'
+
+
+@pytest.mark.parametrize("depth, partial", [(64, False), (65, True)])
+def test_depth_boundary(depth, partial):
+    result = inspect_html("<div>" * depth + "안내" + "</div>" * depth)
+
+    assert result.failure is (FailureCode.PARTIAL_CONTENT if partial else None)
+
+
+def test_deadline_uses_monotonic_clock(monkeypatch):
+    monkeypatch.setattr(page_module, "monotonic", lambda: 2.0)
+
+    page_module._check_deadline(3.0)
+    with pytest.raises(page_module._InspectionTimeout):
+        page_module._check_deadline(2.0)
+
+
+def test_initial_deadline_expiry_returns_timeout(monkeypatch):
+    clock = iter([0.0, 0.101])
+    monkeypatch.setattr(page_module, "monotonic", lambda: next(clock))
+
+    result = inspect_html("<p>normal</p>")
+
+    assert result.failure is FailureCode.TIMEOUT
+    assert result.text == ""
+    assert result.elements == ()
+
+
+def test_classification_timeout_preserves_completed_candidates(monkeypatch):
+    previous = inspect_html('<a href="/app">앱 설치</a>').elements[0]
+
+    def interrupted(*args, **kwargs):
+        yield previous
+        raise page_module._InspectionTimeout
+
+    monkeypatch.setattr(page_module, "_classify", interrupted)
+
+    result = inspect_html('<a href="/app">앱 설치</a>')
+
+    assert result.failure is FailureCode.TIMEOUT
+    assert result.elements == (previous,)
+
+
+def test_parsing_timeout_skips_classification(monkeypatch):
+    def interrupted(*args, **kwargs):
+        raise page_module._InspectionTimeout
+
+    monkeypatch.setattr(page_module._Collector, "handle_starttag", interrupted)
+    monkeypatch.setattr(
+        page_module,
+        "_classify",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("classification must not run after parsing timeout")
+        ),
+    )
+
+    result = inspect_html('<form><input type="password"></form>')
+
+    assert result.failure is FailureCode.TIMEOUT
+    assert result.elements == ()
+
+
+def test_result_byte_limit_marks_partial(monkeypatch):
+    monkeypatch.setattr(page_module, "MAX_INSPECTION_BYTES", 1024)
+    source = '<a href="/app">앱 설치</a>' * 30
+
+    result = inspect_html(source)
+    encoded = json.dumps(
+        asdict(result), ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+
+    assert len(encoded) <= 1024
+    assert result.failure is FailureCode.PARTIAL_CONTENT
+    assert result.elements
+
+
+def test_default_result_limit_bounds_nested_evidence_amplification():
+    source = (
+        ("<form>" * 50)
+        + '<input type="password">'
+        + ("x" * 10_000)
+        + ("</form>" * 50)
+    )
+
+    result = inspect_html(source)
+    encoded = json.dumps(
+        asdict(result), ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+
+    assert len(encoded) <= page_module.MAX_INSPECTION_BYTES
+    assert result.failure is FailureCode.PARTIAL_CONTENT
+    assert 0 < len(result.elements) < 50
+
+
+def test_invalid_numeric_entity_cannot_break_result_encoding():
+    result = inspect_html('<input name="address" aria-label="&#xD800;">')
+
+    encoded = json.dumps(
+        asdict(result), ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+
+    assert encoded
+    assert result.failure is FailureCode.PARTIAL_CONTENT
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "배송이 완료되었습니다.",
+        "예약 일정을 확인하세요.",
+        "결제가 완료되었습니다.",
+        "행사 장소와 일정을 안내합니다.",
+        "인증번호를 누구에게도 알려주지 마세요.",
+        "채용 직무와 근무 시간을 안내합니다.",
+    ],
+)
+def test_generic_normal_content_is_not_missing(body):
+    result = inspect_html(f"<main><h1>안내</h1><p>{body}</p></main>")
+
+    assert result.failure is None
+    assert body in result.text

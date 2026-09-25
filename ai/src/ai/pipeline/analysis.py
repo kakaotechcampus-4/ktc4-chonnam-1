@@ -106,11 +106,7 @@ async def analyze_environment_part(
         return build_environment_part(page, inspection, analysis, failure=failure)
 
     try:
-        async with AsyncExitStack() as stack:
-            llm = client
-            if llm is None:
-                llm = await stack.enter_async_context(create_client(2.0))
-            analysis = await analyze_page(inspection, client=llm, model=model)
+        analysis = await analyze_page(inspection, client=client, model=model)
     except Exception as error:
         analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=_failure_code(error))
     return build_environment_part(page, inspection, analysis)
