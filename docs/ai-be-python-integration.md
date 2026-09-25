@@ -135,7 +135,7 @@ AI 계약에서 이 호출은 성공 조기 반환이 아니다. 문자와 페�
 
 완료된 part는 다섯 말단 값이 모두 채워진다. 실패·미제공 부분은 `answer=null`, 구체적인 이유, 확보한 나머지 값으로 표현된다. 정상 분석의 `unknown`과 `없음`은 실패의 `null`과 다르다. 전체 JSON은 [응답 예시](./ai-be-final-result-schema.md#전체-응답)에 있다.
 
-`exclude_none=True`, `exclude_unset=True`, None 삭제 후처리를 사용하지 않는다. `result=false`는 의심 또는 분석 미완료이며 악성 확정이 아니다. 일반 로그인 폼이나 문자·페이지의 분류 차이만으로 악성이라고 표시하지 않는다. `details.reason`은 평문으로 취급한다.
+`exclude_none=True`, `exclude_unset=True`, None 삭제 후처리를 사용하지 않는다. 두 `answer` 중 하나라도 null이면 분석 미완료를 우선 표시하고 확보한 근거와 실패 이유를 보존한다. 필요한 분석이 모두 완료된 경우에만 `result=false`를 의심으로 표시한다. 이 BE·FE 표시 전환은 후속 연동 작업이다. 일반 로그인 폼이나 문자·페이지의 분류 차이만으로 악성이라고 표시하지 않는다. `details.reason`은 평문으로 취급한다.
 
 `payload`를 저장하거나 FE로 전달할 수 있다. 카카오 SkillResponse로 변환하고 콜백을 전송하는 작업은 BE가 수행한다. 이 dict 자체가 카카오 응답 형식은 아니다.
 
