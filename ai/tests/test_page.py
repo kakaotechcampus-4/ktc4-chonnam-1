@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+import json
 import urllib.request
 
 import httpx
@@ -398,3 +400,46 @@ def test_parsing_timeout_skips_classification(monkeypatch):
 
     assert result.failure is FailureCode.TIMEOUT
     assert result.elements == ()
+
+
+def test_result_byte_limit_marks_partial(monkeypatch):
+    monkeypatch.setattr(page_module, "MAX_INSPECTION_BYTES", 1024)
+    source = '<a href="/app">앱 설치</a>' * 30
+
+    result = inspect_html(source)
+    encoded = json.dumps(
+        asdict(result), ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+
+    assert len(encoded) <= 1024
+    assert result.failure is FailureCode.PARTIAL_CONTENT
+    assert result.elements
+
+
+def test_default_result_limit_bounds_nested_evidence_amplification():
+    source = (
+        ("<form>" * 50)
+        + '<input type="password">'
+        + ("x" * 10_000)
+        + ("</form>" * 50)
+    )
+
+    result = inspect_html(source)
+    encoded = json.dumps(
+        asdict(result), ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+
+    assert len(encoded) <= page_module.MAX_INSPECTION_BYTES
+    assert result.failure is FailureCode.PARTIAL_CONTENT
+    assert 0 < len(result.elements) < 50
+
+
+def test_invalid_numeric_entity_cannot_break_result_encoding():
+    result = inspect_html('<input name="address" aria-label="&#xD800;">')
+
+    encoded = json.dumps(
+        asdict(result), ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+
+    assert encoded
+    assert result.failure is FailureCode.PARTIAL_CONTENT

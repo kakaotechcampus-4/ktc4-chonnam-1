@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from html.parser import HTMLParser
+import json
 import re
 from time import monotonic
 
@@ -15,6 +16,7 @@ MAX_ELEMENTS = 2_000
 MAX_PAGE_TEXT_CHARS = 16_000
 MAX_DEPTH = 64
 INSPECTION_TIMEOUT_SECONDS = 0.100
+MAX_INSPECTION_BYTES = 262_144
 IGNORED_TEXT_TAGS = frozenset({"script", "style", "template", "noscript"})
 
 _ALLOWED_ATTRIBUTES = frozenset(
@@ -54,6 +56,7 @@ _INPUT_CONTAINERS = frozenset(
 _DOCUMENT_EXTENSIONS = re.compile(
     r"\.(?:pdf|docx?|xlsx?|pptx?|txt|rtf|jpe?g|png|gif|webp)(?:[?#]|$)", re.I
 )
+_NUMERIC_CHARACTER_REFERENCE = re.compile(r"&#(?:x([0-9a-f]+)|([0-9]+));?", re.I)
 
 
 @dataclass(frozen=True)
@@ -151,6 +154,12 @@ class _Collector(HTMLParser):
             if start_tag_text is not None
             else self._tag_end(start)
         )
+        if start_tag_text is not None:
+            for match in _NUMERIC_CHARACTER_REFERENCE.finditer(start_tag_text):
+                codepoint = int(match.group(1) or match.group(2), 16 if match.group(1) else 10)
+                if 0xD800 <= codepoint <= 0xDFFF:
+                    self.malformed_important = True
+                    break
         raw_attributes: dict[str, str] = {}
         for name, value in attrs:
             _check_deadline(self.deadline)
@@ -261,6 +270,29 @@ def _normalize_text(parts: list[str] | tuple[str, ...] | str) -> str:
     else:
         value = " ".join(parts)
     return " ".join(value.split())
+
+
+def _json_size(value: object) -> int:
+    return len(
+        json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+
+
+def _inspection_base_size(text: str, failure: FailureCode | None) -> int:
+    return _json_size(asdict(PageInspection(text=text, elements=(), failure=failure)))
+
+
+def _fit_text(text: str, failure: FailureCode) -> tuple[str, bool]:
+    if _inspection_base_size(text, failure) <= MAX_INSPECTION_BYTES:
+        return text, False
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _inspection_base_size(text[:middle], failure) <= MAX_INSPECTION_BYTES:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low], True
 
 
 def _node_text(node: _Node, deadline: float) -> str:
@@ -618,16 +650,35 @@ def inspect_html(info: str) -> PageInspection:
         collector.finish()
 
     text = _normalize_text(collector.page_chunks)[:MAX_PAGE_TEXT_CHARS]
+    budget_failure = FailureCode.TIMEOUT if timed_out else FailureCode.PARTIAL_CONTENT
+    text, output_limited = _fit_text(text, budget_failure)
+    base_size = _inspection_base_size(text, budget_failure)
     elements: list[PageElement] = []
+    element_sizes: list[int] = []
+    elements_size = 0
     if not timed_out:
         try:
             _check_deadline(deadline)
             for element in _classify(info, collector.nodes, deadline):
-                elements.append(element)
+                _check_deadline(deadline)
+                try:
+                    element_size = _json_size(asdict(element))
+                except UnicodeEncodeError:
+                    output_limited = True
+                    continue
+                _check_deadline(deadline)
+                comma_size = 1 if elements else 0
+                serialized_size = comma_size + element_size
+                if base_size + elements_size + serialized_size <= MAX_INSPECTION_BYTES:
+                    elements.append(element)
+                    element_sizes.append(serialized_size)
+                    elements_size += serialized_size
+                else:
+                    output_limited = True
             _check_deadline(deadline)
         except _InspectionTimeout:
             timed_out = True
-    partial = collector.limit_reached or collector.malformed_important
+    partial = collector.limit_reached or collector.malformed_important or output_limited
     if timed_out:
         failure = FailureCode.TIMEOUT
     elif partial:
@@ -636,7 +687,22 @@ def inspect_html(info: str) -> PageInspection:
         failure = FailureCode.EMPTY_INPUT
     else:
         failure = None
-    return PageInspection(text=text, elements=tuple(elements), failure=failure)
+
+    total_size = _inspection_base_size(text, failure) + elements_size
+    while elements and total_size > MAX_INSPECTION_BYTES:
+        elements.pop()
+        elements_size -= element_sizes.pop()
+        failure = FailureCode.TIMEOUT if timed_out else FailureCode.PARTIAL_CONTENT
+        total_size = _inspection_base_size(text, failure) + elements_size
+    result = PageInspection(text=text, elements=tuple(elements), failure=failure)
+    if _json_size(asdict(result)) > MAX_INSPECTION_BYTES:
+        text, _ = _fit_text(text, failure or FailureCode.PARTIAL_CONTENT)
+        result = PageInspection(
+            text=text,
+            elements=(),
+            failure=FailureCode.TIMEOUT if timed_out else FailureCode.PARTIAL_CONTENT,
+        )
+    return result
 
 
 def select_env_doubt(elements: tuple[PageElement, ...]) -> EnvDoubt:

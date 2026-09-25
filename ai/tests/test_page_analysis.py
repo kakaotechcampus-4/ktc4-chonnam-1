@@ -507,6 +507,19 @@ async def test_inspection_failure_skips_llm_and_preserves_failure(make_parse_cli
 
 
 @pytest.mark.asyncio
+async def test_payload_limit_skips_llm(monkeypatch, make_parse_client):
+    monkeypatch.setattr(page_module, "MAX_PAGE_PAYLOAD_BYTES", 32)
+    client, parse = make_parse_client(parsed=PageProposal())
+
+    result = await analyze_page(
+        inspect_html("<p>일반 안내 내용입니다.</p>"), client=client, model="test"
+    )
+
+    assert result.failure is FailureCode.INPUT_TOO_LARGE
+    parse.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_successful_empty_proposal_is_completed(make_parse_client):
     inspected = inspect_html("<p>배송 안내</p>")
     client, _ = make_parse_client(parsed=PageProposal())
