@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 import re
+from time import monotonic
 
 from ai.types import EnvDoubt, FailureCode
 
@@ -12,6 +13,8 @@ from ai.types import EnvDoubt, FailureCode
 MAX_HTML_BYTES = 131_072
 MAX_ELEMENTS = 2_000
 MAX_PAGE_TEXT_CHARS = 16_000
+MAX_DEPTH = 64
+INSPECTION_TIMEOUT_SECONDS = 0.100
 IGNORED_TEXT_TAGS = frozenset({"script", "style", "template", "noscript"})
 
 _ALLOWED_ATTRIBUTES = frozenset(
@@ -98,10 +101,20 @@ class _InspectionLimit(Exception):
     pass
 
 
+class _InspectionTimeout(Exception):
+    pass
+
+
+def _check_deadline(deadline: float) -> None:
+    if monotonic() >= deadline:
+        raise _InspectionTimeout
+
+
 class _Collector(HTMLParser):
-    def __init__(self, source: str) -> None:
+    def __init__(self, source: str, deadline: float) -> None:
         super().__init__(convert_charrefs=True)
         self.source = source
+        self.deadline = deadline
         self.nodes: list[_Node] = []
         self.stack: list[_Node] = []
         self.page_chunks: list[str] = []
@@ -123,7 +136,11 @@ class _Collector(HTMLParser):
         self, tag: str, attrs: list[tuple[str, str | None]], *, closes_itself: bool
     ) -> None:
         self.processed_end = max(self.processed_end, self._offset())
+        _check_deadline(self.deadline)
         if len(self.nodes) >= MAX_ELEMENTS:
+            self.limit_reached = True
+            raise _InspectionLimit
+        if len(self.stack) + 1 > MAX_DEPTH:
             self.limit_reached = True
             raise _InspectionLimit
 
@@ -136,6 +153,7 @@ class _Collector(HTMLParser):
         )
         raw_attributes: dict[str, str] = {}
         for name, value in attrs:
+            _check_deadline(self.deadline)
             lowered = name.lower()
             if lowered not in raw_attributes:
                 raw_attributes[lowered] = "" if value is None else value
@@ -179,6 +197,7 @@ class _Collector(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         start = self._offset()
         self.processed_end = max(self.processed_end, start)
+        _check_deadline(self.deadline)
         tag = tag.lower()
         match = next(
             (
@@ -191,12 +210,14 @@ class _Collector(HTMLParser):
         if match is None:
             if tag == "form" and not (self.stack and self.stack[-1].ignored):
                 self.malformed_important = True
+            self.processed_end = max(self.processed_end, self._tag_end(start))
             return
 
         end = self._tag_end(start)
         intervening = self.stack[match + 1 :]
         matched = self.stack[match]
         for node in intervening:
+            _check_deadline(self.deadline)
             node.incomplete = True
             node.end = end
             if node.tag == "form" and not node.ignored:
@@ -210,6 +231,7 @@ class _Collector(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         self.processed_end = max(self.processed_end, self._offset())
+        _check_deadline(self.deadline)
         if not data or (self.stack and self.stack[-1].ignored):
             return
         remaining = MAX_PAGE_TEXT_CHARS - self.text_chars
@@ -241,10 +263,11 @@ def _normalize_text(parts: list[str] | tuple[str, ...] | str) -> str:
     return " ".join(value.split())
 
 
-def _node_text(node: _Node) -> str:
+def _node_text(node: _Node, deadline: float) -> str:
     parts: list[str] = []
     pending = list(reversed(node.content))
     while pending:
+        _check_deadline(deadline)
         item = pending.pop()
         if isinstance(item, str):
             parts.append(item)
@@ -253,10 +276,11 @@ def _node_text(node: _Node) -> str:
     return _normalize_text(parts)
 
 
-def _descendants(node: _Node) -> list[_Node]:
+def _descendants(node: _Node, deadline: float) -> list[_Node]:
     found: list[_Node] = []
     pending = list(reversed(node.children))
     while pending:
+        _check_deadline(deadline)
         child = pending.pop()
         if child.ignored:
             continue
@@ -265,38 +289,43 @@ def _descendants(node: _Node) -> list[_Node]:
     return found
 
 
-def _has_ancestor(node: _Node, tag: str) -> bool:
+def _has_ancestor(node: _Node, tag: str, deadline: float) -> bool:
     current = node.parent
     while current is not None:
+        _check_deadline(deadline)
         if current.tag == tag:
             return True
         current = current.parent
     return False
 
 
-def _field_labels(field_node: _Node, root: _Node, labels: list[_Node]) -> tuple[str, ...]:
+def _field_labels(
+    field_node: _Node, root: _Node, labels: list[_Node], deadline: float
+) -> tuple[str, ...]:
     pieces: list[str] = []
     current = field_node.parent
     while current is not None and current is not root.parent:
+        _check_deadline(deadline)
         if current.tag == "label":
-            pieces.append(_node_text(current))
+            pieces.append(_node_text(current, deadline))
             break
         current = current.parent
     field_id = field_node.raw_attributes.get("id")
     if field_id:
-        pieces.extend(
-            _node_text(label)
-            for label in labels
-            if label.raw_attributes.get("for") == field_id
-        )
+        for label in labels:
+            _check_deadline(deadline)
+            if label.raw_attributes.get("for") == field_id:
+                pieces.append(_node_text(label, deadline))
     return tuple(dict.fromkeys(pieces))
 
 
-def _field_context(field_node: _Node, root: _Node, labels: list[_Node]) -> str:
+def _field_context(
+    field_node: _Node, root: _Node, labels: list[_Node], deadline: float
+) -> str:
     return _normalize_text([
         *(field_node.attributes.get(name, "")
           for name in ("type", "name", "autocomplete", "aria-label")),
-        *_field_labels(field_node, root, labels),
+        *_field_labels(field_node, root, labels, deadline),
     ]).casefold()
 
 
@@ -323,16 +352,18 @@ def _is_payment_request(text: str) -> bool:
     return completed is None or bool(re.search(r"결제\s*(?:하기|진행|요청|하세요)", compact))
 
 
-def _classify_input_root(root: _Node, labels: list[_Node]) -> tuple[EnvDoubt, list[_Node]] | None:
+def _classify_input_root(
+    root: _Node, labels: list[_Node], deadline: float
+) -> tuple[EnvDoubt, list[_Node]] | None:
     fields = [
         node
-        for node in [root, *_descendants(root)]
+        for node in [root, *_descendants(root, deadline)]
         if node.tag in _INPUT_TAGS and not node.ignored
     ]
     if not fields:
         return None
 
-    root_text = _node_text(root).casefold()
+    root_text = _node_text(root, deadline).casefold()
     candidates: list[tuple[int, int, EnvDoubt, _Node]] = []
     priority = {
         EnvDoubt.LOGIN_FORM: 0,
@@ -341,7 +372,8 @@ def _classify_input_root(root: _Node, labels: list[_Node]) -> tuple[EnvDoubt, li
         EnvDoubt.PERSONAL_FORM: 3,
     }
     for input_node in fields:
-        context = _field_context(input_node, root, labels)
+        _check_deadline(deadline)
+        context = _field_context(input_node, root, labels, deadline)
         input_type = input_node.raw_attributes.get("type", "").casefold()
         autocomplete = input_node.raw_attributes.get("autocomplete", "").casefold()
         is_login = (
@@ -408,9 +440,10 @@ def _classify_input_root(root: _Node, labels: list[_Node]) -> tuple[EnvDoubt, li
     return None
 
 
-def _nearest_input_root(node: _Node) -> _Node:
+def _nearest_input_root(node: _Node, deadline: float) -> _Node:
     current = node.parent
     while current is not None:
+        _check_deadline(deadline)
         if current.tag in _INPUT_CONTAINERS:
             return current
         current = current.parent
@@ -420,8 +453,18 @@ def _nearest_input_root(node: _Node) -> _Node:
 def _element(
     source: str, root: _Node, doubt: EnvDoubt,
     fields: list[_Node] = (), labels: list[_Node] = (),
+    *, deadline: float,
 ) -> PageElement:
+    _check_deadline(deadline)
     end = root.end if root.end is not None else len(source)
+    page_fields: list[PageField] = []
+    for input_node in fields:
+        _check_deadline(deadline)
+        page_fields.append(PageField(
+            attributes={name: value for name, value in input_node.attributes.items()
+                        if name in {"type", "name", "autocomplete", "aria-label"}},
+            labels=_field_labels(input_node, root, labels, deadline),
+        ))
     return PageElement(
         element_id=f"element-{root.sequence:04d}",
         doubt=doubt,
@@ -429,21 +472,17 @@ def _element(
         start=root.start,
         tag=root.tag,
         attributes=dict(root.attributes),
-        text=_node_text(root),
-        fields=tuple(PageField(
-            attributes={name: value for name, value in input_node.attributes.items()
-                        if name in {"type", "name", "autocomplete", "aria-label"}},
-            labels=_field_labels(input_node, root, labels),
-        ) for input_node in fields),
+        text=_node_text(root, deadline),
+        fields=tuple(page_fields),
     )
 
 
-def _link_doubt(node: _Node) -> EnvDoubt | None:
+def _link_doubt(node: _Node, deadline: float) -> EnvDoubt | None:
     href = node.raw_attributes.get("href", "")
     if not href:
         return None
     context = _normalize_text(
-        [_node_text(node), node.raw_attributes.get("aria-label", "")]
+        [_node_text(node, deadline), node.raw_attributes.get("aria-label", "")]
     ).casefold()
     app_words = any(word in context for word in ("앱", "어플", "app", "설치"))
     download_words = any(word in context for word in ("다운로드", "download", "설치"))
@@ -458,10 +497,10 @@ def _link_doubt(node: _Node) -> EnvDoubt | None:
     return None
 
 
-def _is_document_control(node: _Node) -> bool:
+def _is_document_control(node: _Node, deadline: float) -> bool:
     context = _normalize_text(
         [
-            _node_text(node),
+            _node_text(node, deadline),
             node.raw_attributes.get("aria-label", ""),
             node.raw_attributes.get("alt", ""),
             node.raw_attributes.get("src", ""),
@@ -478,78 +517,80 @@ def _is_document_control(node: _Node) -> bool:
     )
 
 
-def _is_structured_parcel_status(node: _Node) -> bool:
+def _is_structured_parcel_status(node: _Node, deadline: float) -> bool:
     if node.tag not in {"dl", "table", "progress"}:
         return False
-    text = _node_text(node).casefold()
+    text = _node_text(node, deadline).casefold()
     return any(
         phrase in text
         for phrase in ("배송 상태", "배송 현황", "현재 위치", "배송중", "배송 완료", "배달 완료")
     )
 
 
-def _classify(source: str, nodes: list[_Node]) -> tuple[PageElement, ...]:
-    visible = [node for node in nodes if not node.ignored]
-    labels = [node for node in visible if node.tag == "label"]
-    by_sequence: dict[int, PageElement] = {}
+def _classify(source: str, nodes: list[_Node], deadline: float):
+    visible: list[_Node] = []
+    labels: list[_Node] = []
+    for node in nodes:
+        _check_deadline(deadline)
+        if not node.ignored:
+            visible.append(node)
+            if node.tag == "label":
+                labels.append(node)
 
     input_roots: dict[int, _Node] = {
         node.sequence: node for node in visible if node.tag == "form"
     }
     for input_node in visible:
-        if input_node.tag not in _INPUT_TAGS or _has_ancestor(input_node, "form"):
+        _check_deadline(deadline)
+        if input_node.tag not in _INPUT_TAGS or _has_ancestor(input_node, "form", deadline):
             continue
-        root = _nearest_input_root(input_node)
+        root = _nearest_input_root(input_node, deadline)
         input_roots[root.sequence] = root
 
-    for root in sorted(input_roots.values(), key=lambda item: item.start):
-        classified = _classify_input_root(root, labels)
-        if classified is None:
-            if root.tag == "form" and _is_payment_request(_node_text(root)):
-                by_sequence[root.sequence] = _element(
-                    source, root, EnvDoubt.PAYMENT
-                )
-            continue
-        doubt, fields = classified
-        by_sequence[root.sequence] = _element(source, root, doubt, fields, labels)
-
+    emitted: set[int] = set()
     for node in visible:
-        if node.tag == "a":
-            doubt = _link_doubt(node)
-            if doubt is not None:
-                by_sequence[node.sequence] = _element(source, node, doubt)
-            continue
-        if node.tag == "button" and not _has_ancestor(node, "form"):
-            if _is_payment_request(_node_text(node)):
-                by_sequence[node.sequence] = _element(source, node, EnvDoubt.PAYMENT)
-            elif _is_document_control(node):
-                by_sequence[node.sequence] = _element(
-                    source, node, EnvDoubt.DOCUMENT_VIEW
+        _check_deadline(deadline)
+        if node.sequence in input_roots:
+            classified = _classify_input_root(node, labels, deadline)
+            if classified is not None:
+                doubt, fields = classified
+                yield _element(
+                    source, node, doubt, fields, labels, deadline=deadline
                 )
+                emitted.add(node.sequence)
+            elif node.tag == "form" and _is_payment_request(_node_text(node, deadline)):
+                yield _element(source, node, EnvDoubt.PAYMENT, deadline=deadline)
+                emitted.add(node.sequence)
+        if node.sequence in emitted:
             continue
-        if _is_document_control(node):
-            by_sequence[node.sequence] = _element(
-                source, node, EnvDoubt.DOCUMENT_VIEW
-            )
+        if node.tag == "a":
+            doubt = _link_doubt(node, deadline)
+            if doubt is not None:
+                yield _element(source, node, doubt, deadline=deadline)
             continue
-        if _is_structured_parcel_status(node):
-            by_sequence[node.sequence] = _element(
-                source, node, EnvDoubt.PARCEL_WIDGET
-            )
+        if node.tag == "button" and not _has_ancestor(node, "form", deadline):
+            if _is_payment_request(_node_text(node, deadline)):
+                yield _element(source, node, EnvDoubt.PAYMENT, deadline=deadline)
+            elif _is_document_control(node, deadline):
+                yield _element(source, node, EnvDoubt.DOCUMENT_VIEW, deadline=deadline)
+            continue
+        if _is_document_control(node, deadline):
+            yield _element(source, node, EnvDoubt.DOCUMENT_VIEW, deadline=deadline)
+            continue
+        if _is_structured_parcel_status(node, deadline):
+            yield _element(source, node, EnvDoubt.PARCEL_WIDGET, deadline=deadline)
             continue
         if node.tag in {"p", "div", "section"} and not node.children:
-            direct_text = _node_text(node)
+            direct_text = _node_text(node, deadline)
             if _is_payment_request(direct_text):
-                by_sequence[node.sequence] = _element(
-                    source, node, EnvDoubt.PAYMENT
-                )
-
-    return tuple(sorted(by_sequence.values(), key=lambda item: item.start))
+                yield _element(source, node, EnvDoubt.PAYMENT, deadline=deadline)
 
 
 def inspect_html(info: str) -> PageInspection:
     """Preserve source-backed HTML elements without network or script execution."""
 
+    deadline = monotonic() + INSPECTION_TIMEOUT_SECONDS
+    _check_deadline(deadline)
     if not info:
         return PageInspection(text="", elements=(), failure=FailureCode.EMPTY_INPUT)
     if len(info) > MAX_HTML_BYTES:
@@ -561,11 +602,14 @@ def inspect_html(info: str) -> PageInspection:
     if size > MAX_HTML_BYTES:
         return PageInspection(text="", elements=(), failure=FailureCode.INPUT_TOO_LARGE)
 
-    collector = _Collector(info)
+    collector = _Collector(info, deadline)
+    timed_out = False
     try:
         collector.feed(info)
         collector.close()
         collector.processed_end = len(info)
+    except _InspectionTimeout:
+        timed_out = True
     except _InspectionLimit:
         pass
     except Exception:
@@ -574,15 +618,25 @@ def inspect_html(info: str) -> PageInspection:
         collector.finish()
 
     text = _normalize_text(collector.page_chunks)[:MAX_PAGE_TEXT_CHARS]
-    elements = _classify(info, collector.nodes)
+    elements: list[PageElement] = []
+    if not timed_out:
+        try:
+            _check_deadline(deadline)
+            for element in _classify(info, collector.nodes, deadline):
+                elements.append(element)
+            _check_deadline(deadline)
+        except _InspectionTimeout:
+            timed_out = True
     partial = collector.limit_reached or collector.malformed_important
-    if partial:
+    if timed_out:
+        failure = FailureCode.TIMEOUT
+    elif partial:
         failure = FailureCode.PARTIAL_CONTENT
     elif not text and not elements:
         failure = FailureCode.EMPTY_INPUT
     else:
         failure = None
-    return PageInspection(text=text, elements=elements, failure=failure)
+    return PageInspection(text=text, elements=tuple(elements), failure=failure)
 
 
 def select_env_doubt(elements: tuple[PageElement, ...]) -> EnvDoubt:

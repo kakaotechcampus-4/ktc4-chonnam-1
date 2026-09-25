@@ -231,8 +231,8 @@ def test_deep_valid_nesting_within_element_limit_does_not_use_python_recursion()
 
     result = inspect_html(html)
 
-    assert result.failure is None
-    assert result.text == "안내"
+    assert result.failure is FailureCode.PARTIAL_CONTENT
+    assert result.text == ""
     assert result.elements == ()
 
 
@@ -349,3 +349,52 @@ def test_evidence_offset_matches_source_with_mixed_cr_lf():
 
     assert result.elements[0].start == 13
     assert result.elements[0].evidence == '<form><input type="password"></form>'
+
+
+@pytest.mark.parametrize("depth, partial", [(64, False), (65, True)])
+def test_depth_boundary(depth, partial):
+    result = inspect_html("<div>" * depth + "안내" + "</div>" * depth)
+
+    assert result.failure is (FailureCode.PARTIAL_CONTENT if partial else None)
+
+
+def test_deadline_uses_monotonic_clock(monkeypatch):
+    monkeypatch.setattr(page_module, "monotonic", lambda: 2.0)
+
+    page_module._check_deadline(3.0)
+    with pytest.raises(page_module._InspectionTimeout):
+        page_module._check_deadline(2.0)
+
+
+def test_classification_timeout_preserves_completed_candidates(monkeypatch):
+    previous = inspect_html('<a href="/app">앱 설치</a>').elements[0]
+
+    def interrupted(*args, **kwargs):
+        yield previous
+        raise page_module._InspectionTimeout
+
+    monkeypatch.setattr(page_module, "_classify", interrupted)
+
+    result = inspect_html('<a href="/app">앱 설치</a>')
+
+    assert result.failure is FailureCode.TIMEOUT
+    assert result.elements == (previous,)
+
+
+def test_parsing_timeout_skips_classification(monkeypatch):
+    def interrupted(*args, **kwargs):
+        raise page_module._InspectionTimeout
+
+    monkeypatch.setattr(page_module._Collector, "handle_starttag", interrupted)
+    monkeypatch.setattr(
+        page_module,
+        "_classify",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("classification must not run after parsing timeout")
+        ),
+    )
+
+    result = inspect_html('<form><input type="password"></form>')
+
+    assert result.failure is FailureCode.TIMEOUT
+    assert result.elements == ()
