@@ -35,7 +35,7 @@ message_result = await analyze_message_part(message_text)
 
 BE의 기존 [split_message()](../backend/src/server/url_utils.py)는 URL 목록과 URL을 제거한 본문을 분리한다. 개인정보 마스킹은 BE가 준비해야 한다. URL 분석 결과·원문 전체·페이지 HTML을 본문에 섞지 않는다. 예를 들어 URL 제거 후 본문이 `[CJ대한통운] 배송 현황을 확인하세요`이면 그 문자열을 전달한다.
 
-반환된 `message_result`는 해당 요청의 최종 호출까지 보관한다. BE에서 분류나 `answer`를 다시 계산하지 않는다. 빈 입력·분석 실패도 해당 부분의 `answer=false`와 사유로 반환될 수 있다. 따라서 false가 항상 의심 문구를 발견했다는 뜻은 아니다.
+반환된 `message_result`는 해당 요청의 최종 호출까지 보관한다. BE에서 분류나 `answer`를 다시 계산하지 않는다. 빈 입력·분석 실패는 해당 부분의 `answer=null`과 사유로 반환된다. `answer=false`는 분석을 완료하고 검증된 의심 신호를 확인한 경우다.
 
 ## 2. BE → AI: URL 분석 결과 준비
 
@@ -87,7 +87,7 @@ final_result = await finalize_analysis(
 payload = final_result.model_dump(mode="json")
 ```
 
-AI는 `official=false`이면 전달된 HTML을 분석하고 문자 결과와 결합해 전체 스키마를 반환한다. BE가 페이지 분석이나 조립 함수를 추가로 호출할 필요는 없다. `model_dump()`는 반환값을 JSON 호환 dict로 바꾸는 구문이며 추가 분석 호출이 아니다.
+AI는 `official` 값과 무관하게 전달된 HTML을 분석하고 문자 결과와 결합해 전체 스키마를 반환한다. BE가 페이지 분석이나 조립 함수를 추가로 호출할 필요는 없다. `model_dump()`는 반환값을 JSON 호환 dict로 바꾸는 구문이며 추가 분석 호출이 아니다.
 
 수집 자료는 `{brand, category, info}`의 세 문자열이다. `info`는 HTML이며 AI는 이를 실행하거나 URL에 접속하지 않는다. 다음은 형태를 설명하는 합성 HTML 예시다.
 
@@ -113,9 +113,9 @@ AI는 `official=false`이면 전달된 HTML을 분석하고 문자 결과와 결
 
 이 표는 Python 호출 인자 계약이다. 격리 서버의 HTTP 오류 envelope를 새로 정의하지 않는다. 수집 응답을 이 값들로 옮기는 어댑터는 BE·수집기 담당자가 작성한다. 잘못된 페이지 스키마의 ValidationError를 정상 수집이나 임의의 수집 실패로 바꾸지 않는다.
 
-### 조기 반환과 최종 스키마
+### URL-only 호출과 최종 스키마
 
-URL 결과가 `official=true`이면 문자·수집 작업의 정상 완료를 기다릴 필요 없이 다음처럼 호출한다.
+현재 BE 예제는 `official=true`이면 진행 중인 문자·수집 작업을 정리하고 다음처럼 URL만 전달한다.
 
 ```python
 from ai.pipeline import finalize_analysis
@@ -124,18 +124,18 @@ final_result = await finalize_analysis(url=url_analysis)
 payload = final_result.model_dump(mode="json")
 ```
 
-이 경로는 페이지 분석·LLM 호출을 생략한다. BE는 불필요한 진행 중 작업을 취소하고 종료를 확인한다. 반대로 false이면 확보한 문자 결과·수집 자료·실패 코드를 전달한다. 문자 결과를 확보하지 못했다면 `message=None`을 전달할 수 있지만, 이는 문자 분석 재시도가 아니라 결과 미제공으로 처리된다.
+AI 계약에서 이 호출은 성공 조기 반환이 아니다. 문자와 페이지가 모두 누락된 미완료 응답이므로 `result=false`, 두 `answer=null`, 비어 있지 않은 누락 이유를 반환한다. `result=true`가 필요하면 `official=true`여도 확보한 문자 결과와 페이지 자료를 전달해야 한다. 현재 BE의 공식 분기 변경은 후속 연동 작업이며, 아래 예제는 기존 태스크 취소 방식을 보여 주기 위해 URL-only 분기를 유지한다.
 
 | 반환 필드 | 내용 |
 |---|---|
 | `url` | 전달한 final_url/domain/official |
 | `message` | 먼저 분석한 문자 결과 |
 | `env` | 최종 함수 내부에서 분석한 격리 자료 결과 |
-| `result` | 항상 url.official과 같은 boolean |
+| `result` | `url.official`, `message.answer`, `env.answer`가 모두 true일 때만 true |
 
-true이면 `message`, `env`, 두 `details` 객체와 모든 키를 유지하며 말단 값 10개가 null이다. false이면 두 part의 모든 필드가 채워지며, 실패·미제공 부분은 false와 사유로 표현된다. 두 `answer`가 true여도 최종 `result`는 false일 수 있다. 전체 JSON은 [응답 예시](./ai-be-final-result-schema.md#전체-응답)에 있다.
+완료된 part는 다섯 말단 값이 모두 채워진다. 실패·미제공 부분은 `answer=null`, 구체적인 이유, 확보한 나머지 값으로 표현된다. 정상 분석의 `unknown`과 `없음`은 실패의 `null`과 다르다. 전체 JSON은 [응답 예시](./ai-be-final-result-schema.md#전체-응답)에 있다.
 
-`exclude_none=True`, `exclude_unset=True`, None 삭제 후처리를 사용하지 않는다. `result=false`는 의심이며 악성 확정이 아니다. 일반 로그인 폼이나 문자·페이지의 분류 차이만으로 악성이라고 표시하지 않는다. `details.reason`은 평문으로 취급한다.
+`exclude_none=True`, `exclude_unset=True`, None 삭제 후처리를 사용하지 않는다. `result=false`는 의심 또는 분석 미완료이며 악성 확정이 아니다. 일반 로그인 폼이나 문자·페이지의 분류 차이만으로 악성이라고 표시하지 않는다. `details.reason`은 평문으로 취급한다.
 
 `payload`를 저장하거나 FE로 전달할 수 있다. 카카오 SkillResponse로 변환하고 콜백을 전송하는 작업은 BE가 수행한다. 이 dict 자체가 카카오 응답 형식은 아니다.
 
@@ -182,7 +182,7 @@ async def analyze_request(
 | `get_url_result` | URL 조사를 시작하고 점수 가공·UrlAnalysis 검증 후 반환 |
 | `collect_page` | 격리 수집을 시작하고 검증된 `(page, failure)` 반환. 페이지 AI 분석은 수행하지 않음 |
 
-이 흐름은 URL 조사·문자 분석·격리 수집을 병렬로 시작한다. false가 확정되고 필요한 자료를 받은 뒤 최종 함수 안에서 페이지를 분석한다. true는 다른 작업의 정상 완료를 기다리지 않지만 `finally`에서 취소 정리를 기다린다. 어댑터는 `CancelledError`를 삼키지 않고 자원을 정리해야 한다. 취소에 응답하지 않는 외부 작업까지 즉시 종료한다고 보장하지 않는다.
+이 흐름은 URL 조사·문자 분석·격리 수집을 병렬로 시작한다. 현재 예제는 `official=false`일 때 필요한 자료를 받은 뒤 최종 함수 안에서 페이지를 분석한다. `official=true`인 URL-only 분기는 새 계약에서 누락 응답을 반환하므로 BE 적용 전환이 필요하다. `finally`는 시작한 작업의 취소 정리를 기다린다. 어댑터는 `CancelledError`를 삼키지 않고 자원을 정리해야 한다.
 
 알려진 수집 실패는 `collect_page`가 `(None, FailureCode.COLLECTION_FAILED)` 등으로 반환한다. URL 조회·검증 실패와 예상하지 못한 provider 오류는 호출자에게 전파되고 나머지 task는 정리된다. 요청 자체 취소도 전파된다.
 
@@ -198,4 +198,4 @@ async def analyze_request(
 
 위 최소 예제는 단일 URL의 호출 단위를 설명한다. 요청 전체 deadline, 저장, 늦은 결과의 덮어쓰기 방지, 조회 폴백, URL 없음·다중 URL 정책은 BE에서 구현한다. 외부 요청별 timeout과 전체 시간 예산을 정하고, 완료된 결과를 보존해야 한다. 전체 시간 예산에는 최종 함수의 페이지 분석 시간도 포함한다. 현재 BE의 `CALLBACK_DEADLINE_SECONDS=45.0`을 이 예제가 바꾸지는 않는다.
 
-예제는 대체 LLM·provider를 사용해 성공, 수집 실패, 조기 반환, URL 오류, 취소 정리를 검증한다. 실제 LLM 정확도와 urlscan·격리 서버·카카오 연결은 별도의 연동 검증 대상이다.
+예제는 대체 LLM·provider를 사용해 성공, 수집 실패, URL-only 누락 응답, URL 오류, 취소 정리를 검증한다. 실제 LLM 정확도와 urlscan·격리 서버·카카오 연결은 별도의 연동 검증 대상이다.

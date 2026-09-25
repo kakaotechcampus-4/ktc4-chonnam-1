@@ -34,9 +34,9 @@ async def test_false_example_returns_complete_failure_result(example):
         AsyncMock(return_value=url()),
         AsyncMock(return_value=(None, FailureCode.TIMEOUT)))
     assert response.result is False
-    assert response.env.answer is False
+    assert response.env.answer is None
     assert "시간" in response.env.details.reason
-    assert response.message.answer is False
+    assert response.message.answer is None
     assert set(response.model_dump(mode="json")) == {"url", "message", "env", "result"}
 
 
@@ -76,10 +76,11 @@ async def test_example_cleans_started_tasks_on_every_exit(example, outcome):
                 await asyncio.wait_for(task, 1)
         else:
             response = await asyncio.wait_for(task, 1)
-            assert response.result is True
+            assert response.result is False
             for part in (response.message, response.env):
                 assert part.brand is part.category is part.answer is None
-                assert part.details.doubt is part.details.reason is None
+                assert part.details.doubt is None
+                assert part.details.reason
         assert stopped[0].is_set() and stopped[1].is_set()
     finally:
         if not task.done():

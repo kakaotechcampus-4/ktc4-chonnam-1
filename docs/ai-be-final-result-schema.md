@@ -1,6 +1,6 @@
 # BE ↔ AI `ai.pipeline` 결과 계약
 
-이 문서는 `ai.pipeline`이 받는 입력과 BE에 반환하는 `AnalysisResponse`를 설명한다. 응답 계약의 기준은 커밋 [`9a85dfb`](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/commit/9a85dfbf057e29f22f5b512d09113fa8787116a5)에서 구현된 계약과 [PR #17](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/pull/17)이다. 이후 추가한 [finalize_analysis()](../ai/src/ai/pipeline/finalize.py)는 같은 응답 계약을 유지하면서 격리 페이지 분석과 결과 조립을 한 번의 호출로 제공한다. BE가 작성할 구문은 [Python 연동 코드](./ai-be-python-integration.md)를 참고한다.
+이 문서는 현재 `ai.pipeline`이 받는 입력과 BE에 반환하는 `AnalysisResponse`를 설명한다. 커밋 [`9a85dfb`](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/commit/9a85dfbf057e29f22f5b512d09113fa8787116a5)와 [PR #17](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/pull/17)은 과거 계약의 고정 기록이다. 현재 [finalize_analysis()](../ai/src/ai/pipeline/finalize.py)는 격리 페이지 분석과 결과 조립을 한 번의 호출로 제공한다. BE가 작성할 구문은 [Python 연동 코드](./ai-be-python-integration.md)를 참고한다.
 
 기존 화이트리스트 기반 API의 정책을 바꾸거나 그 결과를 새 파이프라인에 자동으로 연결하는 계약이 아니다. 여기서 `official`은 공식 도메인 여부가 아니라 BE가 URL 분석 점수를 임계값과 비교해 만든 엄격한 boolean이다. 기존 `DomainCheck`, `DomainMatch`, `decide()`의 화이트리스트 판정과 구분해서 사용한다.
 
@@ -19,7 +19,7 @@
 | 함수 | 입력 | 반환과 역할 |
 | --- | --- | --- |
 | `async analyze_message_part(text: str, *, client: AsyncOpenAI \| None = None, model: str \| None = None) -> MessagePart` | BE가 URL을 제거한 문자 본문 | 현재 문자만 분석한 `MessagePart` |
-| `async finalize_analysis(url: UrlAnalysis, message: MessagePart \| None = None, page: IsolatedPage \| None = None, *, failure: FailureCode \| None = None, client: AsyncOpenAI \| None = None, model: str \| None = None) -> AnalysisResponse` | 검증한 URL, 앞서 받은 문자 결과, 격리 수집 자료와 실패 코드 | 페이지 분석 후 전체 최종 결과 반환. true이면 분석 생략 |
+| `async finalize_analysis(url: UrlAnalysis, message: MessagePart \| None = None, page: IsolatedPage \| None = None, *, failure: FailureCode \| None = None, client: AsyncOpenAI \| None = None, model: str \| None = None) -> AnalysisResponse` | 검증한 URL, 앞서 받은 문자 결과, 격리 수집 자료와 실패 코드 | 공식 여부와 무관하게 전달된 페이지를 분석한 뒤 전체 최종 결과 반환 |
 | `async analyze_environment_part(page: IsolatedPage \| None, *, failure: FailureCode \| None = None, client: AsyncOpenAI \| None = None, model: str \| None = None) -> EnvironmentPart` | 성공 시 수집 페이지, 실패 시 `page=None`과 구체적인 실패 코드 | 전달된 HTML과 수집 상태를 분석한 `EnvironmentPart` |
 | `assemble_analysis(url: UrlAnalysis, message: MessagePart \| None = None, env: EnvironmentPart \| None = None) -> AnalysisResponse` | 검증된 URL 결과와 두 부분 결과 | I/O 없이 최종 응답 조립 |
 
@@ -60,7 +60,7 @@ BE는 URL 분석의 악성 위험도 점수 `score`가 `score <= T`이면 `offic
 - 시간 초과: `await finalize_analysis(url, message, None, failure=FailureCode.TIMEOUT)`
 - 부분 자료와 알려진 실패가 함께 있음: `await finalize_analysis(url, message, page, failure=FailureCode.PARTIAL_CONTENT)`
 
-AI가 페이지 분석과 결과 조립을 내부에서 수행하며 문자를 재분석하지 않는다. true는 `await finalize_analysis(url)`만으로 전체 구조와 null 10개를 반환한다. false에서 미제공 문자 결과는 결과 미제공으로, 미제공 페이지는 확보하지 못한 자료로 처리한다. 알려진 실패 코드와 부분 자료는 함께 전달한다. 요청 취소인 `CancelledError`는 전파된다.
+AI가 페이지 분석과 결과 조립을 내부에서 수행하며 문자를 재분석하지 않는다. `official` 값과 무관하게 미제공 문자 결과는 결과 미제공으로, 미제공 페이지는 필요한 자료 누락으로 처리한다. 알려진 실패 코드와 부분 자료는 함께 전달한다. 요청 취소인 `CancelledError`는 전파된다.
 
 이는 Python 호출 계약이다. HTTP 요청이나 원격 JSON으로 옮길 때 사용할 오류 envelope는 아직 정의되지 않았다.
 
@@ -73,16 +73,17 @@ AI가 페이지 분석과 결과 조립을 내부에서 수행하며 문자를 �
 | `url` | BE가 전달한 검증된 `UrlAnalysis`. 응답에서도 값을 유지한다. |
 | `message` | URL을 제거한 현재 문자 본문을 분석한 결과 |
 | `env` | 수집기가 제공한 HTML과 수집 상태를 분석한 결과 |
-| `result` | 최종 결과. 항상 `url.official`과 같은 boolean |
+| `result` | `url.official`, `message.answer`, `env.answer`가 모두 `true`일 때만 `true`인 종합 boolean |
 
 두 부분의 공통 모양은 `brand`, `category`, `answer`, `details.doubt`, `details.reason`이다.
 
 - `brand`와 `category`는 이 문서의 닫힌 허용 목록 중 하나다.
 - `answer=true`는 해당 출처의 분석을 완료했고 검증된 의심 신호가 없다는 뜻이다.
-- `answer=false`는 해당 출처에서 의심 신호를 확인했거나 분석을 완료하지 못했다는 뜻이다. 두 경우는 `reason`으로 구별한다.
+- `answer=false`는 해당 출처의 분석을 완료했고 검증된 의심 신호를 확인했다는 뜻이다.
+- `answer=null`은 자료 누락·오류·시간 초과·부분 자료 등으로 해당 분석을 정상 완료하지 못했다는 뜻이다. 실패 이유는 비어 있지 않은 `details.reason`에 남긴다.
 - `details.doubt`는 분류값이다. 일반 배송 조회나 로그인 폼 같은 값도 포함하므로 값의 존재만으로 악성을 뜻하지 않는다.
 - `details.reason`은 현재 출처에서 확인한 근거나 실패 사실을 설명하는 평문이다.
-- `null`은 `official=true` 조기 반환에서만 사용한다. 이때 한 부분의 말단 일부만 `null`로 만들지 않는다.
+- 실패한 부분의 나머지 필드는 확보한 값만 유지하고 산출하지 못한 값은 `null`로 둔다. 완료된 부분의 다섯 말단 값은 모두 채운다.
 
 ### `official=false` 전체 응답
 
@@ -117,9 +118,9 @@ AI가 페이지 분석과 결과 조립을 내부에서 수행하며 문자를 �
 }
 ```
 
-### `official=true` 조기 반환
+### `official=true`이며 두 분석도 완료된 응답
 
-`official=true`이면 `message`, `env`, 두 `details` 객체와 모든 키를 유지한다. 각 부분의 `brand`, `category`, `answer`, `details.doubt`, `details.reason`을 모두 `null`로 반환하므로 말단 `null`은 모두 10개다. 분석 실패가 먼저 발생했거나 일부 결과가 준비됐더라도 이 조기 반환 구조가 우선한다.
+`official=true`만으로 신뢰 결과가 되지 않는다. 문자와 환경 분석이 모두 정상 완료되어 각각 `answer=true`여야 `result=true`다. `official`은 현재 BE의 점수 기준 통과값이므로 이 응답도 화이트리스트 일치나 운영 환경의 안전을 증명하지 않는다.
 
 ```json
 {
@@ -129,21 +130,21 @@ AI가 페이지 분석과 결과 조립을 내부에서 수행하며 문자를 �
     "official": true
   },
   "message": {
-    "brand": null,
-    "category": null,
-    "answer": null,
+    "brand": "unknown",
+    "category": "unknown",
+    "answer": true,
     "details": {
-      "doubt": null,
-      "reason": null
+      "doubt": "없음",
+      "reason": "제공된 문자에서 명시적인 행동 요구를 확인하지 못했습니다."
     }
   },
   "env": {
-    "brand": null,
-    "category": null,
-    "answer": null,
+    "brand": "unknown",
+    "category": "unknown",
+    "answer": true,
     "details": {
-      "doubt": null,
-      "reason": null
+      "doubt": "없음",
+      "reason": "제공된 HTML에서 분류 대상 요소를 확인하지 못했습니다."
     }
   },
   "result": true
@@ -152,16 +153,16 @@ AI가 페이지 분석과 결과 조립을 내부에서 수행하며 문자를 �
 
 ### 분석 실패 부분 응답
 
-다음 예시는 페이지 접속·수집 실패 사실만 확인했고 다른 페이지 정보는 확보하지 못한 경우다. `answer=null`이나 `없음`으로 실패를 숨기지 않는다.
+다음 예시는 페이지 접속·수집 실패 사실만 확인했고 다른 페이지 정보는 확보하지 못한 경우다. 실패는 `answer=null`과 구체적인 이유로 표현한다.
 
 ```json
 {
-  "brand": "unknown",
-  "category": "unknown",
-  "answer": false,
+  "brand": null,
+  "category": null,
+  "answer": null,
   "details": {
-    "doubt": "unknown",
-    "reason": "페이지 접속·수집에 실패하여 내용을 확인하지 못했으므로 의심으로 처리했습니다."
+    "doubt": null,
+    "reason": "페이지 접속·수집에 실패하여 내용을 확인하지 못했습니다."
   }
 }
 ```
@@ -170,20 +171,21 @@ AI가 페이지 분석과 결과 조립을 내부에서 수행하며 문자를 �
 
 ## 최종 결과 결정
 
-유효한 `url.official`을 입력받으면 다음 규칙만 최종 결과를 정한다.
+유효한 세 부분을 입력받으면 다음 결정적 규칙이 최종 결과를 정한다.
 
-`result = url.official`
+`result = url.official is True and message.answer is True and env.answer is True`
 
-LLM 출력, RAG 유사도, `message.answer`, `env.answer`, 브랜드·분야의 일치 여부가 이 값을 뒤집지 않는다.
+LLM은 이 식을 직접 정하지 않는다. 각 부분 분석이 검증한 신호와 완료 상태를 만들고 조립 코드가 위 식을 계산한다.
 
 | `url.official` | 메시지·페이지 상태 | `result` | 응답 처리 |
 | --- | --- | --- | --- |
-| `true` | 완료, 의심 신호 또는 실패 여부와 무관 | `true` | 두 부분 객체와 키를 유지하고 말단 값 10개를 모두 `null`로 반환 |
+| `true` | 두 `answer`가 모두 `true` | `true` | 완료한 분류와 출처별 근거를 제공 |
+| `true` | 하나 이상이 `false` 또는 `null` | `false` | 의심 근거 또는 실패 이유와 확보한 값을 보존 |
 | `false` | 두 `answer`가 모두 `true` | `false` | 완료한 분류와 출처별 근거를 제공 |
 | `false` | 하나 이상에서 검증된 의심 신호 확인 | `false` | 확인한 신호와 근거를 제공 |
-| `false` | 실패·시간 초과·결과 누락 | `false` | 실패한 부분은 `answer=false`, 이미 확보한 결과는 보존 |
+| `false` | 실패·시간 초과·결과 누락 | `false` | 실패한 부분은 `answer=null`, 이미 확보한 결과는 보존 |
 
-`result=false`는 이 서비스의 기준에 따른 의심이다. 악성 또는 스미싱 확정으로 바꾸어 표현하지 않는다. 점수 기준을 통과하지 못했다는 사실을 공식 도메인이 아니라고 확인한 것으로 표현해서도 안 된다.
+`result=false`는 의심 또는 필수 분석 미완료를 포함한다. 악성 또는 스미싱 확정으로 바꾸어 표현하지 않는다. 점수 기준을 통과하지 못했다는 사실을 공식 도메인이 아니라고 확인한 것으로 표현해서도 안 된다.
 
 ## 정형값 허용 목록
 
@@ -265,7 +267,7 @@ LLM 출력, RAG 유사도, `message.answer`, `env.answer`, 브랜드·분야의 
 | `없음` |
 | `unknown` |
 
-`MessageDoubt`와 `EnvDoubt`는 서로 바꿔 쓰지 않는다. 각 목록의 `없음`은 해당 출처의 분석을 완료했지만 분류 대상 요구나 요소를 확인하지 못했다는 뜻이다. `unknown`은 식별 불가, 목록 밖 또는 실패로 확인하지 못한 상태다. `null`은 `official=true` 조기 반환으로 분석 결과를 제공하지 않은 상태다.
+`MessageDoubt`와 `EnvDoubt`는 서로 바꿔 쓰지 않는다. 각 목록의 `없음`은 해당 출처의 분석을 완료했지만 분류 대상 요구나 요소를 확인하지 못했다는 뜻이다. `unknown`은 정상적으로 분석했지만 식별할 수 없거나 목록 밖인 결과다. `null`은 실패로 값을 산출하지 못한 상태다.
 
 ## 근거와 실패 처리
 
@@ -285,10 +287,10 @@ LLM 출력, RAG 유사도, `message.answer`, `env.answer`, 브랜드·분야의 
 ### BE
 
 - 원본 메시지에서 URL과 URL을 제거한 본문을 분리하고 입력 타입을 검증한다.
-- URL 분석·메시지 분석·격리 환경 수집을 병렬로 시작한다. URL 분석이 끝나 `official`이 도착한 뒤 그 값에 따라 후속 처리를 결정한다.
-- `official=true`가 도착하면 `await finalize_analysis(url)`로 전체 결과를 받고 불필요한 작업을 취소·정리한다. 늦게 끝난 결과가 저장된 응답을 덮어쓰지 않게 한다.
-- `official=false`이면 문자 결과·격리 수집 자료·구체적인 `FailureCode`를 최종 함수에 전달한다. AI가 페이지 분석과 조립을 수행하므로 BE가 두 작업을 따로 호출할 필요는 없다.
-- `response.model_dump(mode="json")`으로 직렬화하며 `exclude_none=True`나 `exclude_unset=True`로 조기 반환 키를 제거하지 않는다.
+- URL 분석·메시지 분석·격리 환경 수집을 병렬로 시작한다.
+- `official` 값과 무관하게 문자 결과·격리 수집 자료·구체적인 `FailureCode`를 최종 함수에 전달한다. AI가 페이지 분석과 조립을 수행하므로 BE가 두 작업을 따로 호출할 필요는 없다.
+- 현재 BE는 공식 분기에서 자료를 전달하지 않아 URL-only 호출이 `result=false`인 누락 응답이 된다. 이 문서는 AI 계약을 설명하며 BE 적용은 후속 작업이다.
+- `response.model_dump(mode="json")`으로 직렬화하며 `exclude_none=True`나 `exclude_unset=True`로 실패 필드를 제거하지 않는다.
 - 콜백, 저장, 결과 조회 폴백과 외부 시간 제한을 관리한다.
 
 ### 격리 환경 수집기
@@ -302,4 +304,4 @@ LLM 출력, RAG 유사도, `message.answer`, `env.answer`, 브랜드·분야의 
 - `result=false`를 의심으로 표시하고 개별 `answer`와 최종 결과를 구분한다.
 - `null`, `unknown`, `없음`을 서로 다른 상태로 표시한다.
 - 문자와 페이지의 `doubt` 목록을 분리하고, 두 값의 차이나 일반 UI를 악성 확정 문구로 바꾸지 않는다.
-- 실패의 `answer=false`에는 `reason`을 함께 표시해 의심 신호 발견과 확인 실패를 구별한다.
+- 실패의 `answer=null`에는 `reason`을 함께 표시해 의심 신호 발견과 확인 실패를 구별한다.
