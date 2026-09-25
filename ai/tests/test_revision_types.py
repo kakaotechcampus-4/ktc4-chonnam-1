@@ -106,40 +106,45 @@ def test_revisions_enums_match_the_closed_contract():
     }
 
 
-def test_analysis_response_requires_all_null_parts_for_official_url():
+def test_analysis_response_accepts_populated_parts_for_official_url():
     url = UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=True)
-    response = AnalysisResponse(url=url, message=MessagePart(), env=EnvironmentPart(), result=True)
-    assert response.model_dump(mode="json")["message"] == {
-        "brand": None, "category": None, "answer": None, "details": {"doubt": None, "reason": None}
+    response = AnalysisResponse(url=url, message=valid_message_part(answer=True),
+        env=valid_environment_part(answer=True), result=True)
+    assert response.result is True
+
+
+@pytest.mark.parametrize("factory", [valid_message_part, valid_environment_part])
+def test_completed_parts_reject_missing_leaf_values(factory):
+    with pytest.raises(ValidationError):
+        factory(details={"doubt": None, "reason": "분석 결과"})
+
+
+@pytest.mark.parametrize("factory", [valid_message_part, valid_environment_part])
+@pytest.mark.parametrize("reason", [None, "", " \t "])
+def test_incomplete_nonempty_parts_require_nonblank_reason(factory, reason):
+    with pytest.raises(ValidationError):
+        factory(answer=None, details={"doubt": None, "reason": reason})
+
+
+def test_analysis_response_rejects_empty_parts_on_direct_deserialization():
+    data = {
+        "url": {"final_url": "https://example.com/a", "domain": "example.com", "official": True},
+        "message": MessagePart().model_dump(mode="json"),
+        "env": EnvironmentPart().model_dump(mode="json"),
+        "result": False,
     }
     with pytest.raises(ValidationError):
-        AnalysisResponse(url=url, message=valid_message_part(), env=EnvironmentPart(), result=True)
-
-
-@pytest.mark.parametrize(
-    ("factory", "overrides"),
-    [
-        (valid_message_part, {"answer": None}),
-        (valid_environment_part, {"answer": None}),
-    ],
-)
-def test_parts_reject_mixed_null_leaf_values(factory, overrides):
+        AnalysisResponse.model_validate(data)
     with pytest.raises(ValidationError):
-        factory(**overrides)
+        AnalysisResponse.model_validate_json(__import__("json").dumps(data))
 
 
-def test_analysis_response_rejects_mixed_null_parts_and_null_false_result_parts():
-    url = UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=False)
+def test_analysis_response_requires_aggregate_result():
+    url = UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=True)
+    response = AnalysisResponse(url=url, message=valid_message_part(answer=True),
+        env=valid_environment_part(answer=True), result=True)
     with pytest.raises(ValidationError):
-        AnalysisResponse(url=url, message=valid_message_part(answer=None), env=valid_environment_part(), result=False)
-    with pytest.raises(ValidationError):
-        AnalysisResponse(url=url, message=MessagePart(), env=valid_environment_part(), result=False)
-
-
-def test_analysis_response_requires_result_to_match_official():
-    url = UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=False)
-    with pytest.raises(ValidationError):
-        AnalysisResponse(url=url, message=valid_message_part(), env=valid_environment_part(), result=True)
+        type(response).model_validate({**response.model_dump(), "result": not response.result})
 
 
 @pytest.mark.parametrize("model", [SignalAnalysis, PageAnalysis])
