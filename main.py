@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import uuid
 from datetime import datetime, timezone
@@ -230,46 +231,41 @@ async def run_analysis(
         )
 
     현재 격리 페이지 수집기는 아직 연결하지 않는다.
+
+    문자 AI 분석과 urlscan은 서로의 입력을 필요로 하지 않는 독립적인
+    작업이므로, 문자 분석을 먼저 끝낸 뒤 URL을 처리하던 순차 실행을
+    asyncio.create_task로 동시에 시작하도록 바꿨다. urlscan이 문자
+    분석보다 훨씬 오래 걸리므로(공식 가이드 기준 최소 30초), URL 루프
+    안에서 message_result가 실제로 필요한 시점에는 이미 끝나 있을
+    가능성이 높다 (docs/experiments/ 에 전후 소요시간 비교 기록).
     """
 
     result_lines = []
 
+    total_start = time.monotonic()
+
     # ========================================================
-    # 1. 문자 AI 분석
+    # 1. 문자 AI 분석 — urlscan과 독립적이므로 "시작만" 해두고
+    #    결과가 실제로 필요한 시점(2-4 이후)에 가서 기다린다.
     # ========================================================
 
-    print("========== AI MESSAGE ANALYSIS ==========")
+    print("========== AI MESSAGE ANALYSIS (병렬 시작) ==========")
     print(f"[AI MESSAGE INPUT] {message!r}")
 
-    try:
-        message_result = await analyze_message_part(
-            message
-        )
-
-        print(
-            "[AI MESSAGE RESULT]",
-            message_result.model_dump(
-                mode="json"
-            )
-        )
-
-    except Exception as e:
-        print(
-            f"[AI MESSAGE ERROR] "
-            f"{type(e).__name__}: {e}"
-        )
-
-        # finalize_analysis는 message=None도 처리 가능
-        message_result = None
-
-    print("=========================================")
+    message_start = time.monotonic()
+    message_task = asyncio.create_task(
+        analyze_message_part(message)
+    )
+    message_logged = False
 
     # ========================================================
-    # 2. URL별 분석
+    # 2. URL별 분석 (문자 분석과 동시에 진행)
     # ========================================================
 
     for link in links:
         try:
+            urlscan_start = time.monotonic()
+
             # ------------------------------------------------
             # 2-1. urlscan 요청
             # ------------------------------------------------
@@ -319,6 +315,16 @@ async def run_analysis(
                 )
 
                 continue
+
+            urlscan_elapsed = (
+                time.monotonic() - urlscan_start
+            )
+
+            print(
+                f"[TIMING] urlscan 소요: "
+                f"{urlscan_elapsed:.2f}s "
+                f"({link})"
+            )
 
             # ------------------------------------------------
             # 2-3. 결과 파싱
@@ -383,6 +389,54 @@ async def run_analysis(
             print(
                 "========================================"
             )
+
+            # ------------------------------------------------
+            # 2-5. 병렬로 시작해둔 문자 분석 결과 대기
+            #
+            # urlscan이 문자 분석보다 훨씬 오래 걸리므로, 여기 도착할
+            # 때는 이미 message_task가 끝나 있을 가능성이 높다 —
+            # 이 await는 대부분 즉시 반환된다 (한 번 끝난 task는
+            # 몇 번을 다시 await해도 캐시된 결과를 즉시 돌려준다).
+            # ------------------------------------------------
+
+            message_wait_start = time.monotonic()
+
+            try:
+                message_result = await message_task
+
+                if not message_logged:
+                    message_elapsed = (
+                        time.monotonic() - message_start
+                    )
+
+                    print(
+                        f"[TIMING] 문자 분석 총 소요: "
+                        f"{message_elapsed:.2f}s "
+                        f"(urlscan과 겹친 시간 포함, "
+                        f"이 지점에서 실제로 기다린 시간: "
+                        f"{time.monotonic() - message_wait_start:.2f}s)"
+                    )
+
+                    print(
+                        "[AI MESSAGE RESULT]",
+                        message_result.model_dump(
+                            mode="json"
+                        )
+                    )
+
+                    message_logged = True
+
+            except Exception as e:
+                if not message_logged:
+                    print(
+                        f"[AI MESSAGE ERROR] "
+                        f"{type(e).__name__}: {e}"
+                    )
+
+                    message_logged = True
+
+                # finalize_analysis는 message=None도 처리 가능
+                message_result = None
 
             # =================================================
             # 3. AI 최종 분석
@@ -458,9 +512,34 @@ async def run_analysis(
                 f"⚠️ 분석 실패: {link}"
             )
 
+    # 모든 링크가 위에서 continue로 건너뛰어졌다면 message_task를
+    # 한 번도 await하지 않았을 수 있다 — 여기서 정리해서 background에
+    # 방치된 채로 남지 않게 한다 (asyncio가 아직 완료 안 된 task를
+    # 아무도 안 기다리면 경고를 남긴다).
+    if not message_task.done():
+        message_task.cancel()
+
+    try:
+        await message_task
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        if not message_logged:
+            print(
+                f"[AI MESSAGE ERROR] "
+                f"{type(e).__name__}: {e}"
+            )
+
     # ========================================================
     # 5. Kakao 응답
     # ========================================================
+
+    total_elapsed = time.monotonic() - total_start
+
+    print(
+        f"[TIMING] run_analysis 전체 소요: "
+        f"{total_elapsed:.2f}s"
+    )
 
     if not result_lines:
         return kakao_response(
