@@ -181,7 +181,8 @@ async def kakao_skill(
         links,
         message,
         callback_url,
-        user_id
+        user_id,
+        job_id
     )
 
     # 카카오에는 즉시 callback 사용 응답
