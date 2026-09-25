@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 
 from backend.src.server.urlscan_service import (
     submit_url_scan,
@@ -80,6 +80,33 @@ def create_analysis_job(
     )
 
     return job_id
+
+
+# ============================================================
+# Analysis Job API
+# ============================================================
+
+@app.get("/api/analyses/{job_id}")
+async def get_analysis_job(job_id: str):
+    """
+    인메모리에 저장된 분석 작업 상태와 결과를 조회한다.
+
+    현재는 개발/테스트용 API이며,
+    서버 재시작 시 저장된 작업은 소실된다.
+    """
+
+    job = ANALYSIS_JOBS.get(job_id)
+
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Analysis job not found"
+        )
+
+    return {
+        "success": True,
+        "job": job
+    }
 
 
 # ============================================================
