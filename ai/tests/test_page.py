@@ -368,6 +368,17 @@ def test_deadline_uses_monotonic_clock(monkeypatch):
         page_module._check_deadline(2.0)
 
 
+def test_initial_deadline_expiry_returns_timeout(monkeypatch):
+    clock = iter([0.0, 0.101])
+    monkeypatch.setattr(page_module, "monotonic", lambda: next(clock))
+
+    result = inspect_html("<p>normal</p>")
+
+    assert result.failure is FailureCode.TIMEOUT
+    assert result.text == ""
+    assert result.elements == ()
+
+
 def test_classification_timeout_preserves_completed_candidates(monkeypatch):
     previous = inspect_html('<a href="/app">앱 설치</a>').elements[0]
 

@@ -304,8 +304,8 @@ def test_environment_success_without_elements_differs_from_failure_unknown():
     assert good.details.doubt is EnvDoubt.NONE
     assert good.details.reason == "제공된 HTML에서 분류 대상 요소를 확인하지 못했습니다."
     assert bad.answer is None
-    assert bad.brand is None
-    assert bad.category is None
+    assert bad.brand is Brand.UNKNOWN
+    assert bad.category is Topic.UNKNOWN
     assert bad.details.doubt is None
     assert "페이지 접속·수집에 실패" in bad.details.reason
 
@@ -351,6 +351,33 @@ def test_verified_page_values_take_precedence_even_on_failure():
             brand=Brand.CJ_PARCEL, category=Topic.PARCEL))
     assert part.brand is Brand.CJ_PARCEL
     assert part.category is Topic.PARCEL
+
+
+def test_completed_unknown_page_values_survive_separate_collection_failure():
+    part = environment_part(
+        "<p>normal</p>",
+        analysis=PageAnalysis(status=AnalysisStatus.COMPLETED),
+        failure=FailureCode.PARTIAL_CONTENT,
+    )
+
+    assert part.answer is None
+    assert part.brand is Brand.UNKNOWN
+    assert part.category is Topic.UNKNOWN
+
+
+def test_explicit_unknown_page_metadata_survives_failed_analysis():
+    part = environment_part(
+        "<p>normal</p>",
+        analysis=PageAnalysis(
+            status=AnalysisStatus.FALLBACK,
+            failure=FailureCode.LLM_ERROR,
+        ),
+    )
+
+    assert part.answer is None
+    assert part.brand is Brand.UNKNOWN
+    assert part.category is Topic.UNKNOWN
+    assert "격리 환경 전달 정보" in part.details.reason
 
 
 def test_page_signal_is_preserved_when_another_stage_failed():

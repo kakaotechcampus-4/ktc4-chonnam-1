@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import pytest
 from pydantic import ValidationError
 
+import ai.llm.page as page_analysis_module
 import ai.page as page_module
 import ai.pipeline.analysis as pipeline_module
 import ai.pipeline.results as results_module
@@ -547,6 +548,7 @@ async def test_official_assembly_does_not_wait_and_be_cancellation_closes_owned_
     injected, parse_mock = make_parse_client(side_effect=parse)
     owned = OwnedClient(injected)
     monkeypatch.setattr(pipeline_module, "create_client", lambda timeout: owned)
+    monkeypatch.setattr(page_analysis_module, "create_client", lambda timeout: owned)
     call = (analyze_environment_part(page(), model="test") if stage == "page"
         else analyze_message_part(TEXT, model="test"))
     task = asyncio.create_task(call)

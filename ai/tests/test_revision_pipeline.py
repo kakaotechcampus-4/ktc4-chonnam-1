@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+import ai.llm.page as page_module
 import ai.pipeline as public
 import ai.pipeline.analysis as module
 from ai.types import (
@@ -171,6 +172,7 @@ async def test_success_closes_only_owned_client(entrypoint, owned, monkeypatch):
     client = FakeClient()
     factory = Mock(return_value=client)
     monkeypatch.setattr(module, "create_client", factory)
+    monkeypatch.setattr(page_module, "create_client", factory)
     kwargs = {"model": "test", "client": None if owned else client}
     if entrypoint == "message":
         part = await module.analyze_message_part(TEXT, **kwargs)
@@ -201,7 +203,9 @@ async def test_sdk_failure_closes_owned_client_and_preserves_facts(stage, error,
             raise error
         return await real_parse(**kwargs)
     client.chat.completions.parse = parse
-    monkeypatch.setattr(module, "create_client", Mock(return_value=client))
+    factory = Mock(return_value=client)
+    monkeypatch.setattr(module, "create_client", factory)
+    monkeypatch.setattr(page_module, "create_client", factory)
     if stage == "page":
         part = await module.analyze_environment_part(page(), model="test")
         assert part.details.doubt is EnvDoubt.LOGIN_FORM
@@ -219,7 +223,9 @@ async def test_sdk_failure_closes_owned_client_and_preserves_facts(stage, error,
 async def test_missing_model_closes_owned_client_without_sdk_calls(entrypoint, monkeypatch):
     client = FakeClient()
     monkeypatch.delenv("LLM_MODEL", raising=False)
-    monkeypatch.setattr(module, "create_client", Mock(return_value=client))
+    factory = Mock(return_value=client)
+    monkeypatch.setattr(module, "create_client", factory)
+    monkeypatch.setattr(page_module, "create_client", factory)
     part = (await module.analyze_message_part(TEXT) if entrypoint == "message"
         else await module.analyze_environment_part(page()))
     assert part.answer is None
@@ -299,7 +305,9 @@ async def test_cancellation_propagates_and_closes_only_owned_client(stage, owned
         finally:
             stopped.set()
     client.chat.completions.parse = parse
-    monkeypatch.setattr(module, "create_client", Mock(return_value=client))
+    factory = Mock(return_value=client)
+    monkeypatch.setattr(module, "create_client", factory)
+    monkeypatch.setattr(page_module, "create_client", factory)
     kwargs = {"client": None if owned else client, "model": "test"}
     call = module.analyze_environment_part(page(), **kwargs) if stage == "page" else module.analyze_message_part(TEXT, **kwargs)
     task = asyncio.create_task(call)

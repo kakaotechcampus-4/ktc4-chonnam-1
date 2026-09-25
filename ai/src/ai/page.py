@@ -622,7 +622,10 @@ def inspect_html(info: str) -> PageInspection:
     """Preserve source-backed HTML elements without network or script execution."""
 
     deadline = monotonic() + INSPECTION_TIMEOUT_SECONDS
-    _check_deadline(deadline)
+    try:
+        _check_deadline(deadline)
+    except _InspectionTimeout:
+        return PageInspection(text="", elements=(), failure=FailureCode.TIMEOUT)
     if not info:
         return PageInspection(text="", elements=(), failure=FailureCode.EMPTY_INPUT)
     if len(info) > MAX_HTML_BYTES:

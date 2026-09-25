@@ -3,9 +3,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+import ai.page as html_page
 import ai.pipeline as public
 import ai.pipeline.analysis as analysis
 import ai.pipeline.finalize as finalizer
+import ai.llm.page as page_analysis
 from ai.types import (
     AnalysisResponse, Brand, EnvDoubt, EnvironmentDetails, EnvironmentPart,
     FailureCode, IsolatedPage, MessageDetails, MessageDoubt, MessagePart,
@@ -158,6 +160,55 @@ async def test_html_limit_preserves_message_and_sets_null(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_initial_inspection_timeout_preserves_message(monkeypatch):
+    clock = iter([0.0, 0.101])
+    monkeypatch.setattr(html_page, "monotonic", lambda: next(clock))
+    source_message = message()
+
+    result = await public.finalize_analysis(url(True), source_message, page())
+
+    assert result.result is False
+    assert result.message == source_message
+    assert result.env.answer is None
+    assert "시간" in result.env.details.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("borrowed", [False, True])
+async def test_page_payload_limit_precedes_client_setup_and_preserves_message(
+    borrowed, monkeypatch, make_parse_client
+):
+    factory = Mock(side_effect=AssertionError("oversized payload created a client"))
+    monkeypatch.setattr(page_analysis, "create_client", factory)
+    client, parse = make_parse_client(parsed=PageProposal())
+    source_message = message()
+    source_page = IsolatedPage(
+        brand="unknown",
+        category="unknown",
+        info=(
+            '<form><label for="x">'
+            + "a" * 1000
+            + "</label>"
+            + '<input id="x" type="password">' * 150
+            + "</form>"
+        ),
+    )
+
+    result = await public.finalize_analysis(
+        url(True), source_message, source_page,
+        client=client if borrowed else None, model="test",
+    )
+
+    assert result.result is False
+    assert result.message == source_message
+    assert result.env.answer is None
+    assert result.env.details.doubt is EnvDoubt.LOGIN_FORM
+    assert "자료 크기 제한" in result.env.details.reason
+    factory.assert_not_called()
+    parse.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("error,fragment", [(TimeoutError(), "시간"), (RuntimeError(), "오류")])
 async def test_page_sdk_failure_keeps_completed_message(error, fragment, make_parse_client):
     client, _ = make_parse_client(side_effect=error)
@@ -194,7 +245,7 @@ async def test_client_ownership_and_cancellation(official, owned, cancel, monkey
             self.closed = True
     client = Client()
     factory = Mock(return_value=client)
-    monkeypatch.setattr(analysis, "create_client", factory)
+    monkeypatch.setattr(page_analysis, "create_client", factory)
     task = asyncio.create_task(public.finalize_analysis(url(official), message(), page(),
         client=None if owned else client, model="test"))
     try:

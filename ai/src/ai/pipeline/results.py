@@ -143,8 +143,9 @@ def build_environment_part(
     reasons = [f"전달된 HTML에서 {element.doubt.value}을 확인했습니다." for element in inspection.elements]
     if completed and not inspection.elements:
         reasons.append("제공된 HTML에서 분류 대상 요소를 확인하지 못했습니다.")
-    brand = None if not completed and analysis.brand is Brand.UNKNOWN else analysis.brand
-    category = None if not completed and analysis.category is Topic.UNKNOWN else analysis.category
+    analysis_completed = page is not None and analysis.status is AnalysisStatus.COMPLETED
+    brand = analysis.brand if analysis_completed or analysis.brand is not Brand.UNKNOWN else None
+    category = analysis.category if analysis_completed or analysis.category is not Topic.UNKNOWN else None
     metadata: list[str] = []
     if page is not None and not completed:
         if brand is None:
@@ -152,18 +153,14 @@ def build_environment_part(
                 brand = Brand(page.brand)
             except ValueError:
                 pass
-            if brand is Brand.UNKNOWN:
-                brand = None
-            elif brand is not None:
+            if brand is not None:
                 metadata.append(brand.value)
         if category is None:
             try:
                 category = Topic(page.category)
             except ValueError:
                 pass
-            if category is Topic.UNKNOWN:
-                category = None
-            elif category is not None:
+            if category is not None:
                 metadata.append(category.value)
     if metadata:
         reasons.append(f"격리 환경 전달 정보: {', '.join(metadata)}.")
