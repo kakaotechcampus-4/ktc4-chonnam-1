@@ -350,15 +350,18 @@ def _all_null(part: BaseModel) -> bool:
     )
 
 
-def _require_complete_or_skipped(part: BaseModel) -> None:
+def _require_complete_or_failed(part: BaseModel) -> None:
     data = part.model_dump()
     leaf_values = *(data[key] for key in ("brand", "category", "answer")), *data[
         "details"
     ].values()
-    if any(value is None for value in leaf_values) and any(
-        value is not None for value in leaf_values
-    ):
-        raise ValueError("part must be entirely null or entirely populated")
+    if data["answer"] is not None:
+        if any(value is None for value in leaf_values):
+            raise ValueError("completed parts require all fields")
+    elif any(value is not None for value in leaf_values):
+        reason = data["details"]["reason"]
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("incomplete parts require a nonblank failure reason")
 
 
 class MessagePart(StrictModel):
@@ -369,7 +372,7 @@ class MessagePart(StrictModel):
 
     @model_validator(mode="after")
     def require_complete_or_skipped(self) -> "MessagePart":
-        _require_complete_or_skipped(self)
+        _require_complete_or_failed(self)
         return self
 
 
@@ -381,7 +384,7 @@ class EnvironmentPart(StrictModel):
 
     @model_validator(mode="after")
     def require_complete_or_skipped(self) -> "EnvironmentPart":
-        _require_complete_or_skipped(self)
+        _require_complete_or_failed(self)
         return self
 
 
@@ -393,13 +396,13 @@ class AnalysisResponse(StrictModel):
 
     @model_validator(mode="after")
     def validate_result_and_parts(self) -> "AnalysisResponse":
-        if self.result is not self.url.official:
-            raise ValueError("result must match url.official")
-        if self.url.official:
-            if not _all_null(self.message) or not _all_null(self.env):
-                raise ValueError("official responses must skip both analyses")
-        elif _all_null(self.message) or _all_null(self.env):
-            raise ValueError("unofficial responses require both analyses")
+        if _all_null(self.message) or _all_null(self.env):
+            raise ValueError("responses require normalized analysis parts")
+        expected = (self.url.official is True
+            and self.message.answer is True
+            and self.env.answer is True)
+        if self.result is not expected:
+            raise ValueError("result must match the aggregate analysis")
         return self
 
 

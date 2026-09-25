@@ -16,6 +16,7 @@ from ai.types import (
     EnvironmentDetails, EnvironmentPart, EvidenceSource, FailureCode,
     IsolatedPage, MessageAnalysis, MessageDetails, MessageDoubt, MessagePart,
     PageAnalysis, RiskSignal, RiskSignalCode, SignalAnalysis, Topic, UrlAnalysis,
+    _all_null,
 )
 
 
@@ -30,7 +31,6 @@ _FAILURE_REASONS = {
     FailureCode.REFUSED: "분석을 완료하지 못해 의심으로 처리했습니다.",
     FailureCode.INVALID_OUTPUT: "분석을 완료하지 못해 의심으로 처리했습니다.",
 }
-_MISSING_REASON = "분석 결과를 전달받지 못해 의심으로 처리했습니다."
 _SUBJECT_ACTION = {
     RiskSignalCode.INSTALL_PROMPT: re.compile(
         r"(?:앱|어플|application|app)\s*(?:을|를)?\s*(?P<action>설치|다운로드|내려받|install|download)", re.I),
@@ -169,24 +169,23 @@ def build_environment_part(
 
 
 def missing_message_part() -> MessagePart:
-    return MessagePart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN, answer=False,
-        details=MessageDetails(doubt=MessageDoubt.UNKNOWN, reason=_MISSING_REASON))
+    return MessagePart(details=MessageDetails(
+        reason="문자 분석 결과를 전달받지 못했습니다."))
 
 
 def missing_environment_part() -> EnvironmentPart:
-    return EnvironmentPart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN, answer=False,
-        details=EnvironmentDetails(doubt=EnvDoubt.UNKNOWN, reason=_MISSING_REASON))
+    return EnvironmentPart(details=EnvironmentDetails(
+        reason="환경 분석 결과를 전달받지 못했습니다."))
 
 
 def assemble_analysis(
     url: UrlAnalysis, message: MessagePart | None = None,
     env: EnvironmentPart | None = None,
 ) -> AnalysisResponse:
-    """Keep the BE boolean authoritative and skip parts before reading them."""
-    if url.official:
-        return AnalysisResponse(url=url, message=MessagePart(), env=EnvironmentPart(), result=True)
-    if message is None or message.answer is None:
+    """Preserve supplied analyses and calculate their aggregate result."""
+    if message is None or _all_null(message):
         message = missing_message_part()
-    if env is None or env.answer is None:
+    if env is None or _all_null(env):
         env = missing_environment_part()
-    return AnalysisResponse(url=url, message=message, env=env, result=False)
+    result = url.official is True and message.answer is True and env.answer is True
+    return AnalysisResponse(url=url, message=message, env=env, result=result)

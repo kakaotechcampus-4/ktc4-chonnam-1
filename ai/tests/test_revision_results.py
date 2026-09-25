@@ -48,40 +48,46 @@ def environment_part(html, *, analysis=None, failure=None, brand="unknown", cate
     )
 
 
-@pytest.mark.parametrize("message_answer,env_answer", [(True, True), (True, False), (False, True), (False, False)])
-def test_url_result_dominates_local_answers(message_answer, env_answer):
+@pytest.mark.parametrize("official", [False, True])
+@pytest.mark.parametrize("message_answer", [False, True, None])
+@pytest.mark.parametrize("env_answer", [False, True, None])
+def test_aggregate_answers_preserve_parts(official, message_answer, env_answer):
     message = MessagePart(brand=Brand.UNKNOWN, category=Topic.PARCEL,
-        answer=message_answer, details=MessageDetails(doubt=MessageDoubt.PARCEL_LOOKUP, reason="배송 조회 안내"))
+        answer=message_answer, details=MessageDetails(doubt=MessageDoubt.PARCEL_LOOKUP,
+            reason="문자 분석 미완료" if message_answer is None else "배송 조회 안내"))
     env = EnvironmentPart(brand=Brand.UNKNOWN, category=Topic.PARCEL,
-        answer=env_answer, details=EnvironmentDetails(doubt=EnvDoubt.PARCEL_WIDGET, reason="HTML에서 배송 상태 확인"))
-    url = UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=False)
+        answer=env_answer, details=EnvironmentDetails(doubt=EnvDoubt.PARCEL_WIDGET,
+            reason="환경 분석 미완료" if env_answer is None else "HTML에서 배송 상태 확인"))
+    url = UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=official)
     response = assemble_analysis(url, message, env)
-    assert response.result is False
+    assert response.result is (official and message_answer is True and env_answer is True)
     assert response.message == message
     assert response.env == env
-
-
-def test_early_return_ignores_even_unreadable_parts_and_keeps_null10():
-    class Unreadable:
-        def __getattribute__(self, name):
-            raise AssertionError("early branch accessed supplied analysis")
-
-    url = UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=True)
-    data = assemble_analysis(url, Unreadable(), Unreadable()).model_dump(mode="json")
-    empty = {"brand": None, "category": None, "answer": None, "details": {"doubt": None, "reason": None}}
-    assert data == {"url": url.model_dump(mode="json"), "message": empty, "env": empty, "result": True}
+    assert type(response).model_validate_json(response.model_dump_json()) == response
 
 
 @pytest.mark.parametrize("parts", [(None, None), (MessagePart(), EnvironmentPart())])
-def test_missing_parts_are_false_unknown_and_not_timeout(parts):
-    url = UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=False)
+def test_missing_parts_mean_failure(parts):
+    url = UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=True)
     response = assemble_analysis(url, *parts)
+    assert response.result is False
     for part in (response.message, response.env):
-        assert part.answer is False
-        assert part.brand is Brand.UNKNOWN
-        assert part.category is Topic.UNKNOWN
-        assert part.details.doubt.value == "unknown"
-        assert part.details.reason == "분석 결과를 전달받지 못해 의심으로 처리했습니다."
+        assert part.answer is None
+        assert part.brand is None
+        assert part.category is None
+        assert part.details.doubt is None
+        assert part.details.reason
+
+
+def test_failed_part_keeps_existing_evidence():
+    message = MessagePart(answer=None, details=MessageDetails(
+        doubt=MessageDoubt.APP_INSTALL,
+        reason="문자에서 앱 설치 요청을 확인했으나 분석 시간이 초과되었습니다.",
+    ))
+    url = UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=True)
+    response = assemble_analysis(url, message)
+    assert response.message == message
+    assert response.result is False
 
 
 @pytest.mark.parametrize("code,text,quote", [
