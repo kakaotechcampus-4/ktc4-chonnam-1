@@ -1,5 +1,8 @@
 import asyncio
 
+import uuid
+from datetime import datetime, timezone
+
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Request
 
@@ -24,6 +27,13 @@ app = FastAPI()
 RUNNING_USERS: set[str] = set()
 
 
+# TODO:
+# 프로토타입 검증용 인메모리 작업 저장소.
+# 서버 재시작 시 데이터가 소실된다.
+# 추후 PostgreSQL 기반 저장소로 교체한다.
+ANALYSIS_JOBS: dict[str, dict] = {}
+
+
 # 콜백 URL 유효 시간을 고려한 안전 마진
 CALLBACK_DEADLINE_SECONDS = 45.0
 
@@ -32,6 +42,44 @@ CALLBACK_DEADLINE_SECONDS = 45.0
 # AI-BE 연동 테스트를 위한 임시 threshold.
 # 실제 threshold는 urlscan 테스트 후 확정.
 TEST_SCORE_THRESHOLD = 0
+
+
+# ============================================================
+# Store Analysis Job
+# ============================================================
+
+def create_analysis_job(
+    user_id: str | None
+) -> str:
+    """
+    새로운 분석 작업을 생성하고 job_id를 반환한다.
+
+    현재는 인메모리 저장소를 사용하며,
+    추후 PostgreSQL 기반 저장소로 교체한다.
+    """
+
+    job_id = str(uuid.uuid4())
+
+    ANALYSIS_JOBS[job_id] = {
+        "job_id": job_id,
+        "user_id": user_id,
+        "status": "running",
+        "created_at": datetime.now(
+            timezone.utc
+        ).isoformat(),
+        "completed_at": None,
+        "result": None,
+        "error": None,
+        "callback_status": "pending"
+    }
+
+    print(
+        f"[JOB CREATED] "
+        f"job_id={job_id} "
+        f"user={user_id}"
+    )
+
+    return job_id
 
 
 # ============================================================
@@ -94,6 +142,11 @@ async def kakao_skill(
     # 사용자 분석 시작 상태 저장
     if user_id:
         RUNNING_USERS.add(user_id)
+
+    # 분석 작업 생성
+    job_id = create_analysis_job(
+        user_id
+    )
 
     # 오래 걸리는 분석은 background task에서 수행
     background_tasks.add_task(
@@ -467,7 +520,8 @@ async def run_analysis_and_callback(
     links: list[str],
     message: str,
     callback_url: str,
-    user_id: str | None
+    user_id: str | None,
+    job_id: str
 ):
     """
     백그라운드에서 분석을 수행한 뒤
@@ -488,6 +542,21 @@ async def run_analysis_and_callback(
                 timeout=CALLBACK_DEADLINE_SECONDS
             )
 
+            # callback 전송 전에 분석 결과 저장
+            job = ANALYSIS_JOBS.get(job_id)
+        
+            if job:
+                job["status"] = "completed"
+                job["result"] = result
+                job["completed_at"] = datetime.now(
+                    timezone.utc
+                ).isoformat()
+        
+                print(
+                    f"[JOB COMPLETED] "
+                    f"job_id={job_id}"
+                )
+
         except asyncio.TimeoutError:
             print(
                 f"[ANALYSIS TIMEOUT] "
@@ -500,6 +569,21 @@ async def run_analysis_and_callback(
                 "잠시 후 다시 확인해주세요."
             )
 
+            job = ANALYSIS_JOBS.get(job_id)
+
+            if job:
+                job["status"] = "timeout"
+                job["result"] = result
+                job["error"] = "analysis_timeout"
+                job["completed_at"] = datetime.now(
+                    timezone.utc
+                ).isoformat()
+
+            print(
+                f"[JOB TIMEOUT] "
+                f"job_id={job_id}"
+            )
+
         except Exception as e:
             print(
                 f"[ANALYSIS ERROR] "
@@ -510,6 +594,23 @@ async def run_analysis_and_callback(
                 "분석 중 문제가 발생했습니다. "
                 "잠시 후 다시 시도해주세요."
             )
+
+            job = ANALYSIS_JOBS.get(job_id)
+
+            if job:
+                job["status"] = "failed"
+                job["result"] = result
+                job["error"] = (
+                    f"{type(e).__name__}: {e}"
+                )
+                job["completed_at"] = datetime.now(
+                    timezone.utc
+                ).isoformat()
+        
+                print(
+                    f"[JOB FAILED] "
+                    f"job_id={job_id}"
+                )
 
         # ----------------------------------------------------
         # 2. 카카오 callback 전송
