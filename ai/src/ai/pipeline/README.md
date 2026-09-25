@@ -1,5 +1,32 @@
 # 파이프라인
 
+## Revisions: BE가 사용하는 현재 호출 흐름
+
+[BE 연동 코드](../../../../docs/ai-be-python-integration.md)에 문자 전달, URL 결과 준비, 최종 결과 수신 구문이 있다. 기준은 [Revisions](../../../../docs/ai/Revisions.md)와 [결과 계약](../../../../docs/ai-be-final-result-schema.md)이다.
+
+```python
+from ai.pipeline import analyze_message_part, finalize_analysis
+
+# BE의 async 함수 안에서 실행한다.
+# text는 URL 제거·마스킹된 본문, url은 검증한 UrlAnalysis다.
+# page는 수집한 IsolatedPage 또는 None, failure는 수집 실패 코드 또는 None이다.
+message = await analyze_message_part(text)
+response = await finalize_analysis(url, message, page, failure=failure)
+payload = response.model_dump(mode="json")
+```
+
+`finalize_analysis()`가 페이지 분석과 결과 조립을 내부에서 처리한다. 기존 문자 결과를 재사용하며 `url.official` 값과 무관하게 전달된 페이지를 분석한다. `await finalize_analysis(url)`처럼 자료 없이 호출하면 두 부분은 `answer=null`과 누락 이유를 가진 실패 결과가 된다. 실제 병렬 처리·취소 정리 예제와 BE 전환 상태는 위 연동 문서에 있다.
+
+최종 `result`는 BE가 전달한 점수 기준 boolean인 `url.official`과 두 부분의 `answer`가 모두 true일 때만 true다. 조립 코드가 이 식을 결정하며 LLM이 최종 값을 정하지 않는다. 실패는 `answer=null`, 완료 후 의심 근거가 있으면 `answer=false`다. 실패·부분 자료는 `failure`와 `page`를 함께 전달해 확보한 근거와 실패 이유를 보존한다.
+
+`official`은 현재 BE의 점수 기준 통과값이며 실제 공식 도메인 또는 화이트리스트 일치를 증명하지 않는다. 기존 BE의 공식 URL-only 분기는 새 계약에서 `result=false`가 되므로 BE 적용은 후속 작업이다.
+
+`analyze_environment_part()`와 `assemble_analysis()`는 개별 사용과 기존 호출 호환성을 위해 유지한다. BE의 새 연동에서는 두 함수를 각각 호출할 필요가 없다. URL 조사·페이지 수집·태스크 생성과 취소·저장·콜백은 BE 책임이며 AI는 HTML 실행이나 카카오 응답 가공을 하지 않는다.
+
+## 기존 화이트리스트 기반 흐름
+
+아래는 기존 설계와 legacy API의 설명이다. 위 Revisions의 점수 기반 `official` 및 `result`에 이 판정을 섞지 않는다.
+
 기준은 [AI 설계](../../../../docs/ai/smishing-message-intake-ai.md)와
 [재설계 스펙](../../../../docs/superpowers/specs/2026-09-18-smishing-analysis-redesign-design.md)이다.
 
