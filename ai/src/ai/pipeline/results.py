@@ -21,15 +21,15 @@ from ai.types import (
 
 
 _FAILURE_REASONS = {
-    FailureCode.COLLECTION_FAILED: "페이지 접속·수집에 실패하여 내용을 확인하지 못했으므로 의심으로 처리했습니다.",
-    FailureCode.TIMEOUT: "분석 시간이 초과되어 확인을 완료하지 못했으므로 의심으로 처리했습니다.",
-    FailureCode.EMPTY_INPUT: "분석할 자료 또는 결과를 확보하지 못해 의심으로 처리했습니다.",
-    FailureCode.MISSING_RESULT: "분석할 자료 또는 결과를 확보하지 못해 의심으로 처리했습니다.",
-    FailureCode.INPUT_TOO_LARGE: "자료 전체를 확인하지 못해 의심으로 처리했습니다.",
-    FailureCode.PARTIAL_CONTENT: "자료 전체를 확인하지 못해 의심으로 처리했습니다.",
-    FailureCode.LLM_ERROR: "분석을 완료하지 못해 의심으로 처리했습니다.",
-    FailureCode.REFUSED: "분석을 완료하지 못해 의심으로 처리했습니다.",
-    FailureCode.INVALID_OUTPUT: "분석을 완료하지 못해 의심으로 처리했습니다.",
+    FailureCode.COLLECTION_FAILED: "페이지 접속·수집에 실패하여 내용을 확인하지 못했습니다.",
+    FailureCode.TIMEOUT: "분석 시간이 초과되어 확인을 완료하지 못했습니다.",
+    FailureCode.EMPTY_INPUT: "분석할 자료가 비어 있어 확인하지 못했습니다.",
+    FailureCode.MISSING_RESULT: "필요한 자료 또는 분석 결과를 전달받지 못했습니다.",
+    FailureCode.INPUT_TOO_LARGE: "자료 크기 제한으로 전체를 확인하지 못했습니다.",
+    FailureCode.PARTIAL_CONTENT: "일부 자료만 확보하여 전체를 확인하지 못했습니다.",
+    FailureCode.LLM_ERROR: "분석 도중 오류가 발생하여 확인을 완료하지 못했습니다.",
+    FailureCode.REFUSED: "분석 요청이 거절되어 확인을 완료하지 못했습니다.",
+    FailureCode.INVALID_OUTPUT: "유효한 분석 결과를 확보하지 못했습니다.",
 }
 _SUBJECT_ACTION = {
     RiskSignalCode.INSTALL_PROMPT: re.compile(
@@ -106,7 +106,7 @@ def build_message_part(
             else MessageDoubt.UNKNOWN)
         candidates.append(MessageCandidate(doubt, signal.evidence_ref, text.index(signal.evidence_ref)))
     doubt = select_message_doubt(candidates) if candidates else (
-        MessageDoubt.NONE if completed else MessageDoubt.UNKNOWN)
+        MessageDoubt.NONE if completed else None)
     quotes = [candidate.evidence for candidate in sorted(candidates, key=lambda item: item.start)]
     quotes = [quote for quote in quotes if not any(quote != other and quote in other for other in quotes)]
     reasons = [f"문자에서 '{plain}'라고 안내했습니다." for quote in dict.fromkeys(quotes)
@@ -120,8 +120,12 @@ def build_message_part(
     for code in (failure, signals.failure):
         if code is not None:
             reasons.append(_FAILURE_REASONS[code])
-    return MessagePart(brand=identify_brand(text, extracted), category=classify_topic(text, extracted),
-        answer=completed and not accepted,
+    brand, category = identify_brand(text, extracted), classify_topic(text, extracted)
+    if extracted.analysis_status is not AnalysisStatus.COMPLETED:
+        brand = None if brand is Brand.UNKNOWN else brand
+        category = None if category is Topic.UNKNOWN else category
+    return MessagePart(brand=brand, category=category,
+        answer=(not accepted) if completed else None,
         details=MessageDetails(doubt=doubt, reason=_join_reasons(reasons)))
 
 
@@ -135,26 +139,31 @@ def build_environment_part(
         codes.append(FailureCode.MISSING_RESULT)
     completed = not codes and analysis.status is AnalysisStatus.COMPLETED
     doubt = select_env_doubt(inspection.elements) if inspection.elements else (
-        EnvDoubt.NONE if completed else EnvDoubt.UNKNOWN)
+        EnvDoubt.NONE if completed else None)
     reasons = [f"전달된 HTML에서 {element.doubt.value}을 확인했습니다." for element in inspection.elements]
     if completed and not inspection.elements:
         reasons.append("제공된 HTML에서 분류 대상 요소를 확인하지 못했습니다.")
-    brand, category = analysis.brand, analysis.category
+    brand = None if not completed and analysis.brand is Brand.UNKNOWN else analysis.brand
+    category = None if not completed and analysis.category is Topic.UNKNOWN else analysis.category
     metadata: list[str] = []
-    if page is not None and analysis.status is AnalysisStatus.FALLBACK:
-        if brand is Brand.UNKNOWN:
+    if page is not None and not completed:
+        if brand is None:
             try:
                 brand = Brand(page.brand)
             except ValueError:
                 pass
-            if brand is not Brand.UNKNOWN:
+            if brand is Brand.UNKNOWN:
+                brand = None
+            elif brand is not None:
                 metadata.append(brand.value)
-        if category is Topic.UNKNOWN:
+        if category is None:
             try:
                 category = Topic(page.category)
             except ValueError:
                 pass
-            if category is not Topic.UNKNOWN:
+            if category is Topic.UNKNOWN:
+                category = None
+            elif category is not None:
                 metadata.append(category.value)
     if metadata:
         reasons.append(f"격리 환경 전달 정보: {', '.join(metadata)}.")
@@ -164,7 +173,8 @@ def build_environment_part(
         if signal.evidence_source is EvidenceSource.OBSERVATION and signal.evidence_ref in elements]
     if any(signal.code is RiskSignalCode.CREDENTIAL_REQUEST for signal in accepted):
         reasons.append("전달된 HTML 입력 요소에서 민감한 금융 인증정보 요구를 확인했습니다.")
-    return EnvironmentPart(brand=brand, category=category, answer=completed and not accepted,
+    return EnvironmentPart(brand=brand, category=category,
+        answer=(not accepted) if completed else None,
         details=EnvironmentDetails(doubt=doubt, reason=_join_reasons(reasons)))
 
 

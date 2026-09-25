@@ -156,6 +156,14 @@ def test_empty_successful_retrieval_and_no_action_are_completed():
     assert part.details.reason == "제공된 문자에서 명시적인 행동 요구를 확인하지 못했습니다."
 
 
+def test_success_unknown_is_not_failure_null():
+    part = message_part("안녕하세요")
+    assert part.answer is True
+    assert part.brand is Brand.UNKNOWN
+    assert part.category is Topic.UNKNOWN
+    assert part.details.doubt is MessageDoubt.NONE
+
+
 def test_signal_changes_local_answer_and_retains_all_local_candidates_once():
     text = "CJ대한통운 택배 앱을 설치하세요. 주소를 확인하세요"
     part = message_part(text, signals=SignalAnalysis(status=AnalysisStatus.COMPLETED,
@@ -180,19 +188,22 @@ def test_message_stage_failures_preserve_verified_local_information(stage):
     else:
         kwargs["failure"] = FailureCode.LLM_ERROR
     part = message_part("CJ택배 주소를 수정하세요", **kwargs)
-    assert part.answer is False
+    assert part.answer is None
     assert part.brand is Brand.CJ_PARCEL
     assert part.category is Topic.PARCEL
     assert part.details.doubt is MessageDoubt.ADDRESS_EDIT
     assert "주소를 수정하세요" in part.details.reason
     expected = {"extracted": "문자 분석을 완료하지 못했습니다", "cases": "사례 검색 결과를 확보하지 못했습니다",
-        "signals": "분석 시간이 초과", "explicit": "분석을 완료하지 못해"}[stage]
+        "signals": "분석 시간이 초과", "explicit": "분석 도중 오류"}[stage]
     assert expected in part.details.reason
 
 
 def test_no_candidates_on_failure_is_unknown_and_does_not_quote_whole_input():
     part = message_part("평범한 알림입니다", extracted=MessageAnalysis(analysis_status=AnalysisStatus.FALLBACK))
-    assert part.details.doubt is MessageDoubt.UNKNOWN
+    assert part.answer is None
+    assert part.brand is None
+    assert part.category is None
+    assert part.details.doubt is None
     assert part.details.reason == "문자 분석을 완료하지 못했습니다."
 
 
@@ -202,7 +213,7 @@ def test_grounded_unclassified_request_survives_extraction_failure():
         analysis_status=AnalysisStatus.FALLBACK,
         requested_actions=[EvidenceField(value="예약 진행", evidence=text)],
     ))
-    assert part.answer is False
+    assert part.answer is None
     assert part.details.doubt is MessageDoubt.UNKNOWN
     assert text in part.details.reason
 
@@ -292,15 +303,17 @@ def test_environment_success_without_elements_differs_from_failure_unknown():
     assert good.answer is True
     assert good.details.doubt is EnvDoubt.NONE
     assert good.details.reason == "제공된 HTML에서 분류 대상 요소를 확인하지 못했습니다."
-    assert bad.answer is False
-    assert bad.details.doubt is EnvDoubt.UNKNOWN
+    assert bad.answer is None
+    assert bad.brand is None
+    assert bad.category is None
+    assert bad.details.doubt is None
     assert "페이지 접속·수집에 실패" in bad.details.reason
 
 
 def test_environment_failure_preserves_multiple_elements_without_raw_html_or_visibility_claims():
     html = '<div hidden><a href="https://example.com/token-secret">앱 다운로드</a></div><form>로그인<input type="password" value="private-token"></form>'
     part = environment_part(html, analysis=PageAnalysis(status=AnalysisStatus.FALLBACK, failure=FailureCode.TIMEOUT))
-    assert part.answer is False
+    assert part.answer is None
     assert part.details.doubt is EnvDoubt.APP_LINK
     for phrase in ("앱 다운로드 링크", "로그인·인증 입력폼", "분석 시간이 초과"):
         assert phrase in part.details.reason
@@ -313,9 +326,10 @@ def test_all_explicit_failures_have_safe_deterministic_reasons(failure):
     message = message_part("", failure=failure)
     env = environment_part("<p>자료</p>", failure=failure)
     for part in (message, env):
-        assert part.answer is False
-        assert part.details.doubt.value == "unknown"
-        assert "의심으로 처리했습니다" in part.details.reason
+        assert part.answer is None
+        assert part.details.doubt is None
+        assert part.details.reason
+        assert "의심으로 처리했습니다" not in part.details.reason
 
 
 def test_metadata_fallback_uses_exact_allowed_values_and_labels_source():
@@ -327,8 +341,8 @@ def test_metadata_fallback_uses_exact_allowed_values_and_labels_source():
     assert "CJ택배" in exact.details.reason
     assert "HTML에서 CJ택배" not in exact.details.reason
     aliases = environment_part("<p>자료</p>", analysis=failure, brand="C.J택배", category="배송")
-    assert aliases.brand is Brand.UNKNOWN
-    assert aliases.category is Topic.UNKNOWN
+    assert aliases.brand is None
+    assert aliases.category is None
 
 
 def test_verified_page_values_take_precedence_even_on_failure():
@@ -346,13 +360,43 @@ def test_page_signal_is_preserved_when_another_stage_failed():
     part = build_environment_part(IsolatedPage(brand="unknown", category="unknown", info=html),
         inspection, PageAnalysis(status=AnalysisStatus.COMPLETED, signals=[candidate]),
         failure=FailureCode.PARTIAL_CONTENT)
-    assert part.answer is False
+    assert part.answer is None
     assert part.details.doubt is EnvDoubt.APP_LINK
     assert "앱 다운로드 링크" in part.details.reason
-    assert "자료 전체를 확인하지 못해" in part.details.reason
+    assert "일부 자료만 확보" in part.details.reason
 
 
 def test_missing_page_is_failure_even_with_completed_empty_analysis():
     part = build_environment_part(None, PageInspection("", (), None), PageAnalysis(status=AnalysisStatus.COMPLETED))
-    assert part.answer is False
-    assert part.details.doubt is EnvDoubt.UNKNOWN
+    assert part.answer is None
+    assert part.brand is None
+    assert part.category is None
+    assert part.details.doubt is None
+
+
+def test_failed_analysis_retains_grounded_request():
+    part = message_part("앱을 설치하세요", failure=FailureCode.TIMEOUT)
+    assert part.answer is None
+    assert part.details.doubt is MessageDoubt.APP_INSTALL
+    assert "앱을 설치" in part.details.reason
+    assert "초과" in part.details.reason
+    assert "의심으로 처리" not in part.details.reason
+
+
+def test_failed_page_keeps_observed_form():
+    part = environment_part('<form><input type="password"></form>',
+        failure=FailureCode.PARTIAL_CONTENT)
+    assert part.answer is None
+    assert part.details.doubt is EnvDoubt.LOGIN_FORM
+    assert part.details.reason
+
+
+def test_failed_empty_page_does_not_invent_unknown_values():
+    part = build_environment_part(None,
+        PageInspection(text="", elements=(), failure=FailureCode.MISSING_RESULT),
+        PageAnalysis(status=AnalysisStatus.FALLBACK, failure=FailureCode.MISSING_RESULT))
+    assert part.answer is None
+    assert part.brand is None
+    assert part.category is None
+    assert part.details.doubt is None
+    assert part.details.reason

@@ -73,8 +73,8 @@ async def test_invalid_body_never_creates_client_or_searches(text, monkeypatch):
     monkeypatch.setattr(module, "create_client", factory)
     monkeypatch.setattr(module, "search_cases", search)
     part = await module.analyze_message_part(text)
-    assert part.answer is False
-    assert part.details.doubt is MessageDoubt.UNKNOWN
+    assert part.answer is None
+    assert part.details.doubt is None
     factory.assert_not_called()
     search.assert_not_called()
 
@@ -88,7 +88,7 @@ async def test_search_failure_keeps_current_message_facts(error, fragment, monke
     signals = AsyncMock(return_value=SignalAnalysis(status=AnalysisStatus.COMPLETED))
     monkeypatch.setattr(module, "analyze_signals", signals)
     part = await module.analyze_message_part(TEXT, client=FakeClient(), model="test")
-    assert part.answer is False
+    assert part.answer is None
     assert part.brand is Brand.CJ_LOGISTICS
     assert part.details.doubt is MessageDoubt.PARCEL_LOOKUP
     assert fragment in part.details.reason
@@ -107,7 +107,7 @@ async def test_search_deadline_cancels_coroutine_but_keeps_extraction(monkeypatc
     monkeypatch.setattr(module, "SEARCH_TIMEOUT_SECONDS", 0.001)
     part = await module.analyze_message_part(TEXT, client=FakeClient(), model="test")
     assert stopped.is_set()
-    assert part.answer is False
+    assert part.answer is None
     assert part.brand is Brand.CJ_LOGISTICS
     assert "시간" in part.details.reason
 
@@ -145,7 +145,7 @@ async def test_failed_extraction_skips_signal_api(failure, monkeypatch):
     monkeypatch.setattr(module, "analyze_message", extract)
     monkeypatch.setattr(module, "analyze_signals", signals)
     part = await module.analyze_message_part(TEXT, client=FakeClient(), model="test")
-    assert part.answer is False
+    assert part.answer is None
     assert part.details.doubt is MessageDoubt.PARCEL_LOOKUP
     assert "문자 분석" in part.details.reason
     if failure == "timeout":
@@ -159,7 +159,7 @@ async def test_signal_failure_preserves_extracted_message(failure, monkeypatch):
     monkeypatch.setattr(module, "analyze_signals", AsyncMock(return_value=SignalAnalysis(
         status=AnalysisStatus.FALLBACK, failure=failure)))
     part = await module.analyze_message_part(TEXT, client=FakeClient(), model="test")
-    assert part.answer is False
+    assert part.answer is None
     assert part.details.doubt is MessageDoubt.PARCEL_LOOKUP
     assert part.brand is Brand.CJ_LOGISTICS
 
@@ -208,7 +208,7 @@ async def test_sdk_failure_closes_owned_client_and_preserves_facts(stage, error,
     else:
         part = await module.analyze_message_part(TEXT, model="test")
         assert part.details.doubt is MessageDoubt.PARCEL_LOOKUP
-    assert part.answer is False
+    assert part.answer is None
     assert client.closed
     assert part.brand is Brand.CJ_LOGISTICS
     assert len(client.calls) == (2 if stage == "signals" else 1)
@@ -222,7 +222,7 @@ async def test_missing_model_closes_owned_client_without_sdk_calls(entrypoint, m
     monkeypatch.setattr(module, "create_client", Mock(return_value=client))
     part = (await module.analyze_message_part(TEXT) if entrypoint == "message"
         else await module.analyze_environment_part(page()))
-    assert part.answer is False
+    assert part.answer is None
     assert client.closed
     assert client.calls == []
 
@@ -247,7 +247,7 @@ async def test_client_creation_failure_preserves_deterministic_facts(entrypoint,
         part = await module.analyze_environment_part(page())
         assert part.details.doubt is EnvDoubt.LOGIN_FORM
         assert "격리 환경 전달 정보" in part.details.reason
-    assert part.answer is False
+    assert part.answer is None
     assert part.brand is Brand.CJ_LOGISTICS
     assert part.category is Topic.PARCEL
 
@@ -259,7 +259,7 @@ async def test_collection_failure_skips_page_llm(supplied_page, monkeypatch):
     monkeypatch.setattr(module, "analyze_page", llm)
     monkeypatch.setattr(module, "create_client", factory)
     part = await module.analyze_environment_part(supplied_page, failure=FailureCode.COLLECTION_FAILED)
-    assert part.answer is False
+    assert part.answer is None
     assert "수집" in part.details.reason
     if supplied_page:
         assert part.brand is Brand.CJ_LOGISTICS
@@ -274,7 +274,7 @@ async def test_incomplete_html_skips_page_llm_and_preserves_metadata(info, monke
     llm = AsyncMock()
     monkeypatch.setattr(module, "analyze_page", llm)
     part = await module.analyze_environment_part(page(info))
-    assert part.answer is False
+    assert part.answer is None
     assert part.brand is Brand.CJ_LOGISTICS
     if info:
         assert part.details.doubt is EnvDoubt.LOGIN_FORM
