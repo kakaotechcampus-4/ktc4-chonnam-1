@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+import ai.llm.page as page_analysis
 import ai.pipeline.analysis as analysis
 from ai.types import FailureCode, MessagePart, UrlAnalysis
 
@@ -18,8 +19,9 @@ def example(monkeypatch):
     assert len(candidates) == 1
     namespace = {}
     exec(compile(candidates[0], str(path), "exec"), namespace)
-    monkeypatch.setattr(analysis, "create_client", Mock(
-        side_effect=AssertionError("example tests must not contact an LLM")))
+    forbidden = Mock(side_effect=AssertionError("example tests must not contact an LLM"))
+    monkeypatch.setattr(analysis, "create_client", forbidden)
+    monkeypatch.setattr(page_analysis, "create_client", forbidden)
     return namespace
 
 
@@ -34,9 +36,9 @@ async def test_false_example_returns_complete_failure_result(example):
         AsyncMock(return_value=url()),
         AsyncMock(return_value=(None, FailureCode.TIMEOUT)))
     assert response.result is False
-    assert response.env.answer is False
+    assert response.env.answer is None
     assert "시간" in response.env.details.reason
-    assert response.message.answer is False
+    assert response.message.answer is None
     assert set(response.model_dump(mode="json")) == {"url", "message", "env", "result"}
 
 
@@ -76,10 +78,11 @@ async def test_example_cleans_started_tasks_on_every_exit(example, outcome):
                 await asyncio.wait_for(task, 1)
         else:
             response = await asyncio.wait_for(task, 1)
-            assert response.result is True
+            assert response.result is False
             for part in (response.message, response.env):
                 assert part.brand is part.category is part.answer is None
-                assert part.details.doubt is part.details.reason is None
+                assert part.details.doubt is None
+                assert part.details.reason
         assert stopped[0].is_set() and stopped[1].is_set()
     finally:
         if not task.done():
@@ -99,7 +102,7 @@ async def test_false_example_analyzes_collected_page(example, monkeypatch, make_
             return client
         async def __aexit__(self, *args):
             return None
-    monkeypatch.setattr(analysis, "create_client", lambda timeout: OwnedClient())
+    monkeypatch.setattr(page_analysis, "create_client", lambda timeout: OwnedClient())
     monkeypatch.setenv("LLM_MODEL", "test")
     example["analyze_message_part"] = AsyncMock(return_value=source_message)
     response = await example["analyze_request"]("body", AsyncMock(return_value=url()),

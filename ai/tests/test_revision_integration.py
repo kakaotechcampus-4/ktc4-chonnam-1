@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import pytest
 from pydantic import ValidationError
 
+import ai.llm.page as page_analysis_module
 import ai.page as page_module
 import ai.pipeline.analysis as pipeline_module
 import ai.pipeline.results as results_module
@@ -15,10 +16,11 @@ import ai.verdict as verdict_module
 from ai.page import inspect_html
 from ai.pipeline import analyze_environment_part, analyze_message_part, assemble_analysis
 from ai.types import (
-    AnalysisStatus, CaseMatch, CaseSearchResult, CategoryCode, CategoryEvidence,
-    EnvDoubt, EvidenceField, EvidenceSource, ExtractedMessage, IsolatedPage,
-    MessageDoubt, PageProposal, RiskSignal, RiskSignalCode, SignalProposal,
-    UrlAnalysis,
+    AnalysisStatus, Brand, CaseMatch, CaseSearchResult, CategoryCode,
+    CategoryEvidence, EnvDoubt, EnvironmentDetails, EnvironmentPart,
+    EvidenceField, EvidenceSource, ExtractedMessage, IsolatedPage,
+    MessageDetails, MessageDoubt, MessagePart, PageProposal, RiskSignal,
+    RiskSignalCode, SignalProposal, Topic, UrlAnalysis,
 )
 
 
@@ -326,13 +328,15 @@ async def test_english_imperatives_preserve_word_boundaries(text, answer, make_p
     assert result.details.doubt is (MessageDoubt.NONE if answer else MessageDoubt.APP_INSTALL)
 
 
-def assert_null_parts(response):
+def assert_missing_parts(response):
     data = response.model_dump(mode="json")
-    skipped = {"brand": None, "category": None, "answer": None,
-        "details": {"doubt": None, "reason": None}}
-    assert data["message"] == skipped
-    assert data["env"] == skipped
-    assert data["result"] is True
+    for key in ("message", "env"):
+        assert data[key]["brand"] is None
+        assert data[key]["category"] is None
+        assert data[key]["answer"] is None
+        assert data[key]["details"]["doubt"] is None
+        assert data[key]["details"]["reason"]
+    assert data["result"] is False
     assert data["url"]["official"] is True
 
 
@@ -363,14 +367,19 @@ async def test_different_message_and_page_meanings_survive_assembly(make_parse_c
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("supplied_failures", [False, True])
-async def test_official_assembly_skips_all_work_and_overrides_parts(supplied_failures, monkeypatch):
+async def test_official_assembly_preserves_parts_without_starting_work(supplied_failures, monkeypatch):
     parts = (await analyze_message_part(""), await analyze_environment_part(None)) if supplied_failures else ()
     if parts:
-        assert all(part.answer is False for part in parts)
+        assert all(part.answer is None for part in parts)
     forbidden = Mock(side_effect=AssertionError("official assembly must do no analysis"))
     for attribute in ("create_client", "search_cases", "inspect_html", "analyze_message", "analyze_page"):
         monkeypatch.setattr(pipeline_module, attribute, forbidden)
-    assert_null_parts(assemble_analysis(url(True), *parts))
+    response = assemble_analysis(url(True), *parts)
+    assert response.result is False
+    if parts:
+        assert (response.message, response.env) == parts
+    else:
+        assert_missing_parts(response)
     forbidden.assert_not_called()
 
 
@@ -464,7 +473,7 @@ async def test_actual_timeout_preserves_other_completed_part(timed_out, make_par
     response = assemble_analysis(url(), message, env)
     failed, completed = (response.message, response.env) if timed_out == "message" else (response.env, response.message)
     assert cancelled.is_set()
-    assert failed.answer is False
+    assert failed.answer is None
     assert "시간이 초과" in failed.details.reason
     assert completed.answer is True
     assert "초과" not in completed.details.reason
@@ -484,10 +493,10 @@ async def test_partial_html_preserves_observed_form_without_claiming_completion(
     env = await analyze_environment_part(page(LOGIN_HTML + suffix), client=client, model="test")
     response = assemble_analysis(url(), message, env)
     assert response.message.answer is True
-    assert response.env.answer is False
+    assert response.env.answer is None
     assert response.env.details.doubt is EnvDoubt.LOGIN_FORM
     assert "HTML" in response.env.details.reason
-    assert "전체를 확인하지 못해" in response.env.details.reason
+    assert "일부 자료만 확보" in response.env.details.reason
     assert "<form>" not in response.env.details.reason
     assert response.result is False
     parse.assert_not_awaited()
@@ -499,9 +508,9 @@ async def test_html_byte_limit_rejects_before_observing_any_form(make_parse_clie
     env = await analyze_environment_part(
         page(LOGIN_HTML + "a" * page_module.MAX_HTML_BYTES), client=client, model="test")
     response = assemble_analysis(url(), env=env)
-    assert response.env.answer is False
-    assert response.env.details.doubt is EnvDoubt.UNKNOWN
-    assert "전체를 확인하지 못해" in response.env.details.reason
+    assert response.env.answer is None
+    assert response.env.details.doubt is None
+    assert "자료 크기 제한" in response.env.details.reason
     assert "HTML에서" not in response.env.details.reason
     assert response.result is False
     parse.assert_not_awaited()
@@ -539,12 +548,13 @@ async def test_official_assembly_does_not_wait_and_be_cancellation_closes_owned_
     injected, parse_mock = make_parse_client(side_effect=parse)
     owned = OwnedClient(injected)
     monkeypatch.setattr(pipeline_module, "create_client", lambda timeout: owned)
+    monkeypatch.setattr(page_analysis_module, "create_client", lambda timeout: owned)
     call = (analyze_environment_part(page(), model="test") if stage == "page"
         else analyze_message_part(TEXT, model="test"))
     task = asyncio.create_task(call)
     try:
         await asyncio.wait_for(entered.wait(), timeout=1.0)
-        assert_null_parts(assemble_analysis(url(True)))
+        assert_missing_parts(assemble_analysis(url(True)))
         assert not task.done()
         assert not owned.closed
     finally:
@@ -560,7 +570,13 @@ async def test_official_assembly_does_not_wait_and_be_cancellation_closes_owned_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["unknown", "none", "null"])
 async def test_unknown_none_and_null_preserve_distinct_json_keys(state, make_parse_client):
-    if state == "none":
+    if state == "unknown":
+        response = assemble_analysis(url(),
+            MessagePart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN, answer=False,
+                details=MessageDetails(doubt=MessageDoubt.UNKNOWN, reason="분류 미상")),
+            EnvironmentPart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN, answer=False,
+                details=EnvironmentDetails(doubt=EnvDoubt.UNKNOWN, reason="분류 미상")))
+    elif state == "none":
         client, _ = make_parse_client(parsed=PageProposal())
         message, env = await asyncio.gather(
             analyze_message_part("안녕하세요", client=message_client(make_parse_client), model="test"),
@@ -577,9 +593,8 @@ async def test_unknown_none_and_null_preserve_distinct_json_keys(state, make_par
         assert data[key]["category"] == (None if state == "null" else "unknown")
         assert data[key]["details"]["doubt"] == {"unknown": "unknown", "none": "없음", "null": None}[state]
         assert data[key]["answer"] is {"unknown": False, "none": True, "null": None}[state]
-        if state == "unknown":
-            assert "전달받지 못해" in data[key]["details"]["reason"]
-            assert "초과" not in data[key]["details"]["reason"]
+        if state == "null":
+            assert data[key]["details"]["reason"]
 
 
 @pytest.mark.parametrize("official", [None, 0, 1, "true", "false", "", [], {}])

@@ -17,8 +17,6 @@ async def finalize_analysis(
     model: str | None = None,
 ) -> AnalysisResponse:
     """Analyze supplied page material and return the complete response."""
-    if url.official:
-        return assemble_analysis(url)
     env = await analyze_environment_part(
         page, failure=failure, client=client, model=model,
     )
