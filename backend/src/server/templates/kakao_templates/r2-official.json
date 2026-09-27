@@ -1,0 +1,37 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "basicCard": {
+          "title": "다른 점을 못 찾았어요",
+          "description": "문자 속 주소가 누리택배 공식 홈페이지 주소와 같아요.\n페이지 내용과 보낸 사람은 확인하지 못했어요. 안전하다는 뜻은 아니에요.",
+          "thumbnail": {
+            "imageUrl": "{{ image_url }}",
+            "altText": "두 링크를 비교하는 돋보기 그림",
+            "fixedRatio": false
+          },
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "공식 웹 열기",
+              "action": "message",
+              "messageText": "공식 웹 열기"
+            },
+            {
+              "label": "자세히 보기",
+              "action": "block",
+              "blockId": "6aad3abfe745d3358bd90c8d"
+            }
+          ]
+        }
+      },
+      {
+        "textCard": {
+          "title": "🔍 다른 점을 못 찾았어요",
+          "description": "문자에 있는 주소를 공식 홈페이지 주소와 비교했는데 다른 점을 찾지 못했어요. 다만 안전하다는 뜻은 아니에요. 확인할 일이 있다면 문자 속 링크 말고 공식 앱에서 직접 확인하세요."
+        }
+      }
+    ]
+  }
+}

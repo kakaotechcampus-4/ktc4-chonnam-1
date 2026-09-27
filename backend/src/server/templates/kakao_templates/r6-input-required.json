@@ -1,0 +1,26 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "📭 확인할 주소가 없어요",
+          "description": "문자에서 확인할 인터넷 주소를 찾지 못했어요. 지금은 주소가 있어야 확인할 수 있어요. 문자에 주소가 있는데 빠졌다면 그 부분을 더 보내주세요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "다시 보내기",
+              "action": "block",
+              "blockId": "6aa6a4436d537a3eabb81ad5"
+            },
+            {
+              "label": "자세히 보기",
+              "action": "block",
+              "blockId": "6aad3abfe745d3358bd90c8d"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

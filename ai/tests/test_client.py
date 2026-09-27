@@ -33,10 +33,9 @@ def _invoke(module):
 
 
 def test_budgets_match_the_latency_document():
-    # docs/latency-budget.md: ① 메시지 추출 1.5s, ③a 위험 신호 2.0s,
-    # ③b 설명 생성 2.0s. 문서가 기준이라고 CLAUDE.md 가 못 박았다.
-    assert analyze_module.TIMEOUT_SECONDS == 1.5
-    assert signals_module.TIMEOUT_SECONDS == 2.0
+    # docs/latency-budget.md: 메시지 시나리오 테스트는 단계별 30초.
+    assert analyze_module.TIMEOUT_SECONDS == 30.0
+    assert signals_module.TIMEOUT_SECONDS == 30.0
     assert explain_module.TIMEOUT_SECONDS == 2.0
 
 
