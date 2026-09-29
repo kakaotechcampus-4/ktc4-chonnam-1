@@ -13,6 +13,7 @@ from backend.src.server.urlscan_service import (
 )
 from backend.src.server.url_utils import split_message
 from backend.src.server.templates.renderer import render_r1_lookalike
+from services.official_domain_service import check_official_domain
 
 # AI 연결
 from ai.pipeline import analyze_message_part, finalize_analysis
@@ -37,12 +38,6 @@ ANALYSIS_JOBS: dict[str, dict] = {}
 
 # 콜백 URL 유효 시간을 고려한 안전 마진
 CALLBACK_DEADLINE_SECONDS = 45.0
-
-
-# TODO:
-# AI-BE 연동 테스트를 위한 임시 threshold.
-# 실제 threshold는 urlscan 테스트 후 확정.
-TEST_SCORE_THRESHOLD = 0
 
 
 # ============================================================
@@ -209,35 +204,24 @@ async def run_analysis(
 ) -> dict:
     """
     현재 AI-BE 연결 테스트 흐름
-
+    
     message
       → AI 문자 분석
-
+    
     URL
       → urlscan
       → score 추출
-      → official 계산
+      → 문자 brand + 최종 domain 기반 official 계산
       → UrlAnalysis 생성
-
-    official=True
-      → finalize_analysis(url)
-
-    official=False
-      → finalize_analysis(
-            url,
-            message,
-            page=None,
-            failure=COLLECTION_FAILED
-        )
-
-    현재 격리 페이지 수집기는 아직 연결하지 않는다.
-
-    문자 AI 분석과 urlscan은 서로의 입력을 필요로 하지 않는 독립적인
-    작업이므로, 문자 분석을 먼저 끝낸 뒤 URL을 처리하던 순차 실행을
-    asyncio.create_task로 동시에 시작하도록 바꿨다. urlscan이 문자
-    분석보다 훨씬 오래 걸리므로(공식 가이드 기준 최소 30초), URL 루프
-    안에서 message_result가 실제로 필요한 시점에는 이미 끝나 있을
-    가능성이 높다 (docs/experiments/ 에 전후 소요시간 비교 기록).
+    
+    최종 분석
+      → message 결과 전달
+      → 격리 페이지 수집기는 아직 미연결
+      → page=None, failure=MISSING_RESULT
+      → finalize_analysis()
+    
+    문자 AI 분석과 urlscan은 독립적인 작업이므로
+    asyncio.create_task를 이용해 병렬로 실행한다.
     """
 
     result_lines = []
@@ -340,15 +324,11 @@ async def run_analysis(
             )
 
             # ------------------------------------------------
-            # 2-4. urlscan score → official
+            # 2-4. print urlscan result
             # ------------------------------------------------
 
-            url_analysis = build_ai_url_analysis(
-                parsed_result
-            )
-
             print(
-                "========== URLSCAN SCORE TEST =========="
+                "========== URLSCAN RESULT =========="
             )
             print(
                 f"[INPUT URL]   "
@@ -356,11 +336,11 @@ async def run_analysis(
             )
             print(
                 f"[FINAL URL]   "
-                f"{url_analysis.final_url}"
+                f"{parsed_result.get('final_url')}"
             )
             print(
                 f"[DOMAIN]      "
-                f"{url_analysis.domain}"
+                f"{parsed_result.get('domain')}"
             )
             print(
                 f"[SCORE]       "
@@ -379,15 +359,7 @@ async def run_analysis(
                 f"{parsed_result.get('brands')}"
             )
             print(
-                f"[TEST T]      "
-                f"{TEST_SCORE_THRESHOLD}"
-            )
-            print(
-                f"[OFFICIAL?]   "
-                f"{url_analysis.official}"
-            )
-            print(
-                "========================================"
+                "===================================="
             )
 
             # ------------------------------------------------
@@ -438,6 +410,30 @@ async def run_analysis(
                 # finalize_analysis는 message=None도 처리 가능
                 message_result = None
 
+            # ============================================================
+            # BE 공식 도메인 대조
+            # ============================================================
+            
+            brand = (
+                message_result.brand
+                if message_result is not None
+                else None
+            )
+            
+            url_analysis = build_ai_url_analysis(
+                parsed_result,
+                brand
+            )
+            
+            print(
+                "[DOMAIN MATCH]",
+                {
+                    "brand": brand,
+                    "domain": url_analysis.domain,
+                    "official": url_analysis.official
+                }
+            )
+
             # =================================================
             # 3. AI 최종 분석
             # =================================================
@@ -446,35 +442,18 @@ async def run_analysis(
                 "========== AI FINAL ANALYSIS =========="
             )
 
-            if url_analysis.official:
-                # official=True이면 AI 계약상
-                # 문자/페이지 분석 없이 조기 반환 가능
-
-                print(
-                    "[AI FINAL] "
-                    "official=True → early return"
-                )
-
-                final_result = await finalize_analysis(
-                    url=url_analysis
-                )
-
-            else:
-                # 현재는 격리 페이지 수집기를 연결하지 않았으므로
-                # COLLECTION_FAILED로 명시
-
-                print(
-                    "[AI FINAL] "
-                    "official=False → "
-                    "message + collection failure"
-                )
-
-                final_result = await finalize_analysis(
-                    url=url_analysis,
-                    message=message_result,
-                    page=None,
-                    failure=FailureCode.COLLECTION_FAILED
-                )
+            print(
+                "[AI FINAL] "
+                f"domain_match={url_analysis.official} → "
+                "message + missing environment result"
+            )
+            
+            final_result = await finalize_analysis(
+                url=url_analysis,
+                message=message_result,
+                page=None,
+                failure=FailureCode.MISSING_RESULT
+            )
 
             final_payload = final_result.model_dump(
                 mode="json"
@@ -496,8 +475,7 @@ async def run_analysis(
             result_lines.append(
                 format_ai_result(
                     link,
-                    final_payload,
-                    parsed_result.get("score")
+                    final_payload
                 )
             )
 
@@ -556,33 +534,22 @@ async def run_analysis(
 # ============================================================
 
 def build_ai_url_analysis(
-    parsed_result: dict
+    parsed_result: dict,
+    brand: str | None
 ) -> UrlAnalysis:
     """
-    urlscan 결과를 AI UrlAnalysis 계약으로 변환한다.
+    URL 분석 결과를 AI UrlAnalysis 계약으로 변환한다.
 
-    현재 테스트 정책:
+    official은 urlscan score로 추론하지 않고,
+    문자 분석에서 확인한 brand와 최종 domain을
+    BE 화이트리스트로 대조하여 결정한다.
 
-        score <= TEST_SCORE_THRESHOLD
-            → official=True
-
-        score > TEST_SCORE_THRESHOLD
-            → official=False
-
-    실제 운영 threshold는 추후 확정한다.
+    urlscan score는 판정과 분리된 기록용 값이다.
     """
 
-    final_url = parsed_result.get(
-        "final_url"
-    )
-
-    domain = parsed_result.get(
-        "domain"
-    )
-
-    score = parsed_result.get(
-        "score"
-    )
+    final_url = parsed_result.get("final_url")
+    domain = parsed_result.get("domain")
+    score = parsed_result.get("score")
 
     if not final_url:
         raise ValueError(
@@ -594,19 +561,21 @@ def build_ai_url_analysis(
             "urlscan 결과에 domain이 없습니다."
         )
 
-    if score is None:
-        raise ValueError(
-            "urlscan 결과에 score가 없습니다."
-        )
-
-    official = (
-        score <= TEST_SCORE_THRESHOLD
+    official = check_official_domain(
+        brand=brand,
+        domain=domain
     )
 
     raw_url_result = {
         "final_url": final_url,
         "domain": domain,
-        "official": official
+        "official": official,
+        "scan": {
+            "score": score,
+            "scanned_at": datetime.now(
+                timezone.utc
+            ).isoformat()
+        }
     }
 
     print(
@@ -857,90 +826,155 @@ def kakao_response(
 # ============================================================
 
 def format_ai_result(
-    link: str,
-    payload: dict,
-    score: int | float | None
-) -> str:
+    original_url: str,
+    ai_result
+) -> dict:
+    """
+    AI AnalysisResponse를 카카오톡 simpleText 응답으로 변환한다.
 
-    url_result = payload.get(
-        "url",
-        {}
-    ) or {}
+    새 AnalysisResponse 스키마:
+    - url.official: DomainMatch
+    - url.scan.score / scanned_at
+    - message/env.details.doubts
+    - message/env.details.signals
+    - message/env.details.reason.text
+    - message/env.details.reason.failures
+    """
 
-    message_result = payload.get(
-        "message",
-        {}
-    ) or {}
+    if hasattr(ai_result, "model_dump"):
+        data = ai_result.model_dump(
+            mode="json"
+        )
+    else:
+        data = ai_result
 
-    env_result = payload.get(
-        "env",
-        {}
-    ) or {}
+    url_data = data.get("url") or {}
+    scan_data = url_data.get("scan") or {}
 
-    message_details = message_result.get(
-        "details",
-        {}
-    ) or {}
-
-    env_details = env_result.get(
-        "details",
-        {}
-    ) or {}
-
-    final_result = payload.get(
-        "result"
+    message_data = data.get("message") or {}
+    message_details = (
+        message_data.get("details") or {}
+    )
+    message_reason = (
+        message_details.get("reason") or {}
     )
 
-    def display(value):
-        """
-        테스트 출력용.
-        None인 경우 알아보기 쉽게 표시한다.
-        """
-        return "없음" if value is None else str(value)
+    env_data = data.get("env") or {}
+    env_details = (
+        env_data.get("details") or {}
+    )
+    env_reason = (
+        env_details.get("reason") or {}
+    )
 
-    return (
+    def format_doubts(
+        doubts: list | None
+    ) -> str:
+        if not doubts:
+            return "없음"
+
+        return "\n".join(
+            (
+                f"- {item.get('value', '알 수 없음')}"
+                f" ({item.get('evidence', '근거 없음')})"
+            )
+            for item in doubts
+        )
+
+    def format_signals(
+        signals: list | None
+    ) -> str:
+        if not signals:
+            return "없음"
+
+        return "\n".join(
+            (
+                f"- {item.get('code', 'unknown')}"
+                f" ({item.get('evidence', '근거 없음')})"
+            )
+            for item in signals
+        )
+
+    def format_failures(
+        failures: list | None
+    ) -> str:
+        if not failures:
+            return "없음"
+
+        return ", ".join(
+            str(failure)
+            for failure in failures
+        )
+
+    message_doubts = format_doubts(
+        message_details.get("doubts")
+    )
+    message_signals = format_signals(
+        message_details.get("signals")
+    )
+    message_failures = format_failures(
+        message_reason.get("failures")
+    )
+
+    env_doubts = format_doubts(
+        env_details.get("doubts")
+    )
+    env_signals = format_signals(
+        env_details.get("signals")
+    )
+    env_failures = format_failures(
+        env_reason.get("failures")
+    )
+
+    text = (
         "🔎 AI 분석 완료\n\n"
 
         "[URL 분석]\n"
-        f"입력 URL: {link}\n"
+        f"입력 URL: {original_url}\n"
         f"최종 URL: "
-        f"{display(url_result.get('final_url'))}\n"
+        f"{url_data.get('final_url', '없음')}\n"
         f"도메인: "
-        f"{display(url_result.get('domain'))}\n"
-        f"urlscan score: "
-        f"{display(score)}\n"
+        f"{url_data.get('domain', '없음')}\n"
         f"official: "
-        f"{display(url_result.get('official'))}\n\n"
+        f"{url_data.get('official', '없음')}\n"
+        f"scan score: "
+        f"{scan_data.get('score', '없음')}\n"
+        f"scanned_at: "
+        f"{scan_data.get('scanned_at', '없음')}\n\n"
 
         "[문자 분석]\n"
         f"brand: "
-        f"{display(message_result.get('brand'))}\n"
+        f"{message_data.get('brand') or '없음'}\n"
         f"category: "
-        f"{display(message_result.get('category'))}\n"
+        f"{message_data.get('category') or '없음'}\n"
         f"answer: "
-        f"{display(message_result.get('answer'))}\n"
-        f"doubt: "
-        f"{display(message_details.get('doubt'))}\n"
+        f"{message_data.get('answer', '없음')}\n"
+        f"doubts:\n{message_doubts}\n"
+        f"signals:\n{message_signals}\n"
         f"reason: "
-        f"{display(message_details.get('reason'))}\n\n"
+        f"{message_reason.get('text') or '없음'}\n"
+        f"failures: {message_failures}\n\n"
 
         "[환경 분석]\n"
         f"brand: "
-        f"{display(env_result.get('brand'))}\n"
+        f"{env_data.get('brand') or '없음'}\n"
         f"category: "
-        f"{display(env_result.get('category'))}\n"
+        f"{env_data.get('category') or '없음'}\n"
         f"answer: "
-        f"{display(env_result.get('answer'))}\n"
-        f"doubt: "
-        f"{display(env_details.get('doubt'))}\n"
+        f"{env_data.get('answer', '없음')}\n"
+        f"collected_at: "
+        f"{env_data.get('collected_at') or '없음'}\n"
+        f"doubts:\n{env_doubts}\n"
+        f"signals:\n{env_signals}\n"
         f"reason: "
-        f"{display(env_details.get('reason'))}\n\n"
+        f"{env_reason.get('text') or '없음'}\n"
+        f"failures: {env_failures}\n\n"
 
         "[최종 판정]\n"
-        f"result: "
-        f"{display(final_result)}"
+        f"result: {data.get('result', '없음')}"
     )
 
+    return kakao_response(text)
 
 # ============================================================
 # URLSCAN Result Parser
