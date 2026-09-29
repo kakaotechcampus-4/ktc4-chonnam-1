@@ -1,10 +1,10 @@
 # backend/src/server/templates
 
-`/kakao-templates`(FE 소유, 선언형 정의)를 실제 카카오 응답 JSON(`simpleText`, `quickReplies` 등)으로 렌더링하는 엔진입니다.
+`/frontend/kakao-templates`(FE 소유, 선언형 정의)를 실제 카카오 응답 JSON(`simpleText`, `quickReplies` 등)으로 렌더링하는 엔진입니다.
 
 ## 소유 경계 — 중요
 
-- **문구·버튼 구성 자체는 이 폴더의 것이 아닙니다.** `/kakao-templates`에서 선언된 것을 그대로 렌더링만 합니다. 문구를 바꾸고 싶으면 `/kakao-templates`를 고쳐야지, 여기 렌더러 코드를 고치면 안 됩니다.
+- **문구·버튼 구성 자체는 이 폴더의 것이 아닙니다.** `/frontend/kakao-templates`에서 선언된 것을 그대로 렌더링만 합니다. 문구를 바꾸고 싶으면 `/frontend/kakao-templates`를 고쳐야지, 여기 렌더러 코드를 고치면 안 됩니다.
 - 이 경계가 흐려지면 템플릿 변경마다 BE 배포가 필요해지고, FE가 원하는 "템플릿 변경과 BE 배포 분리"라는 목적이 무너집니다.
 
 ## 렌더러가 반드시 지키는 출력 가드

@@ -85,23 +85,23 @@ PR #7 멘토 피드백의 FE UI/UX 비교 요청을 실제 카카오 화면에�
 ## 프로토타입 이미지
 
 카드에 올린 800×400 이미지다. 동적 문구·브랜드·URL은 넣지 않고 상태만 나타낸다.
-원본은 `kakao-templates/assets/prototype/`에 있다.
+원본은 `frontend/kakao-templates/assets/prototype/`에 있다.
 
 ### 진입 카드
 
-![프로토타입 진입 카드](../../kakao-templates/assets/prototype/card-test-intro.png)
+![프로토타입 진입 카드](../../frontend/kakao-templates/assets/prototype/card-test-intro.png)
 
 ### 공식 주소와 다름
 
-![공식 주소와 다름](../../kakao-templates/assets/prototype/result-address-different.png)
+![공식 주소와 다름](../../frontend/kakao-templates/assets/prototype/result-address-different.png)
 
 ### 다른 점을 못 찾음
 
-![다른 점을 못 찾음](../../kakao-templates/assets/prototype/result-no-difference.png)
+![다른 점을 못 찾음](../../frontend/kakao-templates/assets/prototype/result-no-difference.png)
 
 ### 확인할 정보가 부족함
 
-![확인할 정보가 부족함](../../kakao-templates/assets/prototype/result-insufficient-info.png)
+![확인할 정보가 부족함](../../frontend/kakao-templates/assets/prototype/result-insufficient-info.png)
 
 ## 알려진 한계
 

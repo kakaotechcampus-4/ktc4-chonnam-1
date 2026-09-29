@@ -1,7 +1,7 @@
 # frontend
 
 2차 웹 (Next.js). 챗봇 결과 말풍선의 [자세히 보기]로 넘어온 사용자에게 근거 상세와 관측 원자료를 보여주는 읽기 전용 화면입니다.
-1차 산출물인 챗봇 말풍선은 이 폴더에 없습니다. `/kakao-templates`(FE 소유, 선언형)에 있고, 렌더링은 `backend/src/server/templates/`가 합니다.
+1차 산출물인 챗봇 말풍선은 `kakao-templates/`(FE 소유, 선언형)에 있고, 렌더링은 `backend/src/server/templates/`가 합니다.
 
 ## 이 폴더가 하지 않는 것
 
@@ -14,6 +14,7 @@
 
 | 폴더 | 역할 |
 | --- | --- |
+| `kakao-templates/` | 챗봇 카드 템플릿(선언형)과 프로토타입 자산. 카드 JSON은 `cards/` |
 | `src/app/` | 라우트. 토큰 진입, 결과 상세, 공식 확인 경로 |
 | `src/components/` | 표시 컴포넌트. 근거 카드 4칸, 판단 보류, 관측 목록 |
 | `src/lib/` | 어댑터(BE 응답 → 뷰모델), 출력 가드, 폴링 |

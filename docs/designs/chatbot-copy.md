@@ -435,7 +435,7 @@ AI 유형 참고 칸을 쓸 경우 `smishing-message-intake-ux.md` 3절의 네 �
 | R5 | 이미지 불가 — 콜백 대기 응답은 글자만 보낸다 | 분석 중 — 결과가 아님이 드러나야 함 |
 
 - 규격: 800×400 (2:1), 500KB 이하. 기존 프로토타입과 동일.
-- 원본 위치: `kakao-templates/assets/prototype/`
+- 원본 위치: `frontend/kakao-templates/assets/prototype/`
 - 브랜드·URL·동적 문구는 이미지에 넣지 않는다. 상태만 나타낸다.
 - 캐러셀 이미지는 **전부 1:1 또는 전부 2:1로 통일**해야 한다(build-guide 7절).
 - **이미지 주소가 없으면 썸네일을 넣지 않고 텍스트 카드로 보낸다**(`chatbot-flow.md` 9절 (3)).
