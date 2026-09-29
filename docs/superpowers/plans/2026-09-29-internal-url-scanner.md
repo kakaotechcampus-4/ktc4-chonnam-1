@@ -17,11 +17,31 @@
   - ② 격리 서버 쪽 조치(웜 풀, 리소스 차단, 7초 수집). 격리 서버 코드는 이 저장소에 없다. 여기서는 `CollectedPage` 입력 계약과 "연결 전" 수집기만 둔다. 연결 전에는 필수 특징 `credential_form` 을 확인할 수 없으므로 **자체 점수는 항상 `null` 로 기록된다.** 이것이 올바른 동작이다.
   - `scheme.md` 스키마 이행(`url.official` → `DomainMatch`, wire `url.scan`, urlscan 을 응답 경로에서 제거). 현재 `official` 이 urlscan 점수로 만들어지므로, urlscan 을 백그라운드로 내리는 일은 이 이행과 함께 해야 한다. **5~10초 응답 시간 목표는 그 이행 계획에서 달성된다.** 이 계획은 점수기와 비교 기록까지만 만든다.
   - 스펙 §2 의 2단계(로지스틱 회귀 학습). 라벨된 불일치 사례가 수백 건 쌓인 뒤의 일이다. 이 계획은 학습 자료가 될 특징값·라벨을 기록해 둔다.
-- **스펙과 다른 점:** 스펙 §4 의 "WHOIS 2초 → RDAP 1초" 대신 **RDAP 단일 조회(2초)** 로 한다. WHOIS(포트 43)는 새 의존성이 필요하다. 비교 기간에 `.kr` 조회 실패율이 높으면 그때 WHOIS 를 추가한다.
+- **스펙과 다른 점:**
+  - 스펙 §4 의 "WHOIS 2초 → RDAP 1초" 대신 **RDAP 단일 조회(2초)** 로 한다. WHOIS(포트 43)는 새 의존성이 필요하다. 비교 기간에 `.kr` 조회 실패율이 높으면 그때 WHOIS 를 추가한다.
+  - **서비스를 판매할 예정이므로 상업적 사용이 확인된 데이터 출처만 쓴다.** 2026-09-29 확인 결과:
+    - Google Safe Browsing: 비상업 전용(상업용은 유료 Web Risk API) → 사용하지 않는다.
+    - OpenPhish Community 피드: 상업적 사용 불가 → `prohibited` 로 기록하고 받지 않는다.
+    - Tranco 기본 목록: 비상업(CC BY-NC) 출처(Cloudflare Radar)가 섞여 있다 → 해당 출처를 뺀 사용자 정의 목록만 쓴다.
+    - 위협 피드 1순위 후보는 공공데이터포털의 KISA 피싱사이트 URL. 공공누리 유형을 확인하기 전까지는 `unverified` 로 둔다.
+  - 그래서 데이터 출처를 `sources.yaml` 에 라이선스 상태와 함께 선언하고, 동기화 스크립트는 `allowed` 인 출처만 받는다 (Task 4).
+    **라이선스가 확인된 위협 피드가 생기기 전까지는 필수 특징 `threat_feed` 를 확인할 수 없어 모든 점수가 `null` 이다.** 코드는 완성하되 운영 데이터는 아래 선행 작업이 끝나야 채워진다.
+  - 화이트리스트 항목에 확인 출처·날짜를 필수로 두고, 공유 도메인(단축 URL·공용 플랫폼)이 들어가면 서버 기동을 막는다 (Task 2, Task 6).
+
+## 선행 작업 (사람이 하는 일, 코드 작업과 병렬)
+
+코드 작업을 막지는 않지만, 끝나야 점수가 실제로 계산된다.
+
+- [ ] **라이선스 확인 — 위협 피드:** 공공데이터포털 KISA 피싱사이트 URL 데이터의 공공누리 유형을 확인한다. 상업적 이용이 허용되면 `backend/src/server/scanner/data/sources.yaml` 의 `kisa_phishing_urls` 항목에 파일 URL·URL 열 이름을 채우고 `commercial_use: allowed` 로 바꾼다. 허용되지 않으면 유료 피드(예: OpenPhish Premium) 구매를 팀에서 결정한다.
+- [ ] **라이선스 확인 — 인기 도메인:** Tranco 에서 비상업 출처를 뺀 사용자 정의 목록을 만들고, 남은 출처들의 라이선스를 확인한 뒤 `sources.yaml` 의 `tranco_custom` 에 URL 을 채운다.
+- [ ] **라이선스 확인 — urlscan:** 판매 전에 urlscan 의 상업적 이용 조건을 확인한다. 비교 기간(판매 전)에만 쓰고 전환 후에는 끈다.
+- [ ] **화이트리스트 수집:** 택배사별 GitHub 이슈 5개(CJ대한통운, 우체국, 한진, 롯데, 로젠)를 만든다. 등록 도메인 단위로 3~8개씩, 총 15~40개를 예상한다. 출처는 공식 앱·홈페이지·고객센터 안내, 실제 받은 정상 배송 알림 문자의 링크. 항목 형식은 Task 2 의 `whitelist.yaml` 형식을 따른다. `naver.me`·`bit.ly`·`kakao.com` 같은 공유 도메인은 넣지 않는다 (최종 URL 대조로 처리된다).
 
 ## Global Constraints
 
 - 새 의존성 추가 금지. httpx, PyYAML, stdlib 만 쓴다.
+- 외부 데이터는 `sources.yaml` 에 `commercial_use: allowed` 로 선언된 출처만 운영에 쓴다. Google Safe Browsing·OpenPhish Community 는 쓰지 않는다.
+- 화이트리스트 도메인은 사람이 확인한 출처(`source`)와 날짜(`verified_at`)가 있어야 하고, 공유 도메인은 금지한다.
 - 의존 방향 `backend` → `ai` 만 허용. `ai/` 는 수정하지 않는다.
 - 점수기(`scorer.py`)와 페이지 특징 추출(`page_features.py`)은 네트워크·LLM·이미지 모델을 쓰지 않는다.
 - `score` 는 `int` 이고 범위는 [-100, 100], 또는 `None`.
@@ -50,9 +70,11 @@
 | `backend/src/server/scanner/scorer.py` | 가중치 로딩·검증, 특징 → 점수 (순수 함수) |
 | `backend/src/server/scanner/weights/v1.yaml` | 초기 가중치와 필수 특징 |
 | `backend/src/server/scanner/url_features.py` | 호스트 정규화, URL 문자열 특징, 로컬 목록, RDAP 도메인 나이, URL 특징 수집 |
-| `backend/src/server/scanner/data/url_lists.yaml` | 남용 TLD·단축 URL 도메인 목록 |
+| `backend/src/server/scanner/data/url_lists.yaml` | 남용 TLD·단축 URL·공유 플랫폼 도메인 목록 |
 | `backend/src/server/scanner/data/reported_domains.txt` | 자체 신고 도메인 (초기 빈 목록) |
-| `backend/src/server/scanner/sync_lists.py` | 위협 피드·Tranco 목록 내려받기 CLI |
+| `backend/src/server/scanner/data/sources.yaml` | 외부 데이터 출처와 라이선스 상태 |
+| `backend/src/server/scanner/sync_lists.py` | `allowed` 출처만 내려받는 동기화 CLI |
+| `backend/src/server/data/whitelist.yaml` (수정) | 도메인 항목 형식(출처·확인 날짜) 주석 |
 | `backend/src/server/scanner/page_features.py` | `CollectedPage` 계약, 페이지 특징 추출 |
 | `backend/src/server/scanner/service.py` | 수집기 타입, 스캔 실행(`scan_url`), 기본 컨텍스트 |
 | `backend/src/server/scanner/compare.py` | 비교 기록 저장소, 라벨, 요약, 스캔 태스크 기록 |
@@ -261,6 +283,7 @@ git commit -m "feat: 자체 URL 점수기와 가중치 v1"
 **Files:**
 - Create: `backend/src/server/scanner/url_features.py`
 - Create: `backend/src/server/scanner/data/url_lists.yaml`
+- Modify: `backend/src/server/data/whitelist.yaml:1-3` (상단 주석)
 - Test: `backend/tests/scanner/test_url_features.py`
 
 **Interfaces:**
@@ -270,9 +293,10 @@ git commit -m "feat: 자체 URL 점수기와 가중치 v1"
   - `hostname(url: str) -> str` — 소문자, 포트·끝 점 제거, 없으면 `""`
   - `registrable_domain(host: str) -> str` — IP 는 그대로
   - `is_ip(host: str) -> bool`
-  - `@dataclass(frozen=True) class UrlLists: abused_tlds: frozenset[str]; shorteners: frozenset[str]`
+  - `@dataclass(frozen=True) class UrlLists: abused_tlds: frozenset[str]; shorteners: frozenset[str]; shared_hosts: frozenset[str] = frozenset()`
   - `load_url_lists(path: Path = DATA_DIR / "url_lists.yaml") -> UrlLists`
-  - `load_brands(path: Path = WHITELIST_PATH) -> dict[str, frozenset[str]]` — 표시 이름 → 공식 도메인
+  - `load_brands(path: Path = WHITELIST_PATH) -> dict[str, frozenset[str]]` — 표시 이름 → 공식 도메인. 각 도메인 항목은 `{domain, source, verified_at}` 이고 셋 중 하나라도 비면 `ValueError`
+  - `validate_whitelist(brands: dict[str, frozenset[str]], lists: UrlLists) -> None` — 공유 도메인(단축 URL·공용 플랫폼)이 있으면 `ValueError`
   - `parse_url_features(url: str, lists: UrlLists, official_domains: frozenset[str]) -> dict[str, bool]` — 키 `ip_or_port`, `homoglyph`, `abused_tld`, `url_shortener`
 
 - [ ] **Step 1: 실패하는 테스트 작성**
@@ -280,8 +304,11 @@ git commit -m "feat: 자체 URL 점수기와 가중치 v1"
 `backend/tests/scanner/test_url_features.py`:
 
 ```python
+import pytest
+
 from backend.src.server.scanner.url_features import (
     UrlLists, hostname, is_ip, load_brands, load_url_lists, parse_url_features, registrable_domain,
+    validate_whitelist,
 )
 
 LISTS = UrlLists(abused_tlds=frozenset({"xyz"}), shorteners=frozenset({"bit.ly"}))
@@ -333,7 +360,39 @@ def test_abused_tld_and_shortener():
 def test_shipped_lists_and_brands_load():
     lists = load_url_lists()
     assert "xyz" in lists.abused_tlds and "bit.ly" in lists.shorteners
-    assert "CJ대한통운" in load_brands()
+    assert "naver.me" in lists.shared_hosts
+    brands = load_brands()
+    assert "CJ대한통운" in brands
+    validate_whitelist(brands, lists)
+
+
+def write_whitelist(tmp_path, domains_yaml: str):
+    path = tmp_path / "whitelist.yaml"
+    path.write_text("test:\n  display_name: 테스트택배\n  domains:\n" + domains_yaml, encoding="utf-8")
+    return path
+
+
+def test_load_brands_reads_domain_entries(tmp_path):
+    path = write_whitelist(tmp_path, (
+        "    - domain: Test-Parcel.com\n"
+        "      source: 공식 홈페이지 고객센터 안내\n"
+        "      verified_at: 2026-09-29\n"
+    ))
+    assert load_brands(path) == {"테스트택배": frozenset({"test-parcel.com"})}
+
+
+def test_load_brands_requires_source_and_date(tmp_path):
+    path = write_whitelist(tmp_path, "    - domain: test-parcel.com\n")
+    with pytest.raises(ValueError, match="source"):
+        load_brands(path)
+
+
+def test_validate_whitelist_rejects_shared_hosts():
+    lists = UrlLists(frozenset(), frozenset({"bit.ly"}), frozenset({"naver.me"}))
+    with pytest.raises(ValueError, match="naver.me"):
+        validate_whitelist({"테스트택배": frozenset({"naver.me"})}, lists)
+    with pytest.raises(ValueError, match="bit.ly"):
+        validate_whitelist({"테스트택배": frozenset({"bit.ly"})}, lists)
 ```
 
 - [ ] **Step 2: 실패 확인**
@@ -348,7 +407,24 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'backend.src.server.sca
 ```yaml
 # 초기 목록. 출처·갱신 주기는 스펙 §7 열린 질문 — 비교 기간에 적중률을 보고 조정한다.
 abused_tlds: [xyz, top, shop, click, icu, cyou, buzz, rest, vip, live, sbs, cfd]
-shorteners: [bit.ly, han.gl, me2.do, vo.la, t.co, tinyurl.com, is.gd, url.kr, buly.kr, c11.kr]
+shorteners: [bit.ly, han.gl, me2.do, vo.la, t.co, tinyurl.com, is.gd, url.kr, buly.kr, c11.kr, naver.me]
+# 누구나 페이지·링크를 만들 수 있는 공용 플랫폼. 화이트리스트에 넣으면 공격자 페이지도 "공식"이 된다.
+shared_hosts: [naver.me, kakao.com, naver.com, google.com, forms.gle, notion.site, github.io,
+               blogspot.com, tistory.com, wixsite.com, netlify.app, vercel.app, web.app, pages.dev]
+```
+
+`backend/src/server/data/whitelist.yaml` 상단 주석 3줄을 다음으로 바꾼다 (택배사 항목과 `domains: []` 는 그대로 둔다):
+
+```yaml
+# 공식 택배사 도메인. 판정의 근거이므로 backend 소유입니다.
+# 알림 발송용 별도 도메인·단축 도메인까지 모아야 합니다. 수집은 택배사별 이슈로 쪼개세요.
+# 등록 도메인 단위로 적습니다 (www.cjlogistics.com → cjlogistics.com). 서브도메인은 자동 포함됩니다.
+# 공유 도메인(naver.me, bit.ly, kakao.com 등)은 금지 — 서버가 기동하지 않습니다. 최종 URL 대조로 처리됩니다.
+# 항목 형식:
+#   domains:
+#     - domain: example-parcel.com
+#       source: 공식 앱 고객센터 안내 화면     # 사람이 확인한 출처
+#       verified_at: 2026-09-29               # 확인 날짜
 ```
 
 `backend/src/server/scanner/url_features.py`:
@@ -376,19 +452,39 @@ _TWO_LEVEL_SUFFIXES = frozenset({
 class UrlLists:
     abused_tlds: frozenset[str]
     shorteners: frozenset[str]
+    shared_hosts: frozenset[str] = frozenset()
 
 
 def load_url_lists(path: Path = DATA_DIR / "url_lists.yaml") -> UrlLists:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return UrlLists(frozenset(data["abused_tlds"]), frozenset(data["shorteners"]))
+    return UrlLists(
+        frozenset(data["abused_tlds"]), frozenset(data["shorteners"]),
+        frozenset(data.get("shared_hosts") or []),
+    )
+
+
+def _whitelist_domain(entry: object) -> str:
+    """사람이 확인한 근거가 없는 도메인은 공식으로 인정하지 않는다."""
+    fields = entry if isinstance(entry, dict) else {}
+    for key in ("domain", "source", "verified_at"):
+        if not str(fields.get(key) or "").strip():
+            raise ValueError(f"whitelist entry needs {key}: {entry!r}")
+    return str(fields["domain"]).strip().lower()
 
 
 def load_brands(path: Path = WHITELIST_PATH) -> dict[str, frozenset[str]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return {
-        entry["display_name"]: frozenset(domain.lower() for domain in entry.get("domains") or [])
+        entry["display_name"]: frozenset(_whitelist_domain(item) for item in entry.get("domains") or [])
         for entry in data.values()
     }
+
+
+def validate_whitelist(brands: dict[str, frozenset[str]], lists: UrlLists) -> None:
+    shared = lists.shorteners | lists.shared_hosts
+    banned = sorted(domain for domains in brands.values() for domain in domains if domain in shared)
+    if banned:
+        raise ValueError(f"shared domains cannot be official: {banned}")
 
 
 def hostname(url: str) -> str:
@@ -434,12 +530,12 @@ def parse_url_features(url: str, lists: UrlLists, official_domains: frozenset[st
 - [ ] **Step 4: 통과 확인**
 
 Run: `python -m pytest backend/tests/scanner/test_url_features.py -q`
-Expected: 7 passed
+Expected: 10 passed
 
 - [ ] **Step 5: 커밋**
 
 ```bash
-git add backend/src/server/scanner/url_features.py backend/src/server/scanner/data/url_lists.yaml backend/tests/scanner/test_url_features.py
+git add backend/src/server/scanner/url_features.py backend/src/server/scanner/data/url_lists.yaml backend/src/server/data/whitelist.yaml backend/tests/scanner/test_url_features.py
 git commit -m "feat: 점수기 URL 문자열 특징"
 ```
 
@@ -676,7 +772,7 @@ async def collect_url_features(
 - [ ] **Step 4: 통과 확인**
 
 Run: `python -m pytest backend/tests/scanner/test_url_lookup.py backend/tests/scanner/test_url_features.py -q`
-Expected: 16 passed
+Expected: 19 passed
 
 - [ ] **Step 5: 커밋**
 
@@ -687,9 +783,10 @@ git commit -m "feat: 점수기 RDAP 도메인 나이와 로컬 목록 조회"
 
 ---
 
-### Task 4: 위협 피드·Tranco 목록 동기화 CLI
+### Task 4: 라이선스 검사를 거치는 목록 동기화 CLI
 
 **Files:**
+- Create: `backend/src/server/scanner/data/sources.yaml`
 - Create: `backend/src/server/scanner/sync_lists.py`
 - Modify: `.gitignore` (끝에 추가)
 - Test: `backend/tests/scanner/test_sync_lists.py`
@@ -697,9 +794,16 @@ git commit -m "feat: 점수기 RDAP 도메인 나이와 로컬 목록 조회"
 **Interfaces:**
 - Consumes: Task 2 의 `hostname`, `DATA_DIR`
 - Produces:
+  - `@dataclass(frozen=True) class Source: name: str; url: str; format: str; commercial_use: str; column: str = ""` — `format` 은 `lines` | `csv` | `tranco_zip`, `commercial_use` 는 `allowed` | `unverified` | `prohibited`
+  - `load_sources(path: Path = DATA_DIR / "sources.yaml") -> tuple[list[Source], list[Source]]` — (위협 피드 출처들, 인기 도메인 출처들)
+  - `usable(source: Source, *, include_unverified: bool) -> bool`
+  - `decode_text(data: bytes) -> str` — UTF-8(BOM 포함) 실패 시 CP949
   - `feed_domains(text: str) -> list[str]` — URL 또는 도메인 줄 → 정렬된 중복 없는 호스트
+  - `csv_domains(text: str, column: str) -> list[str]`
   - `tranco_domains(zip_bytes: bytes, limit: int = 100_000) -> list[str]`
-  - `main() -> None` — `python -m backend.src.server.scanner.sync_lists` 로 실행
+  - `main(argv: list[str] | None = None) -> None` — `python -m backend.src.server.scanner.sync_lists [--include-unverified]`
+
+`--include-unverified` 는 라이선스 확인 전 로컬 실험용이다. `prohibited` 출처는 어떤 옵션으로도 받지 않는다.
 
 - [ ] **Step 1: 실패하는 테스트 작성**
 
@@ -709,7 +813,9 @@ git commit -m "feat: 점수기 RDAP 도메인 나이와 로컬 목록 조회"
 import io
 import zipfile
 
-from backend.src.server.scanner.sync_lists import feed_domains, tranco_domains
+from backend.src.server.scanner.sync_lists import (
+    Source, csv_domains, decode_text, feed_domains, load_sources, tranco_domains, usable,
+)
 
 
 def test_feed_domains_accepts_urls_and_bare_domains():
@@ -717,11 +823,40 @@ def test_feed_domains_accepts_urls_and_bare_domains():
     assert feed_domains(text) == ["login.evil.xyz", "plain.example.com"]
 
 
+def test_csv_domains_reads_named_column():
+    text = "번호,홈페이지주소,등록일\n1,https://evil.xyz/a,2026-09-01\n2,,2026-09-02\n3,bad.example.com,2026-09-03\n"
+    assert csv_domains(text, "홈페이지주소") == ["bad.example.com", "evil.xyz"]
+
+
+def test_decode_text_handles_utf8_bom_and_cp949():
+    assert decode_text("﻿홈페이지주소".encode("utf-8")) == "홈페이지주소"
+    assert decode_text("홈페이지주소".encode("cp949")) == "홈페이지주소"
+
+
 def test_tranco_domains_reads_rank_csv_in_order():
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr("top-1m.csv", "1,google.com\n2,naver.com\n3,daum.net\n")
     assert tranco_domains(buffer.getvalue(), limit=2) == ["google.com", "naver.com"]
+
+
+def test_usable_follows_license_state():
+    def source(state: str, url: str = "https://example.com/feed") -> Source:
+        return Source("s", url, "lines", state)
+
+    assert usable(source("allowed"), include_unverified=False)
+    assert not usable(source("unverified"), include_unverified=False)
+    assert usable(source("unverified"), include_unverified=True)
+    assert not usable(source("prohibited"), include_unverified=True)
+    assert not usable(source("allowed", url=""), include_unverified=True)
+
+
+def test_shipped_sources_block_non_commercial_feeds():
+    threat, popular = load_sources()
+    states = {s.name: s.commercial_use for s in threat + popular}
+    assert states["openphish_community"] == "prohibited"
+    assert states["kisa_phishing_urls"] == "unverified"
+    assert states["tranco_custom"] == "unverified"
 ```
 
 - [ ] **Step 2: 실패 확인**
@@ -731,39 +866,101 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'backend.src.server.sca
 
 - [ ] **Step 3: 구현**
 
+`backend/src/server/scanner/data/sources.yaml`:
+
+```yaml
+# 외부 데이터 출처와 라이선스 상태. 서비스를 판매할 예정이므로 상업적 사용이 확인된 출처만 운영에 쓴다.
+# commercial_use: allowed(상업적 사용 확인) | unverified(확인 전) | prohibited(금지 확인)
+# sync_lists 는 allowed 만 받는다. --include-unverified 는 로컬 실험용. prohibited 는 절대 받지 않는다.
+# Google Safe Browsing 은 비상업 전용이라 목록에 두지 않는다 (상업용은 유료 Web Risk API).
+threat_feeds:
+  - name: kisa_phishing_urls
+    url: ""        # 공공데이터포털 KISA 피싱사이트 URL 파일 주소. 공공누리 유형 확인 후 채운다
+    format: csv
+    column: ""     # URL 이 들어 있는 열 이름. 파일을 받아 확인 후 채운다
+    commercial_use: unverified
+  - name: openphish_community
+    url: https://openphish.com/feed.txt
+    format: lines
+    commercial_use: prohibited   # Community 피드는 상업적 사용 불가 (2026-09-29 공식 페이지 확인)
+popular_domains:
+  - name: tranco_custom
+    url: ""        # 비상업 출처(Cloudflare Radar, CC BY-NC)를 뺀 Tranco 사용자 정의 목록 zip 주소
+    format: tranco_zip
+    commercial_use: unverified
+```
+
 `backend/src/server/scanner/sync_lists.py`:
 
 ```python
-"""위협 피드·Tranco 목록을 scanner/data 에 내려받는다.
+"""sources.yaml 에서 라이선스가 허용된 출처만 내려받아 scanner/data 에 쓴다.
 
-실행: python -m backend.src.server.scanner.sync_lists
+실행: python -m backend.src.server.scanner.sync_lists [--include-unverified]
 ponytail: 주기 실행은 OS 스케줄러(cron·작업 스케줄러)로 1시간마다. 서버는 기동 시에만 목록을 읽으므로
 동기화 후 재시작해야 반영된다. 재시작 없이 반영해야 하면 파일 mtime 기반 재로딩을 추가.
 """
 
+import argparse
+import csv
 import io
-import os
 import zipfile
+from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
+import yaml
 
 from backend.src.server.scanner.url_features import DATA_DIR, hostname
 
-# 사용 조건 확인 필요 (스펙 §7). 다른 피드를 쓰면 환경 변수로 바꾼다.
-THREAT_FEED_URL = os.getenv("THREAT_FEED_URL", "https://openphish.com/feed.txt")
-TRANCO_URL = os.getenv("TRANCO_URL", "https://tranco-list.eu/top-1m.csv.zip")
+
+@dataclass(frozen=True)
+class Source:
+    name: str
+    url: str
+    format: str
+    commercial_use: str
+    column: str = ""
+
+
+def load_sources(path: Path = DATA_DIR / "sources.yaml") -> tuple[list[Source], list[Source]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+    def parse(items: list[dict] | None) -> list[Source]:
+        return [
+            Source(item["name"], item.get("url") or "", item["format"], item["commercial_use"],
+                   item.get("column") or "")
+            for item in items or []
+        ]
+
+    return parse(data.get("threat_feeds")), parse(data.get("popular_domains"))
+
+
+def usable(source: Source, *, include_unverified: bool) -> bool:
+    if not source.url or source.commercial_use == "prohibited":
+        return False
+    return source.commercial_use == "allowed" or (include_unverified and source.commercial_use == "unverified")
+
+
+def decode_text(data: bytes) -> str:
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp949")  # 공공데이터포털 CSV 는 CP949 인 경우가 많다
+
+
+def _host(value: str) -> str:
+    value = value.strip()
+    return hostname(value if "://" in value else f"http://{value}") if value else ""
 
 
 def feed_domains(text: str) -> list[str]:
-    hosts = set()
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        host = hostname(line if "://" in line else f"http://{line}")
-        if host:
-            hosts.add(host)
-    return sorted(hosts)
+    lines = (line for line in text.splitlines() if not line.strip().startswith("#"))
+    return sorted({host for line in lines if (host := _host(line))})
+
+
+def csv_domains(text: str, column: str) -> list[str]:
+    rows = csv.DictReader(io.StringIO(text))
+    return sorted({host for row in rows if (host := _host(row.get(column) or ""))})
 
 
 def tranco_domains(zip_bytes: bytes, limit: int = 100_000) -> list[str]:
@@ -772,19 +969,35 @@ def tranco_domains(zip_bytes: bytes, limit: int = 100_000) -> list[str]:
     return [row.split(",", 1)[1].strip().lower() for row in rows[:limit] if "," in row]
 
 
-def _write(name: str, domains: list[str]) -> None:
-    (DATA_DIR / name).write_text("\n".join(domains) + "\n", encoding="utf-8")
-    print(f"[SYNC] {name}: {len(domains)} domains")
+def _domains(client: httpx.Client, source: Source) -> list[str]:
+    response = client.get(source.url)
+    response.raise_for_status()
+    if source.format == "tranco_zip":
+        return tranco_domains(response.content)
+    text = decode_text(response.content)
+    return csv_domains(text, source.column) if source.format == "csv" else feed_domains(text)
 
 
-def main() -> None:
+def _sync(client: httpx.Client, sources: list[Source], filename: str, include_unverified: bool) -> None:
+    chosen = [s for s in sources if usable(s, include_unverified=include_unverified)]
+    if not chosen:
+        # 파일을 쓰지 않는다. 위협 피드가 없으면 threat_feed 가 미확인이 되어 점수가 null 이다.
+        print(f"[SYNC] {filename}: 사용 가능한 출처 없음 (sources.yaml 의 commercial_use·url 확인)")
+        return
+    domains = sorted({d for source in chosen for d in _domains(client, source)})
+    (DATA_DIR / filename).write_text("\n".join(domains) + "\n", encoding="utf-8")
+    print(f"[SYNC] {filename}: {len(domains)} domains from {[s.name for s in chosen]}")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--include-unverified", action="store_true",
+                        help="라이선스 확인 전 출처도 받는다 (로컬 실험용, 운영 금지)")
+    args = parser.parse_args(argv)
+    threat, popular = load_sources()
     with httpx.Client(timeout=60.0, follow_redirects=True) as client:
-        feed = client.get(THREAT_FEED_URL)
-        feed.raise_for_status()
-        _write("threat_feed.txt", feed_domains(feed.text))
-        tranco = client.get(TRANCO_URL)
-        tranco.raise_for_status()
-        _write("tranco_top100k.txt", tranco_domains(tranco.content))
+        _sync(client, threat, "threat_feed.txt", args.include_unverified)
+        _sync(client, popular, "tranco_top100k.txt", args.include_unverified)
 
 
 if __name__ == "__main__":
@@ -803,13 +1016,13 @@ backend/src/server/scanner/data/tranco_top100k.txt
 - [ ] **Step 4: 통과 확인**
 
 Run: `python -m pytest backend/tests/scanner/test_sync_lists.py -q`
-Expected: 2 passed
+Expected: 6 passed
 
 - [ ] **Step 5: 커밋**
 
 ```bash
-git add backend/src/server/scanner/sync_lists.py .gitignore backend/tests/scanner/test_sync_lists.py
-git commit -m "feat: 점수기 위협 피드·Tranco 목록 동기화"
+git add backend/src/server/scanner/data/sources.yaml backend/src/server/scanner/sync_lists.py .gitignore backend/tests/scanner/test_sync_lists.py
+git commit -m "feat: 라이선스 검사를 거치는 점수기 목록 동기화"
 ```
 
 ---
@@ -1011,7 +1224,7 @@ git commit -m "feat: 점수기 페이지 특징 추출"
 - Test: `backend/tests/scanner/test_service.py`
 
 **Interfaces:**
-- Consumes: Task 1 `Weights`, `score`, `load_weights`; Task 2·3 `UrlLists`, `LocalSets`, `URL_FEATURE_CODES`, `collect_url_features`, `load_url_lists`, `load_local_sets`, `load_brands`; Task 5 `CollectedPage`, `extract_page_features`
+- Consumes: Task 1 `Weights`, `score`, `load_weights`; Task 2·3 `UrlLists`, `LocalSets`, `URL_FEATURE_CODES`, `collect_url_features`, `load_url_lists`, `load_local_sets`, `load_brands`, `validate_whitelist`; Task 5 `CollectedPage`, `extract_page_features`
 - Produces:
   - `PageCollector = Callable[[str], Awaitable[CollectedPage | None]]`
   - `async collector_not_connected(url: str) -> None`
@@ -1019,7 +1232,7 @@ git commit -m "feat: 점수기 페이지 특징 추출"
   - `@dataclass(frozen=True) class ScanContext: lists: UrlLists; sets: LocalSets; brands: dict[str, frozenset[str]]; weights: Weights; collector: PageCollector`
   - `@dataclass(frozen=True) class ScanOutcome: url: str; score: int | None; scanned_at: str; weights_version: str; features: dict[str, bool | None]; hits: dict[str, int]; null_reason: str | None; timings: dict[str, float]` — `timings` 키 `inputs`, `score`, `total` (초)
   - `async scan_url(url: str, ctx: ScanContext, client: httpx.AsyncClient, *, now: datetime | None = None) -> ScanOutcome`
-  - `load_default_context(collector: PageCollector = collector_not_connected) -> ScanContext` — 가중치 오류면 `ValueError`
+  - `load_default_context(collector: PageCollector = collector_not_connected) -> ScanContext` — 가중치 오류이거나 화이트리스트에 공유 도메인·근거 없는 항목이 있으면 `ValueError`
 
 - [ ] **Step 1: 실패하는 테스트 작성**
 
@@ -1135,7 +1348,7 @@ from backend.src.server.scanner.page_features import CollectedPage, extract_page
 from backend.src.server.scanner.scorer import Weights, load_weights, score
 from backend.src.server.scanner.url_features import (
     URL_FEATURE_CODES, LocalSets, UrlLists, collect_url_features, load_brands, load_local_sets,
-    load_url_lists,
+    load_url_lists, validate_whitelist,
 )
 
 PageCollector = Callable[[str], Awaitable[CollectedPage | None]]
@@ -1170,7 +1383,9 @@ class ScanOutcome:
 
 
 def load_default_context(collector: PageCollector = collector_not_connected) -> ScanContext:
-    return ScanContext(load_url_lists(), load_local_sets(), load_brands(), load_weights(), collector)
+    lists, brands = load_url_lists(), load_brands()
+    validate_whitelist(brands, lists)  # 공유 도메인이 공식으로 등록되면 기동을 막는다
+    return ScanContext(lists, load_local_sets(), brands, load_weights(), collector)
 
 
 async def _within(awaitable: Awaitable, seconds: float):
@@ -1570,7 +1785,7 @@ from backend.src.server.scanner.service import (
 # 자체 URL 점수기를 urlscan 과 병행해 비교 기록을 남길지 (스펙 §3).
 SCAN_COMPARE = os.getenv("SCAN_COMPARE", "1") == "1"
 
-# 기동 시 가중치·목록을 읽어 검증한다. 가중치 파일이 잘못되면 여기서 기동이 실패한다.
+# 기동 시 가중치·목록·화이트리스트를 읽어 검증한다. 잘못되면 여기서 기동이 실패한다.
 SCAN_CONTEXT = load_default_context()
 
 
@@ -1660,7 +1875,7 @@ async def label_scan_record(record_id: str, request: Request):
 - [ ] **Step 4: 통과 확인**
 
 Run: `python -m pytest backend/tests/scanner -q`
-Expected: 모든 scanner 테스트 통과 (Task 1~8 합계 51 passed)
+Expected: 모든 scanner 테스트 통과 (Task 1~8 합계 58 passed)
 
 - [ ] **Step 5: 커밋**
 
@@ -1673,6 +1888,8 @@ git commit -m "feat: 자체 URL 점수기를 urlscan 과 병행 실행하고 비
 
 ## 실행 후 수동 확인
 
-1. `python -m backend.src.server.scanner.sync_lists` 로 위협 피드·Tranco 를 받는다. 받기 전에는 `threat_feed` 가 미확인이라 모든 점수가 `null` 이다.
-2. 서버를 띄워 실제 URL 로 한 번 분석한다. 로그에 `[OWN SCAN] ... score=None null_reason=required_unknown:credential_form` 이 찍히는지 본다. 격리 서버 연결 전에는 이것이 정상이다.
+1. `python -m backend.src.server.scanner.sync_lists` 를 실행한다. 선행 작업의 라이선스 확인 전이면 "사용 가능한 출처 없음" 이 출력되고 파일이 생기지 않는 것이 정상이다. 이 상태에서는 `threat_feed` 가 미확인이라 모든 점수가 `null` 이다.
+   라이선스 확인 전에 로컬에서 동작만 보려면 `--include-unverified` 를 쓴다 (운영 금지).
+2. 서버를 띄워 실제 URL 로 한 번 분석한다. 로그에 `[OWN SCAN] ... score=None null_reason=required_unknown:...` 이 찍히는지 본다. 격리 서버 연결·위협 피드 확보 전에는 이것이 정상이다.
 3. `GET /api/scan-comparison` 에서 `records` 가 늘어나는지 확인한다.
+4. `whitelist.yaml` 에 `bit.ly` 같은 공유 도메인을 임시로 넣고 서버를 띄우면 기동이 실패하는지 확인한 뒤 되돌린다.
