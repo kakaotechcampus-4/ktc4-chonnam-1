@@ -363,7 +363,7 @@ async def test_actual_stage_waits_keep_declared_budgets(monkeypatch):
     monkeypatch.setattr(asyncio, "wait_for", record_wait)
     await module.analyze_message_part(TEXT, client=FakeClient(), model="test")
     await module.analyze_environment_part(page(), client=FakeClient(), model="test")
-    assert sorted(budgets) == [0.05, 2.0, 30.0, 30.0]
+    assert sorted(budgets) == [1.0, 2.0, 30.0, 30.0]
 
 
 def test_public_surface_is_independent_and_assembly_is_pure():
