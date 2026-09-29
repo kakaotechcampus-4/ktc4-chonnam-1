@@ -9,21 +9,32 @@ import ai.pipeline.analysis as analysis
 import ai.pipeline.finalize as finalizer
 import ai.llm.page as page_analysis
 from ai.types import (
-    AnalysisResponse, Brand, EnvDoubt, EnvironmentDetails, EnvironmentPart,
-    FailureCode, IsolatedPage, MessageDetails, MessageDoubt, MessagePart,
-    PageProposal, Topic, UrlAnalysis,
+    AnalysisResponse, AnswerState, Brand, DomainMatch, EnvDoubt, EnvironmentDetails,
+    EnvironmentPart, FailureCode, IsolatedPage, MessageDetails, MessageDoubt,
+    MessagePart, PageProposal, Reason, Topic, UrlAnalysis,
 )
 
 
 def url(official=False):
-    return UrlAnalysis(final_url="https://example.com/a",
-                       domain="example.com", official=official)
+    return UrlAnalysis(final_url="https://example.com/a", domain="example.com",
+        official=DomainMatch.OFFICIAL if official else DomainMatch.NOT_REGISTERED)
 
 
-def message(answer=True):
+def message():
     return MessagePart(brand=Brand.CJ_LOGISTICS, category=Topic.PARCEL,
-        answer=answer, details=MessageDetails(
-            doubt=MessageDoubt.PARCEL_LOOKUP, reason="문자에서 배송 조회를 요청했습니다."))
+        answer=AnswerState.NO_RISK_FOUND, details=MessageDetails(
+            doubts=[{"value": MessageDoubt.PARCEL_LOOKUP, "evidence": "배송 조회"}],
+            reason=Reason(text="문자에서 배송 조회를 요청했습니다.")))
+
+
+def env_part(doubts=(), text="분석 완료"):
+    return EnvironmentPart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN,
+        answer=AnswerState.NO_RISK_FOUND, details=EnvironmentDetails(
+            doubts=list(doubts), reason=Reason(text=text)))
+
+
+def doubt_values(part):
+    return [item.value for item in part.details.doubts]
 
 
 def page():
@@ -44,8 +55,7 @@ def no_new_client_or_message_analysis(monkeypatch):
 @pytest.mark.parametrize("official", [False, True])
 async def test_finalize_preserves_supplied_parts_for_both_url_states(official, monkeypatch):
     source_message = message()
-    env = EnvironmentPart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN,
-        answer=True, details=EnvironmentDetails(doubt=EnvDoubt.NONE, reason="분석 완료"))
+    env = env_part()
     analyze = AsyncMock(return_value=env)
     monkeypatch.setattr(finalizer, "analyze_environment_part", analyze)
     source_page = page()
@@ -60,18 +70,17 @@ async def test_finalize_preserves_supplied_parts_for_both_url_states(official, m
 async def test_official_url_only_is_failure():
     response = await public.finalize_analysis(url(True))
     assert response.result is False
-    assert response.message.answer is None
-    assert response.env.answer is None
-    assert response.message.details.reason
-    assert response.env.details.reason
+    assert response.message.answer is AnswerState.NOT_RUN
+    assert response.env.answer is AnswerState.NOT_RUN
+    assert response.message.details.reason.failures == [FailureCode.MISSING_RESULT]
+    assert response.env.details.reason.failures == [FailureCode.MISSING_RESULT]
 
 
 @pytest.mark.asyncio
 async def test_false_forwards_settings_once_and_preserves_parts(monkeypatch):
     source_page, source_message, client = page(), message(), object()
-    env = EnvironmentPart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN,
-        answer=True, details=EnvironmentDetails(doubt=EnvDoubt.LOGIN_FORM,
-        reason="전달된 HTML에서 로그인 입력폼을 확인했습니다."))
+    env = env_part([{"value": EnvDoubt.LOGIN_FORM, "evidence": "비밀번호 입력 필드"}],
+        "전달된 HTML에서 로그인 입력폼을 확인했습니다.")
     analyze = AsyncMock(return_value=env)
     monkeypatch.setattr(finalizer, "analyze_environment_part", analyze)
     response = await public.finalize_analysis(url(), source_message, source_page,
@@ -91,8 +100,9 @@ async def test_real_page_analysis_produces_complete_response(make_parse_client):
     response = await public.finalize_analysis(
         url(), source_message, page(), client=client, model="test")
     assert response.message == source_message
-    assert response.env.details.doubt is EnvDoubt.LOGIN_FORM
-    assert response.env.answer is True
+    assert doubt_values(response.env) == [EnvDoubt.LOGIN_FORM]
+    assert response.env.details.doubts[0].evidence == "비밀번호 입력 필드"
+    assert response.env.answer is AnswerState.NO_RISK_FOUND
     assert response.result is False
     assert AnalysisResponse.model_validate_json(response.model_dump_json()) == response
     parse.assert_awaited_once()
@@ -101,14 +111,13 @@ async def test_real_page_analysis_produces_complete_response(make_parse_client):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("source_message", [None, MessagePart()])
-async def test_missing_or_skipped_message_is_not_success(source_message):
-    response = await public.finalize_analysis(url(), source_message)
-    assert response.message.answer is None
-    assert response.message.details.doubt is None
-    assert "전달받지 못" in response.message.details.reason
-    assert response.env.answer is None
-    assert response.env.details.doubt is None
+async def test_missing_message_is_not_success():
+    response = await public.finalize_analysis(url(), None)
+    assert response.message.answer is AnswerState.NOT_RUN
+    assert response.message.details.doubts == []
+    assert "전달받지 못" in response.message.details.reason.text
+    assert response.env.answer is AnswerState.NOT_RUN
+    assert response.env.details.doubts == []
     assert response.result is False
 
 
@@ -125,17 +134,19 @@ async def test_collection_failure_keeps_message_and_partial_facts(official, fail
     response = await public.finalize_analysis(
         url(official), source_message, page() if has_page else None, failure=failure)
     assert response.message == source_message
-    assert response.env.answer is None
-    assert fragment in response.env.details.reason
+    assert response.env.details.reason.failures == [failure]
+    assert fragment in response.env.details.reason.text
     if has_page:
+        assert response.env.answer is AnswerState.PARTIAL
         assert response.env.brand is Brand.CJ_LOGISTICS
         assert response.env.category is Topic.PARCEL
-        assert response.env.details.doubt is EnvDoubt.LOGIN_FORM
-        assert "격리 환경 전달 정보" in response.env.details.reason
-        assert "HTML" in response.env.details.reason
+        assert doubt_values(response.env) == [EnvDoubt.LOGIN_FORM]
+        assert "격리 환경 전달 정보" in response.env.details.reason.text
+        assert "HTML" in response.env.details.reason.text
     else:
+        assert response.env.answer is AnswerState.FAILED
         assert response.env.brand is None
-        assert response.env.details.doubt is None
+        assert response.env.details.doubts == []
 
 
 @pytest.mark.asyncio
@@ -154,9 +165,9 @@ async def test_html_limit_preserves_message_and_sets_null(monkeypatch):
 
     assert result.result is False
     assert result.message == source_message
-    assert result.env.answer is None
-    assert result.env.details.doubt is EnvDoubt.LOGIN_FORM
-    assert result.env.details.reason
+    assert result.env.answer is AnswerState.PARTIAL
+    assert doubt_values(result.env) == [EnvDoubt.LOGIN_FORM]
+    assert result.env.details.reason.failures
 
 
 @pytest.mark.asyncio
@@ -169,8 +180,9 @@ async def test_initial_inspection_timeout_preserves_message(monkeypatch):
 
     assert result.result is False
     assert result.message == source_message
-    assert result.env.answer is None
-    assert "시간" in result.env.details.reason
+    assert result.env.answer in {AnswerState.PARTIAL, AnswerState.FAILED}
+    assert result.env.details.reason.failures == [FailureCode.TIMEOUT]
+    assert "시간" in result.env.details.reason.text
 
 
 @pytest.mark.asyncio
@@ -201,9 +213,9 @@ async def test_page_payload_limit_precedes_client_setup_and_preserves_message(
 
     assert result.result is False
     assert result.message == source_message
-    assert result.env.answer is None
-    assert result.env.details.doubt is EnvDoubt.LOGIN_FORM
-    assert "자료 크기 제한" in result.env.details.reason
+    assert result.env.answer is AnswerState.PARTIAL
+    assert doubt_values(result.env)[0] is EnvDoubt.LOGIN_FORM
+    assert "자료 크기 제한" in result.env.details.reason.text
     factory.assert_not_called()
     parse.assert_not_awaited()
 
@@ -216,9 +228,9 @@ async def test_page_sdk_failure_keeps_completed_message(error, fragment, make_pa
     response = await public.finalize_analysis(
         url(), source_message, page(), client=client, model="test")
     assert response.message == source_message
-    assert response.env.answer is None
-    assert fragment in response.env.details.reason
-    assert response.env.details.doubt is EnvDoubt.LOGIN_FORM
+    assert response.env.answer is AnswerState.PARTIAL
+    assert fragment in response.env.details.reason.text
+    assert doubt_values(response.env) == [EnvDoubt.LOGIN_FORM]
 
 
 @pytest.mark.asyncio
@@ -256,7 +268,7 @@ async def test_client_ownership_and_cancellation(official, owned, cancel, monkey
                 await task
             assert stopped.is_set()
         else:
-            assert (await task).env.answer is True
+            assert (await task).env.answer is AnswerState.NO_RISK_FOUND
     finally:
         if not task.done():
             task.cancel()

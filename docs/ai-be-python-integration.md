@@ -2,7 +2,7 @@
 
 BE는 URL을 제거한 문자 본문을 먼저 분석하고, URL 분석 결과와 격리 수집 자료를 준비한 뒤 **`await finalize_analysis(...)` 한 번으로 전체 최종 결과를 받는다.** 격리 페이지 분석과 결과 조립은 AI 함수 내부에서 수행한다. 문자 분석 결과는 재사용한다.
 
-별도 AI HTTP 서버 없이 BE의 Python 코드에서 AI 패키지를 직접 호출한다. 이 문서의 세 구간은 BE가 작성할 코드 예시이며, 기존 BE 서비스에 연동이 완료됐다는 뜻은 아니다. 반환 스키마와 전체 JSON 예시는 [결과 계약](./ai-be-final-result-schema.md), 파트별 작업은 [인계 문서](./ai/Revisions-handoff.md)를 참고한다.
+별도 AI HTTP 서버 없이 BE의 Python 코드에서 AI 패키지를 직접 호출한다. 이 문서의 세 구간은 BE가 작성할 코드 예시이며, 기존 BE 서비스에 연동이 완료됐다는 뜻은 아니다. 반환 스키마와 전체 JSON 예시는 [결과 계약](./scheme.md), 파트별 작업은 [인계 문서](./ai/Revisions-handoff.md)를 참고한다.
 
 | 구간 | BE가 작성할 구문 | 반환 |
 |---|---|---|
@@ -35,7 +35,7 @@ message_result = await analyze_message_part(message_text)
 
 BE의 기존 [split_message()](../backend/src/server/url_utils.py)는 URL 목록과 URL을 제거한 본문을 분리한다. 개인정보 마스킹은 BE가 준비해야 한다. URL 분석 결과·원문 전체·페이지 HTML을 본문에 섞지 않는다. 예를 들어 URL 제거 후 본문이 `[CJ대한통운] 배송 현황을 확인하세요`이면 그 문자열을 전달한다.
 
-반환된 `message_result`는 해당 요청의 최종 호출까지 보관한다. BE에서 분류나 `answer`를 다시 계산하지 않는다. 빈 입력·분석 실패는 해당 부분의 `answer=null`과 사유로 반환된다. `answer=false`는 분석을 완료하고 검증된 의심 신호를 확인한 경우다.
+반환된 `message_result`는 해당 요청의 최종 호출까지 보관한다. BE에서 분류나 `answer`를 다시 계산하지 않는다. 빈 입력은 `answer="failed"`, 일부 분석 실패는 `answer="partial"`과 `details.reason.failures`로 반환된다. `answer="risk_found"`는 분석을 완료하고 검증된 위험 근거(`details.signals`)를 확인한 경우다. 규칙은 [결과 계약 §4](./scheme.md#4-answer-결정-규칙)를 따른다.
 
 ## 2. BE → AI: URL 분석 결과 준비
 
@@ -51,7 +51,8 @@ url_analysis = UrlAnalysis.model_validate(raw_url_result)
 {
   "final_url": "https://example.com/track",
   "domain": "example.com",
-  "official": false
+  "official": "not_registered",
+  "scan": { "score": 35, "scanned_at": "2026-09-29T10:00:30Z" }
 }
 ```
 
@@ -59,13 +60,14 @@ url_analysis = UrlAnalysis.model_validate(raw_url_result)
 |---|---|
 | `final_url` | 확인한 최종 목적지 URL. 빈 값·공백뿐인 값은 거부 |
 | `domain` | BE가 정한 도메인 표현. 빈 값·공백뿐인 값은 거부하며 AI가 호스트/오리진 표현을 자동 변환하지 않음 |
-| `official` | 점수와 임계값을 비교한 실제 boolean. 문자열 `"false"`, 숫자 `0/1`, null, 누락은 거부 |
+| `official` | 화이트리스트 대조 결과 `DomainMatch`: `official`, `brand_mismatch`, `not_registered`, `unresolved`. boolean·`no_url`·null·누락은 거부 |
+| `scan` | 선택. `score`(-100~100 또는 null), `scanned_at`(ISO 8601 또는 null). 생략하면 둘 다 null. 기록용이며 `result`에 쓰지 않음 |
 
-BE가 유효한 악성 위험도 점수에 대해 `score <= T`이면 true, `score > T`이면 false를 만든다. 사용할 score 필드 경로·임계값 T·점수 누락·조회 실패·범위 초과 처리는 BE에서 확정한다. AI는 원점수와 임계값을 받지 않는다. 이 `official`은 점수 기준 통과 여부이며 실제 공식 도메인 확인이나 화이트리스트 일치를 뜻하지 않는다.
+`official`은 BE 화이트리스트 대조 결과다. 스캐너 점수는 `scan.score`로 원본 그대로 전달하며 AI는 이를 판정에 쓰지 않는다.
 
-`bool(raw_value)`로 변환하거나 값이 없다고 false를 채우지 않는다. 잘못된 입력은 `pydantic.ValidationError`를 BE 오류 경로에서 처리한다. 유효한 URL 결과 없이 정상 분석 응답을 만들지 않는다.
+값이 없다고 `not_registered`를 채우지 않는다. 대조하지 못했으면 `unresolved`다. 잘못된 입력은 `pydantic.ValidationError`를 BE 오류 경로에서 처리한다. 유효한 URL 결과 없이 정상 분석 응답을 만들지 않는다.
 
-이 검증 구문 자체는 네트워크 전송이 아니다. 검증한 `url_analysis`를 3번 최종 호출의 `url` 인자로 AI에 전달한다. 현재 [parse_urlscan_result()](../backend/src/server/main.py)는 `url`, `title`, `brands`만 반환하므로 그 dict를 그대로 사용할 수 없다. BE 어댑터에서 위 세 필드를 준비해야 한다.
+이 검증 구문 자체는 네트워크 전송이 아니다. 검증한 `url_analysis`를 3번 최종 호출의 `url` 인자로 AI에 전달한다. 현재 [parse_urlscan_result()](../backend/src/server/main.py)는 `url`, `title`, `brands`만 반환하므로 그 dict를 그대로 사용할 수 없다. BE 어댑터에서 위 필드를 준비해야 한다.
 
 ## 3. AI → BE: 격리 분석까지 포함한 최종 결과 수신
 
@@ -89,7 +91,7 @@ payload = final_result.model_dump(mode="json")
 
 AI는 `official` 값과 무관하게 전달된 HTML을 분석하고 문자 결과와 결합해 전체 스키마를 반환한다. BE가 페이지 분석이나 조립 함수를 추가로 호출할 필요는 없다. `model_dump()`는 반환값을 JSON 호환 dict로 바꾸는 구문이며 추가 분석 호출이 아니다.
 
-수집 자료는 `{brand, category, info}`의 세 문자열이다. `info`는 HTML이며 AI는 이를 실행하거나 URL에 접속하지 않는다. 다음은 형태를 설명하는 합성 HTML 예시다.
+수집 자료는 `{brand, category, info}`의 세 문자열과 선택 필드 `collected_at`(ISO 8601)이다. `collected_at`은 `env.collected_at`으로 그대로 전달된다. `info`는 HTML이며 AI는 이를 실행하거나 URL에 접속하지 않는다. 다음은 형태를 설명하는 합성 HTML 예시다.
 
 ```json
 {
@@ -115,7 +117,7 @@ AI는 `official` 값과 무관하게 전달된 HTML을 분석하고 문자 결�
 
 ### URL-only 호출과 최종 스키마
 
-현재 BE 예제는 `official=true`이면 진행 중인 문자·수집 작업을 정리하고 다음처럼 URL만 전달한다.
+현재 BE 예제는 `official="official"`이면 진행 중인 문자·수집 작업을 정리하고 다음처럼 URL만 전달한다.
 
 ```python
 from ai.pipeline import finalize_analysis
@@ -124,18 +126,18 @@ final_result = await finalize_analysis(url=url_analysis)
 payload = final_result.model_dump(mode="json")
 ```
 
-AI 계약에서 이 호출은 성공 조기 반환이 아니다. 문자와 페이지가 모두 누락된 미완료 응답이므로 `result=false`, 두 `answer=null`, 비어 있지 않은 누락 이유를 반환한다. `result=true`가 필요하면 `official=true`여도 확보한 문자 결과와 페이지 자료를 전달해야 한다. 현재 BE의 공식 분기 변경은 후속 연동 작업이며, 아래 예제는 기존 태스크 취소 방식을 보여 주기 위해 URL-only 분기를 유지한다.
+AI 계약에서 이 호출은 성공 조기 반환이 아니다. 문자와 페이지가 모두 누락된 미완료 응답이므로 `result=false`, 두 `answer="not_run"`, `failures=["missing_result"]`와 누락 이유를 반환한다. `result=true`가 필요하면 `official="official"`이어도 확보한 문자 결과와 페이지 자료를 전달해야 한다. 현재 BE의 공식 분기 변경은 후속 연동 작업이며, 아래 예제는 기존 태스크 취소 방식을 보여 주기 위해 URL-only 분기를 유지한다.
 
 | 반환 필드 | 내용 |
 |---|---|
-| `url` | 전달한 final_url/domain/official |
+| `url` | 전달한 final_url/domain/official/scan |
 | `message` | 먼저 분석한 문자 결과 |
 | `env` | 최종 함수 내부에서 분석한 격리 자료 결과 |
-| `result` | `url.official`, `message.answer`, `env.answer`가 모두 true일 때만 true |
+| `result` | `url.official == "official"`이고 `message.answer`, `env.answer`가 모두 `"no_risk_found"`일 때만 true. `url.scan`은 넣지 않음 |
 
-완료된 part는 다섯 말단 값이 모두 채워진다. 실패·미제공 부분은 `answer=null`, 구체적인 이유, 확보한 나머지 값으로 표현된다. 정상 분석의 `unknown`과 `없음`은 실패의 `null`과 다르다. 전체 JSON은 [응답 예시](./ai-be-final-result-schema.md#전체-응답)에 있다.
+모든 part는 `answer`와 비어 있지 않은 `details.reason.text`를 가진다. 미완료(`partial`/`failed`/`not_run`)는 `details.reason.failures`에 1개 이상의 원인을 싣고, 확보한 `doubts`·`signals`·brand·category를 보존한다. 요구 행동·요소가 없으면 `doubts=[]`다. 전체 JSON은 [결과 계약](./scheme.md#1-스키마)에 있다.
 
-`exclude_none=True`, `exclude_unset=True`, None 삭제 후처리를 사용하지 않는다. 두 `answer` 중 하나라도 null이면 분석 미완료를 우선 표시하고 확보한 근거와 실패 이유를 보존한다. 필요한 분석이 모두 완료된 경우에만 `result=false`를 의심으로 표시한다. 이 BE·FE 표시 전환은 후속 연동 작업이다. 일반 로그인 폼이나 문자·페이지의 분류 차이만으로 악성이라고 표시하지 않는다. `details.reason`은 평문으로 취급한다.
+`exclude_none=True`, `exclude_unset=True`, None 삭제 후처리를 사용하지 않는다. 두 `answer` 중 하나라도 완료(`risk_found`/`no_risk_found`)가 아니면 분석 미완료를 우선 표시하고 확보한 근거와 실패 이유를 보존한다. 단 `partial`이어도 `signals`가 있으면 검증된 위험 근거이므로 경고와 KISA 인계 조건에 함께 반영한다. 이 BE·FE 표시 전환은 후속 연동 작업이다. 일반 로그인 폼이나 문자·페이지의 분류 차이만으로 악성이라고 표시하지 않는다. `details.reason.text`는 평문으로 취급한다.
 
 `payload`를 저장하거나 FE로 전달할 수 있다. 카카오 SkillResponse로 변환하고 콜백을 전송하는 작업은 BE가 수행한다. 이 dict 자체가 카카오 응답 형식은 아니다.
 
@@ -148,7 +150,9 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from ai.pipeline import analyze_message_part, finalize_analysis
-from ai.types import AnalysisResponse, FailureCode, IsolatedPage, UrlAnalysis
+from ai.types import (
+    AnalysisResponse, DomainMatch, FailureCode, IsolatedPage, UrlAnalysis,
+)
 
 
 async def analyze_request(
@@ -164,7 +168,7 @@ async def analyze_request(
     tasks = (message_task, url_task, page_task)
     try:
         url = await url_task
-        if url.official:
+        if url.official is DomainMatch.OFFICIAL:
             return await finalize_analysis(url)
         message, collected = await asyncio.gather(message_task, page_task)
         page, failure = collected
@@ -182,7 +186,7 @@ async def analyze_request(
 | `get_url_result` | URL 조사를 시작하고 점수 가공·UrlAnalysis 검증 후 반환 |
 | `collect_page` | 격리 수집을 시작하고 검증된 `(page, failure)` 반환. 페이지 AI 분석은 수행하지 않음 |
 
-이 흐름은 URL 조사·문자 분석·격리 수집을 병렬로 시작한다. 현재 예제는 `official=false`일 때 필요한 자료를 받은 뒤 최종 함수 안에서 페이지를 분석한다. `official=true`인 URL-only 분기는 새 계약에서 누락 응답을 반환하므로 BE 적용 전환이 필요하다. `finally`는 시작한 작업의 취소 정리를 기다린다. 어댑터는 `CancelledError`를 삼키지 않고 자원을 정리해야 한다.
+이 흐름은 URL 조사·문자 분석·격리 수집을 병렬로 시작한다. 현재 예제는 `official`이 `"official"`이 아닐 때 필요한 자료를 받은 뒤 최종 함수 안에서 페이지를 분석한다. `official="official"`인 URL-only 분기는 새 계약에서 누락 응답을 반환하므로 BE 적용 전환이 필요하다. `finally`는 시작한 작업의 취소 정리를 기다린다. 어댑터는 `CancelledError`를 삼키지 않고 자원을 정리해야 한다.
 
 알려진 수집 실패는 `collect_page`가 `(None, FailureCode.COLLECTION_FAILED)` 등으로 반환한다. URL 조회·검증 실패와 예상하지 못한 provider 오류는 호출자에게 전파되고 나머지 task는 정리된다. 요청 자체 취소도 전파된다.
 
@@ -191,7 +195,7 @@ async def analyze_request(
 | 현재 위치 | BE가 할 작업 |
 |---|---|
 | `main.py`의 `kakao_skill()` | URL 분리 이후 마스킹한 본문 준비 |
-| `parse_urlscan_result()` 및 URL 어댑터 | 최종 URL·domain·유효한 score 기반 boolean 준비와 검증 |
+| `parse_urlscan_result()` 및 URL 어댑터 | 최종 URL·domain·화이트리스트 대조 결과·scan 점수 준비와 검증 |
 | 격리 수집 어댑터 | 정상·실패·시간 초과·부분 자료를 `(page, failure)`로 전달 |
 | `run_analysis()` | 고정 AI 안내 문자열을 문자 분석과 최종 AI 호출로 교체 |
 | `run_analysis_and_callback()` | 결과 보관·카카오 응답 가공·콜백·오류 응답 처리 |

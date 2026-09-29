@@ -5,19 +5,26 @@ import pytest
 from ai.pipeline import compare as module
 from ai.pipeline.compare import Conflict, compare_claims
 from ai.types import (
-    Brand, EnvDoubt, EnvironmentDetails, EnvironmentPart, MessageDetails,
-    MessageDoubt, MessagePart, Topic,
+    AnswerState, Brand, EnvDoubt, EnvironmentDetails, EnvironmentPart,
+    FailureCode, MessageDetails, MessageDoubt, MessagePart, Reason, Topic,
 )
 
 
 def message(brand=Brand.HANJIN, category=Topic.PARCEL, doubt=MessageDoubt.PARCEL_LOOKUP):
-    return MessagePart(brand=brand, category=category, answer=True,
-        details=MessageDetails(doubt=doubt, reason="문자 근거"))
+    doubts = [] if doubt is None else [{"value": doubt, "evidence": "문자 근거"}]
+    return MessagePart(brand=brand, category=category, answer=AnswerState.NO_RISK_FOUND,
+        details=MessageDetails(doubts=doubts, reason=Reason(text="문자 근거")))
 
 
 def env(brand=Brand.HANJIN, category=Topic.PARCEL, doubt=EnvDoubt.PARCEL_WIDGET):
-    return EnvironmentPart(brand=brand, category=category, answer=True,
-        details=EnvironmentDetails(doubt=doubt, reason="페이지 근거"))
+    doubts = [] if doubt is None else [{"value": doubt, "evidence": "페이지 근거"}]
+    return EnvironmentPart(brand=brand, category=category, answer=AnswerState.NO_RISK_FOUND,
+        details=EnvironmentDetails(doubts=doubts, reason=Reason(text="페이지 근거")))
+
+
+def not_run(model, details):
+    return model(answer=AnswerState.NOT_RUN, details=details(
+        reason=Reason(text="없음", failures=[FailureCode.MISSING_RESULT])))
 
 
 def test_matching_claims_report_no_conflict():
@@ -64,14 +71,14 @@ def test_unknown_topic_is_not_a_conflict():
         message(category=Topic.UNKNOWN), env(category=Topic.FINANCE)) == ()
 
 
-@pytest.mark.parametrize("absent", [EnvDoubt.NONE, EnvDoubt.UNKNOWN])
+@pytest.mark.parametrize("absent", [None, EnvDoubt.UNKNOWN])
 def test_absent_page_element_is_not_a_doubt_conflict(absent):
     conflicts = compare_claims(
         message(doubt=MessageDoubt.PARCEL_LOOKUP), env(doubt=absent))
     assert Conflict.DOUBT not in conflicts
 
 
-@pytest.mark.parametrize("absent", [MessageDoubt.NONE, MessageDoubt.UNKNOWN])
+@pytest.mark.parametrize("absent", [None, MessageDoubt.UNKNOWN])
 def test_absent_message_purpose_is_not_a_doubt_conflict(absent):
     conflicts = compare_claims(message(doubt=absent), env(doubt=EnvDoubt.LOGIN_FORM))
     assert Conflict.DOUBT not in conflicts
@@ -84,7 +91,7 @@ def test_unspecified_purpose_is_not_compared(vague):
 
 
 def test_early_return_parts_produce_no_conflict():
-    assert compare_claims(MessagePart(), EnvironmentPart()) == ()
+    assert compare_claims(not_run(MessagePart, MessageDetails), not_run(EnvironmentPart, EnvironmentDetails)) == ()
 
 
 def test_every_difference_is_reported_together():
@@ -104,5 +111,5 @@ def test_comparison_does_not_mutate_either_part():
 def test_every_message_purpose_has_a_comparison_rule():
     """새 MessageDoubt 를 표에 넣지 않으면 조용히 전부 불일치가 된다."""
     covered = set(module._CONSISTENT_ELEMENTS) | module._NOT_COMPARABLE
-    covered |= {MessageDoubt.NONE, MessageDoubt.UNKNOWN}
+    covered |= {MessageDoubt.UNKNOWN}
     assert covered == set(MessageDoubt)

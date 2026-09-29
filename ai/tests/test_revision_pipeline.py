@@ -17,6 +17,16 @@ from ai.types import (
     SignalAnalysis, SignalProposal, Topic,
 )
 
+from ai.types import AnswerState as _Answer, DomainMatch as _Domain
+
+INCOMPLETE = {_Answer.PARTIAL, _Answer.FAILED, _Answer.NOT_RUN}
+
+
+def first_doubt(part):
+    return part.details.doubts[0].value if part.details.doubts else None
+
+
+
 
 TEXT = "CJ대한통운 배송 조회하세요"
 HTML = '<form><input type="password"></form>'
@@ -59,9 +69,9 @@ async def test_successful_no_match_is_not_retrieval_failure(monkeypatch):
     signals = AsyncMock(return_value=SignalAnalysis(status=AnalysisStatus.COMPLETED))
     monkeypatch.setattr(module, "analyze_signals", signals)
     part = await module.analyze_message_part(TEXT, client=FakeClient(), model="test")
-    assert part.answer is True
+    assert part.answer is _Answer.NO_RISK_FOUND
     assert part.brand is Brand.CJ_LOGISTICS
-    assert part.details.doubt is MessageDoubt.PARCEL_LOOKUP
+    assert first_doubt(part) is MessageDoubt.PARCEL_LOOKUP
     assert signals.await_args.kwargs["case_search"].status is AnalysisStatus.COMPLETED
     assert signals.await_args.kwargs["case_search"].matches == []
     assert signals.await_args.args[2] is None
@@ -74,8 +84,8 @@ async def test_invalid_body_never_creates_client_or_searches(text, monkeypatch):
     monkeypatch.setattr(module, "create_client", factory)
     monkeypatch.setattr(module, "search_cases", search)
     part = await module.analyze_message_part(text)
-    assert part.answer is None
-    assert part.details.doubt is None
+    assert part.answer in INCOMPLETE
+    assert first_doubt(part) is None
     factory.assert_not_called()
     search.assert_not_called()
 
@@ -89,10 +99,10 @@ async def test_search_failure_keeps_current_message_facts(error, fragment, monke
     signals = AsyncMock(return_value=SignalAnalysis(status=AnalysisStatus.COMPLETED))
     monkeypatch.setattr(module, "analyze_signals", signals)
     part = await module.analyze_message_part(TEXT, client=FakeClient(), model="test")
-    assert part.answer is None
+    assert part.answer in INCOMPLETE
     assert part.brand is Brand.CJ_LOGISTICS
-    assert part.details.doubt is MessageDoubt.PARCEL_LOOKUP
-    assert fragment in part.details.reason
+    assert first_doubt(part) is MessageDoubt.PARCEL_LOOKUP
+    assert fragment in part.details.reason.text
     assert signals.await_args.kwargs["case_search"].status is AnalysisStatus.FALLBACK
 
 
@@ -108,9 +118,9 @@ async def test_search_deadline_cancels_coroutine_but_keeps_extraction(monkeypatc
     monkeypatch.setattr(module, "SEARCH_TIMEOUT_SECONDS", 0.001)
     part = await module.analyze_message_part(TEXT, client=FakeClient(), model="test")
     assert stopped.is_set()
-    assert part.answer is None
+    assert part.answer in INCOMPLETE
     assert part.brand is Brand.CJ_LOGISTICS
-    assert "시간" in part.details.reason
+    assert "시간" in part.details.reason.text
 
 
 @pytest.mark.asyncio
@@ -132,7 +142,7 @@ async def test_extraction_and_local_thread_search_overlap(monkeypatch):
     monkeypatch.setattr(module, "analyze_message", extract)
     monkeypatch.setattr(module, "search_cases", search)
     part = await asyncio.wait_for(module.analyze_message_part(TEXT, client=FakeClient(), model="test"), 1)
-    assert part.answer is True
+    assert part.answer is _Answer.NO_RISK_FOUND
     assert search_finished.is_set()
 
 
@@ -146,11 +156,11 @@ async def test_failed_extraction_skips_signal_api(failure, monkeypatch):
     monkeypatch.setattr(module, "analyze_message", extract)
     monkeypatch.setattr(module, "analyze_signals", signals)
     part = await module.analyze_message_part(TEXT, client=FakeClient(), model="test")
-    assert part.answer is None
-    assert part.details.doubt is MessageDoubt.PARCEL_LOOKUP
-    assert "문자 분석" in part.details.reason
+    assert part.answer in INCOMPLETE
+    assert first_doubt(part) is MessageDoubt.PARCEL_LOOKUP
+    assert "문자 분석" in part.details.reason.text
     if failure == "timeout":
-        assert "시간" in part.details.reason
+        assert "시간" in part.details.reason.text
     signals.assert_not_awaited()
 
 
@@ -160,8 +170,8 @@ async def test_signal_failure_preserves_extracted_message(failure, monkeypatch):
     monkeypatch.setattr(module, "analyze_signals", AsyncMock(return_value=SignalAnalysis(
         status=AnalysisStatus.FALLBACK, failure=failure)))
     part = await module.analyze_message_part(TEXT, client=FakeClient(), model="test")
-    assert part.answer is None
-    assert part.details.doubt is MessageDoubt.PARCEL_LOOKUP
+    assert part.answer in INCOMPLETE
+    assert first_doubt(part) is MessageDoubt.PARCEL_LOOKUP
     assert part.brand is Brand.CJ_LOGISTICS
 
 
@@ -180,8 +190,8 @@ async def test_success_closes_only_owned_client(entrypoint, owned, monkeypatch):
     else:
         part = await module.analyze_environment_part(page(), **kwargs)
         assert [call["response_format"] for call in client.calls] == [PageProposal]
-        assert part.details.doubt is EnvDoubt.LOGIN_FORM
-    assert part.answer is True
+        assert first_doubt(part) is EnvDoubt.LOGIN_FORM
+    assert part.answer is _Answer.NO_RISK_FOUND
     assert client.closed is owned
     assert client.entered == int(owned)
     if owned:
@@ -208,11 +218,11 @@ async def test_sdk_failure_closes_owned_client_and_preserves_facts(stage, error,
     monkeypatch.setattr(page_module, "create_client", factory)
     if stage == "page":
         part = await module.analyze_environment_part(page(), model="test")
-        assert part.details.doubt is EnvDoubt.LOGIN_FORM
+        assert first_doubt(part) is EnvDoubt.LOGIN_FORM
     else:
         part = await module.analyze_message_part(TEXT, model="test")
-        assert part.details.doubt is MessageDoubt.PARCEL_LOOKUP
-    assert part.answer is None
+        assert first_doubt(part) is MessageDoubt.PARCEL_LOOKUP
+    assert part.answer in INCOMPLETE
     assert client.closed
     assert part.brand is Brand.CJ_LOGISTICS
     assert len(client.calls) == (2 if stage == "signals" else 1)
@@ -228,7 +238,7 @@ async def test_missing_model_closes_owned_client_without_sdk_calls(entrypoint, m
     monkeypatch.setattr(page_module, "create_client", factory)
     part = (await module.analyze_message_part(TEXT) if entrypoint == "message"
         else await module.analyze_environment_part(page()))
-    assert part.answer is None
+    assert part.answer in INCOMPLETE
     assert client.closed
     assert client.calls == []
 
@@ -238,7 +248,7 @@ async def test_maximum_body_length_remains_analyzable():
     client = FakeClient()
     text = "a" * 8192
     part = await module.analyze_message_part(text, client=client, model="test")
-    assert part.answer is True
+    assert part.answer is _Answer.NO_RISK_FOUND
     assert client.calls[0]["messages"][1]["content"] == text
 
 
@@ -248,12 +258,12 @@ async def test_client_creation_failure_preserves_deterministic_facts(entrypoint,
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     if entrypoint == "message":
         part = await module.analyze_message_part(TEXT)
-        assert part.details.doubt is MessageDoubt.PARCEL_LOOKUP
+        assert first_doubt(part) is MessageDoubt.PARCEL_LOOKUP
     else:
         part = await module.analyze_environment_part(page())
-        assert part.details.doubt is EnvDoubt.LOGIN_FORM
-        assert "격리 환경 전달 정보" in part.details.reason
-    assert part.answer is None
+        assert first_doubt(part) is EnvDoubt.LOGIN_FORM
+        assert "격리 환경 전달 정보" in part.details.reason.text
+    assert part.answer in INCOMPLETE
     assert part.brand is Brand.CJ_LOGISTICS
     assert part.category is Topic.PARCEL
 
@@ -265,11 +275,11 @@ async def test_collection_failure_skips_page_llm(supplied_page, monkeypatch):
     monkeypatch.setattr(module, "analyze_page", llm)
     monkeypatch.setattr(module, "create_client", factory)
     part = await module.analyze_environment_part(supplied_page, failure=FailureCode.COLLECTION_FAILED)
-    assert part.answer is None
-    assert "수집" in part.details.reason
+    assert part.answer in INCOMPLETE
+    assert "수집" in part.details.reason.text
     if supplied_page:
         assert part.brand is Brand.CJ_LOGISTICS
-        assert part.details.doubt is EnvDoubt.LOGIN_FORM
+        assert first_doubt(part) is EnvDoubt.LOGIN_FORM
     llm.assert_not_awaited()
     factory.assert_not_called()
 
@@ -280,10 +290,10 @@ async def test_incomplete_html_skips_page_llm_and_preserves_metadata(info, monke
     llm = AsyncMock()
     monkeypatch.setattr(module, "analyze_page", llm)
     part = await module.analyze_environment_part(page(info))
-    assert part.answer is None
+    assert part.answer in INCOMPLETE
     assert part.brand is Brand.CJ_LOGISTICS
     if info:
-        assert part.details.doubt is EnvDoubt.LOGIN_FORM
+        assert first_doubt(part) is EnvDoubt.LOGIN_FORM
     llm.assert_not_awaited()
 
 

@@ -20,8 +20,8 @@ class Conflict(str, Enum):
     """두 분석이 서로 다른 값을 낸 지점입니다. **위험 신호가 아닙니다.**
 
     배송 조회를 안내한 문자와 로그인 폼이 있는 페이지의 차이는 설명의
-    재료이지 악성의 근거가 아닙니다. 최종 `result` 는 `url.official` 이
-    정하며 이 값은 관여하지 않습니다.
+    재료이지 악성의 근거가 아닙니다. 최종 `result` 에 이 값은
+    관여하지 않습니다.
     """
 
     BRAND = "brand_conflict"
@@ -78,9 +78,7 @@ def _topic_conflict(message: Topic | None, env: Topic | None) -> bool:
 def _doubt_conflict(message: MessageDoubt | None, env: EnvDoubt | None) -> bool:
     if message is None or env is None:
         return False
-    if message in (MessageDoubt.UNKNOWN, MessageDoubt.NONE):
-        return False
-    if env in (EnvDoubt.UNKNOWN, EnvDoubt.NONE):
+    if message is MessageDoubt.UNKNOWN or env is EnvDoubt.UNKNOWN:
         return False
     if message in _NOT_COMPARABLE:
         return False
@@ -90,7 +88,9 @@ def _doubt_conflict(message: MessageDoubt | None, env: EnvDoubt | None) -> bool:
 def compare_claims(message: MessagePart, env: EnvironmentPart) -> tuple[Conflict, ...]:
     """두 분석의 같은 이름 항목을 맞대어 어긋난 지점만 돌려줍니다.
 
-    확인하지 못한 값은 어긋남으로 세지 않습니다. `unknown`, `없음`, 조기
+    doubt 는 각 목록의 원문 순서 첫 값을 대표로 비교합니다.
+
+    확인하지 못한 값은 어긋남으로 세지 않습니다. `unknown`, 빈 doubts, 조기
     반환의 `None` 은 전부 "비교하지 않음"이며, 이것을 불일치로 처리하면
     수행하지 않은 확인을 주장하게 됩니다.
 
@@ -102,6 +102,8 @@ def compare_claims(message: MessagePart, env: EnvironmentPart) -> tuple[Conflict
         conflicts.append(Conflict.BRAND)
     if _topic_conflict(message.category, env.category):
         conflicts.append(Conflict.TOPIC)
-    if _doubt_conflict(message.details.doubt, env.details.doubt):
+    message_doubt = message.details.doubts[0].value if message.details.doubts else None
+    env_doubt = env.details.doubts[0].value if env.details.doubts else None
+    if _doubt_conflict(message_doubt, env_doubt):
         conflicts.append(Conflict.DOUBT)
     return tuple(conflicts)
