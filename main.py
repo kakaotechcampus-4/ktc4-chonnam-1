@@ -828,7 +828,7 @@ def kakao_response(
 def format_ai_result(
     original_url: str,
     ai_result
-) -> dict:
+) -> str:
     """
     AI AnalysisResponse를 카카오톡 simpleText 응답으로 변환한다.
 
@@ -974,7 +974,7 @@ def format_ai_result(
         f"result: {data.get('result', '없음')}"
     )
 
-    return kakao_response(text)
+    return text
 
 # ============================================================
 # URLSCAN Result Parser
