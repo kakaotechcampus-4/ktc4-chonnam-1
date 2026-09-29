@@ -1,6 +1,7 @@
 """backend ↔ ai 사이에 오가는 타입. 호출당하는 쪽이 소유합니다."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 
 from pydantic import (
@@ -97,7 +98,6 @@ class MessageDoubt(str, Enum):
     WITHDRAW = "금전 인출"
     ANSWER_PHONE = "전화 응대"
     OPEN_LINK = "링크 접속"
-    NONE = "없음"
     UNKNOWN = "unknown"
 
 
@@ -109,7 +109,6 @@ class EnvDoubt(str, Enum):
     ADDRESS_FORM = "주소 입력폼"
     PARCEL_WIDGET = "배송 조회 요소"
     DOCUMENT_VIEW = "사진·문서 열람 요소"
-    NONE = "없음"
     UNKNOWN = "unknown"
 
 
@@ -275,10 +274,18 @@ class DomainCheck(InboundModel):
     carrier_name: str | None = None
 
 
+class ScanResult(InboundModel):
+    """URL 스캐너 점수. 기록·비교용이며 `result` 계산에 넣지 않습니다."""
+
+    score: float | None = Field(default=None, ge=-100, le=100)
+    scanned_at: datetime | None = None
+
+
 class UrlAnalysis(InboundModel):
     final_url: str = Field(min_length=1)
     domain: str = Field(min_length=1)
-    official: StrictBool
+    official: DomainMatch
+    scan: ScanResult = Field(default_factory=ScanResult)
 
     @field_validator("final_url", "domain")
     @classmethod
@@ -287,11 +294,20 @@ class UrlAnalysis(InboundModel):
             raise ValueError("value must not be blank")
         return value
 
+    @field_validator("official")
+    @classmethod
+    def reject_no_url(cls, value: DomainMatch) -> DomainMatch:
+        # final_url 이 있는 응답에 "URL 없음" 대조 결과는 모순입니다.
+        if value is DomainMatch.NO_URL:
+            raise ValueError("url.official cannot be no_url")
+        return value
+
 
 class IsolatedPage(InboundModel):
     brand: str
     category: str
     info: str
+    collected_at: datetime | None = None
 
 
 # ── LLM 출력 (환각 방어를 위해 strict) ──────────────────────────
@@ -333,58 +349,97 @@ class SignalProposal(StrictModel):
     signals: list[RiskSignal] = Field(default_factory=list)
 
 
+class AnswerState(str, Enum):
+    NO_RISK_FOUND = "no_risk_found"
+    RISK_FOUND = "risk_found"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    NOT_RUN = "not_run"
+
+
+class Reason(StrictModel):
+    text: str = Field(min_length=1)
+    failures: list[FailureCode] = Field(default_factory=list)
+
+    @field_validator("text")
+    @classmethod
+    def reject_blank_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("reason text must not be blank")
+        return value
+
+
+class SignalItem(StrictModel):
+    """wire 로 나가는 검증된 위험 근거. evidence 는 원문 인용 또는 요소 설명."""
+
+    code: RiskSignalCode
+    evidence: str = Field(min_length=1)
+
+    @field_validator("code")
+    @classmethod
+    def reject_expired_link(cls, value: RiskSignalCode) -> RiskSignalCode:
+        if value is RiskSignalCode.EXPIRED_LINK:
+            raise ValueError("expired_link is not a signal")
+        return value
+
+
+class MessageDoubtItem(StrictModel):
+    value: MessageDoubt
+    evidence: str
+
+
+class EnvDoubtItem(StrictModel):
+    value: EnvDoubt
+    evidence: str
+
+
 class MessageDetails(StrictModel):
-    doubt: MessageDoubt | None = None
-    reason: str | None = None
+    doubts: list[MessageDoubtItem] = Field(default_factory=list)
+    signals: list[SignalItem] = Field(default_factory=list)
+    reason: Reason
 
 
 class EnvironmentDetails(StrictModel):
-    doubt: EnvDoubt | None = None
-    reason: str | None = None
+    doubts: list[EnvDoubtItem] = Field(default_factory=list)
+    signals: list[SignalItem] = Field(default_factory=list)
+    reason: Reason
 
 
-def _all_null(part: BaseModel) -> bool:
-    data = part.model_dump()
-    return all(data[key] is None for key in ("brand", "category", "answer")) and all(
-        value is None for value in data["details"].values()
-    )
+_COMPLETED_ANSWERS = frozenset({AnswerState.NO_RISK_FOUND, AnswerState.RISK_FOUND})
 
 
-def _require_complete_or_failed(part: BaseModel) -> None:
-    data = part.model_dump()
-    leaf_values = *(data[key] for key in ("brand", "category", "answer")), *data[
-        "details"
-    ].values()
-    if data["answer"] is not None:
-        if any(value is None for value in leaf_values):
-            raise ValueError("completed parts require all fields")
-    elif any(value is not None for value in leaf_values):
-        reason = data["details"]["reason"]
-        if not isinstance(reason, str) or not reason.strip():
-            raise ValueError("incomplete parts require a nonblank failure reason")
+def _check_answer(answer: AnswerState, details: MessageDetails | EnvironmentDetails) -> None:
+    """docs/scheme.md §1 의 answer 별 signals·failures 규칙."""
+    if answer is AnswerState.RISK_FOUND and not details.signals:
+        raise ValueError("risk_found requires signals")
+    if answer in {AnswerState.NO_RISK_FOUND, AnswerState.FAILED, AnswerState.NOT_RUN} and details.signals:
+        raise ValueError(f"{answer.value} requires empty signals")
+    if (answer in _COMPLETED_ANSWERS) == bool(details.reason.failures):
+        raise ValueError("completed answers have no failures; incomplete answers require one")
 
 
 class MessagePart(StrictModel):
     brand: Brand | None = None
     category: Topic | None = None
-    answer: StrictBool | None = None
-    details: MessageDetails = Field(default_factory=MessageDetails)
+    answer: AnswerState
+    details: MessageDetails
 
     @model_validator(mode="after")
-    def require_complete_or_skipped(self) -> "MessagePart":
-        _require_complete_or_failed(self)
+    def validate_answer(self) -> "MessagePart":
+        _check_answer(self.answer, self.details)
         return self
 
 
 class EnvironmentPart(StrictModel):
     brand: Brand | None = None
     category: Topic | None = None
-    answer: StrictBool | None = None
-    details: EnvironmentDetails = Field(default_factory=EnvironmentDetails)
+    answer: AnswerState
+    collected_at: datetime | None = None
+    details: EnvironmentDetails
 
     @model_validator(mode="after")
-    def require_complete_or_skipped(self) -> "EnvironmentPart":
-        _require_complete_or_failed(self)
+    def validate_answer(self) -> "EnvironmentPart":
+        _check_answer(self.answer, self.details)
         return self
 
 
@@ -395,12 +450,10 @@ class AnalysisResponse(StrictModel):
     result: StrictBool
 
     @model_validator(mode="after")
-    def validate_result_and_parts(self) -> "AnalysisResponse":
-        if _all_null(self.message) or _all_null(self.env):
-            raise ValueError("responses require normalized analysis parts")
-        expected = (self.url.official is True
-            and self.message.answer is True
-            and self.env.answer is True)
+    def validate_result(self) -> "AnalysisResponse":
+        expected = (self.url.official is DomainMatch.OFFICIAL
+            and self.message.answer is AnswerState.NO_RISK_FOUND
+            and self.env.answer is AnswerState.NO_RISK_FOUND)
         if self.result is not expected:
             raise ValueError("result must match the aggregate analysis")
         return self

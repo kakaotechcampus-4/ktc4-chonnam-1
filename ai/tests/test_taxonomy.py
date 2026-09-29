@@ -284,7 +284,7 @@ def test_independent_requests_use_original_order_instead_of_label_priority():
     ],
 )
 def test_completion_and_plain_notice_are_not_action_requests(text):
-    assert select_message_doubt(message_candidates(text, analysis())) is MessageDoubt.NONE
+    assert select_message_doubt(message_candidates(text, analysis())) is None
 
 
 def test_requested_action_value_is_not_accepted_without_semantic_evidence():
@@ -295,7 +295,7 @@ def test_requested_action_value_is_not_accepted_without_semantic_evidence():
         ]
     )
 
-    assert select_message_doubt(message_candidates(text, extracted)) is MessageDoubt.NONE
+    assert select_message_doubt(message_candidates(text, extracted)) is None
 
 
 def test_requested_action_evidence_must_exist_in_current_message():
@@ -333,7 +333,7 @@ def test_failed_analysis_without_verified_candidate_is_unknown():
 def test_completed_analysis_without_request_is_none():
     text = "택배 관련 안내입니다"
 
-    assert select_message_doubt(message_candidates(text, analysis())) is MessageDoubt.NONE
+    assert select_message_doubt(message_candidates(text, analysis())) is None
 
 
 def test_completed_action_clause_preserves_following_independent_request():

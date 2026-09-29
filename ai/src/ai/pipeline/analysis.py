@@ -100,9 +100,9 @@ async def analyze_environment_part(
     """Analyze only supplied page material or an explicit collection failure."""
     inspection = (inspect_html(page.info) if page is not None else
         PageInspection(text="", elements=(), failure=FailureCode.MISSING_RESULT))
-    failure = failure or inspection.failure
-    if failure is not None:
-        analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=failure)
+    stop = failure or inspection.failure
+    if stop is not None:
+        analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=stop)
         return build_environment_part(page, inspection, analysis, failure=failure)
 
     try:

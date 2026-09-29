@@ -708,9 +708,9 @@ def inspect_html(info: str) -> PageInspection:
     return result
 
 
-def select_env_doubt(elements: tuple[PageElement, ...]) -> EnvDoubt:
+def select_env_doubt(elements: tuple[PageElement, ...]) -> EnvDoubt | None:
     """Select the first source-ordered candidate after collector deduplication."""
 
     if not elements:
-        return EnvDoubt.NONE
+        return None
     return min(elements, key=lambda item: item.start).doubt
