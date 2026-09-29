@@ -20,9 +20,9 @@ from ai.types import (
 )
 
 
-# Search is ~2ms warm, but wall time also covers the one-off 170ms KB load and
-# stalls when a sibling task blocks the shared loop (BE's httpx SSL setup took
-# 180-480ms). It runs beside extraction, so a normal run never waits on it.
+# Search is ~2ms warm, but the first call per process also loads the KB
+# (measured 170-230ms), which timed out the old 50ms budget. It runs beside
+# extraction, so a normal run never waits on it.
 SEARCH_TIMEOUT_SECONDS = 1.0
 MAX_MESSAGE_CHARS = 8192
 
