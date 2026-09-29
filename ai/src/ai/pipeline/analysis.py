@@ -21,8 +21,8 @@ from ai.types import (
 
 
 # Search is ~2ms warm, but the first call per process also loads the KB
-# (measured 170-230ms), which timed out the old 50ms budget. It runs beside
-# extraction, so a normal run never waits on it.
+# (measured 170-290ms), which timed out the old 50ms budget. gather() waits for
+# both, so this adds time only when extraction finishes before the search.
 SEARCH_TIMEOUT_SECONDS = 1.0
 MAX_MESSAGE_CHARS = 8192
 
