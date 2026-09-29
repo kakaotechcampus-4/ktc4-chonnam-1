@@ -20,13 +20,16 @@ from ai.types import (
 )
 
 
-SEARCH_TIMEOUT_SECONDS = 0.05
+# Search is ~2ms warm, but wall time also covers the one-off 170ms KB load and
+# stalls when a sibling task blocks the shared loop (BE's httpx SSL setup took
+# 180-480ms). It runs beside extraction, so a normal run never waits on it.
+SEARCH_TIMEOUT_SECONDS = 1.0
 MAX_MESSAGE_CHARS = 8192
 
 
 async def _search_with_budget(text: str) -> CaseSearchResult:
     # Cancellation stops the coroutine, not an already running worker thread.
-    # search_cases only reads the bounded local KB; BE warms its cache at startup.
+    # search_cases only reads the bounded local KB, cached after the first call.
     return await asyncio.wait_for(
         asyncio.to_thread(search_cases, text), timeout=SEARCH_TIMEOUT_SECONDS
     )
