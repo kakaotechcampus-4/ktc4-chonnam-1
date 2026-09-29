@@ -4,10 +4,11 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 
 from backend.src.server.urlscan_service import (
+    get_http_client,
+    http_client_lifespan,
     submit_url_scan,
     wait_for_url_scan_result,
 )
@@ -20,7 +21,7 @@ from ai.pipeline import analyze_message_part, finalize_analysis
 from ai.types import FailureCode, UrlAnalysis
 
 
-app = FastAPI()
+app = FastAPI(lifespan=http_client_lifespan)
 
 
 # TODO:
@@ -696,12 +697,11 @@ async def run_analysis_and_callback(
             "[CALLBACK] 결과 전송 시작"
         )
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                callback_url,
-                json=result,
-                timeout=10.0
-            )
+        response = await get_http_client().post(
+            callback_url,
+            json=result,
+            timeout=10.0
+        )
 
         print(
             f"[CALLBACK STATUS] "
