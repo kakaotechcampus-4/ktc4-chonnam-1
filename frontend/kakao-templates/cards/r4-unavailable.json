@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "🙏 지금은 확인을 못 마쳤어요",
+          "description": "저희 쪽 문제로 확인을 끝내지 못했어요.\n보내주신 문자에는 문제가 없어요.\n잠시 뒤에 그대로 다시 시도해주세요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "다시 시도",
+              "action": "block",
+              "blockId": "{{ block_retry }}"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

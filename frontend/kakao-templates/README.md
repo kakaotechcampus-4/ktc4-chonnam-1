@@ -11,10 +11,30 @@
 
 현재 BE 형식(`backend/src/server/templates/kakao_templates/`) 기준. BE 연결 시 바뀔 수 있음.
 
-- 파일 이름은 `r번호-이름.json` (예: `r1-lookalike.json`). BE는 확장자 뺀 이름으로 찾는다.
+- 파일 이름은 `화면코드-이름.json` (예: `r1-lookalike.json`, `w1-welcome.json`). 화면 코드는
+  `docs/designs/chatbot-copy.md` 3절과 같다. BE는 확장자 뺀 이름으로 찾는다.
 - 내용은 카드 하나가 아니라 카카오 스킬 응답 전체 (`{"version": "2.0", "template": {"outputs": [...]}}`).
 - 바뀌는 값은 `{{ image_url }}`처럼 중괄호 두 개로 표시한다.
 - UTF-8로 저장한다.
+- 문구 원문은 `docs/designs/chatbot-copy.md`다. 문구를 바꾸면 두 곳을 함께 고친다.
+
+### 채워야 하는 값
+
+| 값 | 쓰는 카드 | 채우는 주체 |
+| --- | --- | --- |
+| `block_b1` `block_b1a` `block_b2a` `block_b2b` `block_w2` `block_w2a` `block_r1a` `block_detail` | 버튼 `blockId` | 관리자센터 블록 ID. 블록을 만든 뒤 채운다 |
+| `block_consent` | W3 `동의하고 확인하기` | 동의 기록 후 보류한 문자로 분석을 잇는 스킬 블록 (BE 미구현) |
+| `block_retry` | R4 `다시 시도` | 같은 문자를 서버가 다시 검사하는 스킬 블록 (BE 미구현) |
+| `kisa_chatbot_url` `kisa_chat_url` | B2b·R1a 상담 버튼 | KISA 인계 방법 확인 후 |
+| `org_name` `official_url` | R2 | 화이트리스트에서 일치한 기관 이름·공식 주소. 문자 속 URL은 쓰지 않는다 |
+| `signal_title` `observed` `reason` `unverified` | 자세히 보기 캐러셀 | `decide()`가 쓴 신호만. `unverified`까지 넣어 128자 안 |
+| `used_info` `sent_info` `retention` `sent_items` `external_service` | W2a·W3 | 개인정보 정책 확인 후. 확정 전 배포 금지 |
+
+- 이미지 주소가 아직 없으므로 모든 카드를 썸네일 없는 `textCard`로 두었다(`chatbot-flow.md` 9절 (3)).
+  이미지가 준비되면 해당 카드를 `basicCard` + `thumbnail`로 바꾼다.
+- R5(`r5-analyzing.json`)는 콜백 대기 응답이라 `template` 없이 `useCallback`과 `data.text`만 있다.
+  버튼을 달 수 없다.
+- K2(시각 + 저장한 결과 카드)와 K3(R4 재사용)는 BE가 조립하는 응답이라 파일로 두지 않는다.
 
 ## 프로토타입 자산
 

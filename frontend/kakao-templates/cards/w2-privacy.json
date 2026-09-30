@@ -1,0 +1,26 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "🔒 개인정보 처리 안내",
+          "description": "보내주신 문자 내용과 링크를 확인에 사용해요.\n확인 과정에서 일부 정보가 외부 분석 서비스로 전송돼요.\n전송하는 정보와 보관 기간은 아래 버튼에서 확인해 주세요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "처리 내용 자세히 보기",
+              "action": "block",
+              "blockId": "{{ block_w2a }}"
+            },
+            {
+              "label": "스미싱 확인하기",
+              "action": "block",
+              "blockId": "{{ block_b1 }}"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

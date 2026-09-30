@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "💬 문자를 붙여넣어 주세요",
+          "description": "저는 문자에 있는 주소가 공식 주소와 같은지 확인해 드려요.\n확인할 문자를 복사해서 그대로 붙여넣어 주세요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "스미싱 확인하기",
+              "action": "block",
+              "blockId": "{{ block_b1 }}"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
