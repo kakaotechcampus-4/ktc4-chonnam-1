@@ -1,0 +1,26 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "🔒 문자 확인을 위해 동의가 필요해요",
+          "description": "링크를 확인하려면 {{ sent_items }}을 {{ external_service }}에 보내야 해요.\n동의하시면 방금 보내주신 문자를 확인할게요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "동의하고 확인하기",
+              "action": "block",
+              "blockId": "{{ block_consent }}"
+            },
+            {
+              "label": "개인정보 처리 안내",
+              "action": "block",
+              "blockId": "{{ block_w2 }}"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "⏳ 앞서 보낸 문자를 확인하고 있어요",
+          "description": "한 번에 문자 1개씩 확인해요.\n결과가 나온 뒤에 새 문자를 보내주세요."
+        }
+      }
+    ],
+    "quickReplies": [
+      {
+        "label": "결과 확인",
+        "action": "message",
+        "messageText": "결과 확인"
+      }
+    ]
+  }
+}
