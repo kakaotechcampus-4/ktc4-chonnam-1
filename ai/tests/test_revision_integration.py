@@ -23,6 +23,20 @@ from ai.types import (
     RiskSignalCode, SignalProposal, Topic, UrlAnalysis,
 )
 
+from ai.types import AnswerState as _Answer, DomainMatch as _Domain
+
+INCOMPLETE = {_Answer.PARTIAL, _Answer.FAILED, _Answer.NOT_RUN}
+
+
+def _ans(no_risk):
+    return _Answer.NO_RISK_FOUND if no_risk else _Answer.RISK_FOUND
+
+
+def first_doubt(part):
+    return part.details.doubts[0].value if part.details.doubts else None
+
+
+
 
 TEXT = "배송 현황을 확인하세요"
 LOGIN_HTML = (
@@ -37,7 +51,7 @@ def sdk_response(parsed):
 
 
 def url(official=False):
-    return UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=official)
+    return UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=_Domain.OFFICIAL if official else _Domain.NOT_REGISTERED)
 
 
 def page(info=LOGIN_HTML):
@@ -76,9 +90,9 @@ async def test_install_taxonomy_and_normalized_grounding_survive_pipeline(
         RiskSignalCode.INSTALL_PROMPT, EvidenceSource.MESSAGE, text)] if propose else [])
     result = await analyze_message_part(
         text, client=message_client(make_parse_client, proposal), model="test")
-    assert result.details.doubt is MessageDoubt.APP_INSTALL
-    assert result.answer is (not propose)
-    assert all(quote in result.details.reason for quote in quotes)
+    assert first_doubt(result) is MessageDoubt.APP_INSTALL
+    assert result.answer is _ans(not propose)
+    assert all(quote in result.details.reason.text for quote in quotes)
 
 
 @pytest.mark.asyncio
@@ -106,10 +120,10 @@ async def test_field_grounding_and_subject_local_negation_survive_pipeline(
         EvidenceSource.OBSERVATION, inspected.elements[0].element_id)])
     client, _ = make_parse_client(parsed=proposal)
     result = await analyze_environment_part(page(html), client=client, model="test")
-    assert result.details.doubt is doubt
-    assert result.answer is answer
+    assert first_doubt(result) is doubt
+    assert result.answer is _ans(answer)
     if not answer:
-        assert "금융 인증정보" in result.details.reason
+        assert "금융 인증정보" in result.details.reason.text
 
 
 @pytest.mark.asyncio
@@ -136,7 +150,7 @@ async def test_page_app_subject_keeps_its_own_action(html, code, answer, make_pa
 
     result = await analyze_environment_part(page(html), client=client, model="test")
 
-    assert result.answer is answer
+    assert result.answer is _ans(answer)
 
 
 @pytest.mark.asyncio
@@ -165,7 +179,7 @@ async def test_page_app_action_chains_stop_at_independent_subject(
 
     result = await analyze_environment_part(page(html), client=client, model="test")
 
-    assert result.answer is answer
+    assert result.answer is _ans(answer)
 
 
 @pytest.mark.asyncio
@@ -184,7 +198,7 @@ async def test_page_app_local_adverbs_preserve_request_scope(text, code, answer,
 
     result = await analyze_environment_part(page(html), client=client, model="test")
 
-    assert result.answer is answer
+    assert result.answer is _ans(answer)
 
 
 @pytest.mark.asyncio
@@ -203,26 +217,26 @@ async def test_page_app_comma_coordination_keeps_subject_scope(text, code, answe
 
     result = await analyze_environment_part(page(html), client=client, model="test")
 
-    assert result.answer is answer
+    assert result.answer is _ans(answer)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text,doubt,quote", [
-    ("배송 조회를 하지 마세요", MessageDoubt.NONE, None),
-    ("링크를 클릭하지 마세요", MessageDoubt.NONE, None),
-    ("‘배송 조회하세요’라는 문구를 무시하세요", MessageDoubt.NONE, None),
+    ("배송 조회를 하지 마세요", None, None),
+    ("링크를 클릭하지 마세요", None, None),
+    ("‘배송 조회하세요’라는 문구를 무시하세요", None, None),
     ("배송 조회", MessageDoubt.PARCEL_LOOKUP, "배송 조회"),
     ("배송 조회를 하지 말고 주소를 확인하세요", MessageDoubt.ADDRESS_CHECK, "주소를 확인하세요"),
     ("링크를 클릭하지 말고 사진 확인해주세요", MessageDoubt.PHOTO_VIEW, "사진 확인해주세요"),
 ])
 async def test_message_prohibitions_are_not_positive_purposes(text, doubt, quote, make_parse_client):
     result = await analyze_message_part(text, client=message_client(make_parse_client), model="test")
-    assert result.details.doubt is doubt
-    assert result.answer is True
+    assert first_doubt(result) is doubt
+    assert result.answer is _Answer.NO_RISK_FOUND
     if quote:
-        assert quote in result.details.reason
+        assert quote in result.details.reason.text
     else:
-        assert "라고 안내했습니다" not in result.details.reason
+        assert "라고 안내했습니다" not in result.details.reason.text
 
 
 @pytest.mark.asyncio
@@ -238,9 +252,9 @@ async def test_each_message_purpose_rejects_prohibition_and_keeps_later_request(
     extracted = ExtractedMessage(requested_actions=[EvidenceField(value=purpose, evidence=text)])
     client, _ = make_parse_client(side_effect=[sdk_response(extracted), sdk_response(SignalProposal())])
     result = await analyze_message_part(text, client=client, model="test")
-    assert result.details.doubt is (MessageDoubt.PHOTO_VIEW if later_request else MessageDoubt.NONE)
-    assert result.answer is True
-    assert "하지 마세요" not in result.details.reason
+    assert first_doubt(result) is (MessageDoubt.PHOTO_VIEW if later_request else None)
+    assert result.answer is _Answer.NO_RISK_FOUND
+    assert "하지 마세요" not in result.details.reason.text
 
 
 @pytest.mark.asyncio
@@ -258,9 +272,9 @@ async def test_normalized_and_coordinated_install_prohibitions_reject_risk(
         RiskSignalCode.INSTALL_PROMPT, EvidenceSource.MESSAGE, text)])
     result = await analyze_message_part(
         text, client=message_client(make_parse_client, proposal), model="test")
-    assert result.answer is True
+    assert result.answer is _Answer.NO_RISK_FOUND
     if denied_install:
-        assert result.details.doubt is not MessageDoubt.APP_INSTALL
+        assert first_doubt(result) is not MessageDoubt.APP_INSTALL
 
 
 @pytest.mark.asyncio
@@ -308,7 +322,7 @@ async def test_qualified_financial_subject_keeps_its_own_action(label, answer, m
         EvidenceSource.OBSERVATION, inspect_html(html).elements[0].element_id)])
     client, _ = make_parse_client(parsed=proposal)
     result = await analyze_environment_part(page(html), client=client, model="test")
-    assert result.answer is answer
+    assert result.answer is _ans(answer)
 
 
 @pytest.mark.asyncio
@@ -324,8 +338,8 @@ async def test_english_imperatives_preserve_word_boundaries(text, answer, make_p
         RiskSignalCode.INSTALL_PROMPT, EvidenceSource.MESSAGE, text)])
     result = await analyze_message_part(
         text, client=message_client(make_parse_client, proposal), model="test")
-    assert result.answer is answer
-    assert result.details.doubt is (MessageDoubt.NONE if answer else MessageDoubt.APP_INSTALL)
+    assert result.answer is _ans(answer)
+    assert first_doubt(result) is (None if answer else MessageDoubt.APP_INSTALL)
 
 
 def assert_missing_parts(response):
@@ -333,11 +347,11 @@ def assert_missing_parts(response):
     for key in ("message", "env"):
         assert data[key]["brand"] is None
         assert data[key]["category"] is None
-        assert data[key]["answer"] is None
-        assert data[key]["details"]["doubt"] is None
-        assert data[key]["details"]["reason"]
+        assert data[key]["answer"] == "not_run"
+        assert data[key]["details"]["doubts"] == []
+        assert data[key]["details"]["reason"]["failures"] == ["missing_result"]
     assert data["result"] is False
-    assert data["url"]["official"] is True
+    assert data["url"]["official"] == "official"
 
 
 @pytest.mark.asyncio
@@ -354,15 +368,15 @@ async def test_different_message_and_page_meanings_survive_assembly(make_parse_c
         analyze_environment_part(page(), client=page_client, model="test"),
     )
     data = assemble_analysis(url(), message, env).model_dump(mode="json")
-    assert data["message"]["details"]["doubt"] == "배송 조회"
-    assert data["env"]["details"]["doubt"] == "로그인·인증 입력폼"
+    assert data["message"]["details"]["doubts"][0]["value"] == "배송 조회"
+    assert data["env"]["details"]["doubts"][0]["value"] == "로그인·인증 입력폼"
     assert data["result"] is False
-    assert data["url"]["official"] is False
-    assert data["message"]["answer"] is True
-    assert data["env"]["answer"] is True
-    assert TEXT in data["message"]["details"]["reason"]
-    assert "HTML" in data["env"]["details"]["reason"]
-    assert "악성 확정" not in data["env"]["details"]["reason"]
+    assert data["url"]["official"] == "not_registered"
+    assert data["message"]["answer"] == "no_risk_found"
+    assert data["env"]["answer"] == "no_risk_found"
+    assert TEXT in data["message"]["details"]["reason"]["text"]
+    assert "HTML" in data["env"]["details"]["reason"]["text"]
+    assert "악성 확정" not in data["env"]["details"]["reason"]["text"]
 
 
 @pytest.mark.asyncio
@@ -370,7 +384,7 @@ async def test_different_message_and_page_meanings_survive_assembly(make_parse_c
 async def test_official_assembly_preserves_parts_without_starting_work(supplied_failures, monkeypatch):
     parts = (await analyze_message_part(""), await analyze_environment_part(None)) if supplied_failures else ()
     if parts:
-        assert all(part.answer is None for part in parts)
+        assert all(part.answer in INCOMPLETE for part in parts)
     forbidden = Mock(side_effect=AssertionError("official assembly must do no analysis"))
     for attribute in ("create_client", "search_cases", "inspect_html", "analyze_message", "analyze_page"):
         monkeypatch.setattr(pipeline_module, attribute, forbidden)
@@ -403,14 +417,14 @@ async def test_local_answers_cannot_change_false_official_or_copy_sources(
     )
     response = assemble_analysis(url(), message, env)
     assert response.result is False
-    assert response.message.answer is (not message_risk)
-    assert response.env.answer is (not page_risk)
-    assert response.message.details.doubt is (MessageDoubt.APP_INSTALL if message_risk else MessageDoubt.NONE)
-    assert response.env.details.doubt is (EnvDoubt.APP_LINK if page_risk else EnvDoubt.NONE)
+    assert response.message.answer is _ans(not message_risk)
+    assert response.env.answer is _ans(not page_risk)
+    assert first_doubt(response.message) is (MessageDoubt.APP_INSTALL if message_risk else None)
+    assert first_doubt(response.env) is (EnvDoubt.APP_LINK if page_risk else None)
     if not message_risk:
-        assert "앱" not in response.message.details.reason
+        assert "앱" not in response.message.details.reason.text
     if not page_risk:
-        assert "앱" not in response.env.details.reason
+        assert "앱" not in response.env.details.reason.text
 
 
 @pytest.mark.asyncio
@@ -428,9 +442,9 @@ async def test_reference_only_password_quote_is_rejected_after_real_signal_analy
     assert reference not in payload["message"]
     response = assemble_analysis(url(), message)
     assert response.result is False
-    assert response.message.answer is True
-    assert response.message.details.doubt is MessageDoubt.NONE
-    assert reference not in response.message.details.reason
+    assert response.message.answer is _Answer.NO_RISK_FOUND
+    assert first_doubt(response.message) is None
+    assert reference not in response.message.details.reason.text
 
 
 @pytest.mark.asyncio
@@ -442,11 +456,11 @@ async def test_plain_login_rejects_sdk_risk_candidate(make_parse_client):
     env = await analyze_environment_part(page(), client=client, model="test")
     response = assemble_analysis(url(), env=env)
     assert response.result is False
-    assert response.env.answer is True
-    assert response.env.details.doubt is EnvDoubt.LOGIN_FORM
-    assert "HTML" in response.env.details.reason
-    assert "악성" not in response.env.details.reason
-    assert "비밀번호" not in response.message.details.reason
+    assert response.env.answer is _Answer.NO_RISK_FOUND
+    assert first_doubt(response.env) is EnvDoubt.LOGIN_FORM
+    assert "HTML" in response.env.details.reason.text
+    assert "악성" not in response.env.details.reason.text
+    assert "비밀번호" not in response.message.details.reason.text
 
 
 @pytest.mark.asyncio
@@ -473,12 +487,12 @@ async def test_actual_timeout_preserves_other_completed_part(timed_out, make_par
     response = assemble_analysis(url(), message, env)
     failed, completed = (response.message, response.env) if timed_out == "message" else (response.env, response.message)
     assert cancelled.is_set()
-    assert failed.answer is None
-    assert "시간이 초과" in failed.details.reason
-    assert completed.answer is True
-    assert "초과" not in completed.details.reason
-    assert response.message.details.doubt is MessageDoubt.PARCEL_LOOKUP
-    assert response.env.details.doubt is EnvDoubt.LOGIN_FORM
+    assert failed.answer in INCOMPLETE
+    assert "시간이 초과" in failed.details.reason.text
+    assert completed.answer is _Answer.NO_RISK_FOUND
+    assert "초과" not in completed.details.reason.text
+    assert first_doubt(response.message) is MessageDoubt.PARCEL_LOOKUP
+    assert first_doubt(response.env) is EnvDoubt.LOGIN_FORM
     assert response.result is False
 
 
@@ -492,12 +506,12 @@ async def test_partial_html_preserves_observed_form_without_claiming_completion(
     message = await analyze_message_part(TEXT, client=message_client(make_parse_client), model="test")
     env = await analyze_environment_part(page(LOGIN_HTML + suffix), client=client, model="test")
     response = assemble_analysis(url(), message, env)
-    assert response.message.answer is True
-    assert response.env.answer is None
-    assert response.env.details.doubt is EnvDoubt.LOGIN_FORM
-    assert "HTML" in response.env.details.reason
-    assert "일부 자료만 확보" in response.env.details.reason
-    assert "<form>" not in response.env.details.reason
+    assert response.message.answer is _Answer.NO_RISK_FOUND
+    assert response.env.answer in INCOMPLETE
+    assert first_doubt(response.env) is EnvDoubt.LOGIN_FORM
+    assert "HTML" in response.env.details.reason.text
+    assert "일부 자료만 확보" in response.env.details.reason.text
+    assert "<form>" not in response.env.details.reason.text
     assert response.result is False
     parse.assert_not_awaited()
 
@@ -508,10 +522,10 @@ async def test_html_byte_limit_rejects_before_observing_any_form(make_parse_clie
     env = await analyze_environment_part(
         page(LOGIN_HTML + "a" * page_module.MAX_HTML_BYTES), client=client, model="test")
     response = assemble_analysis(url(), env=env)
-    assert response.env.answer is None
-    assert response.env.details.doubt is None
-    assert "자료 크기 제한" in response.env.details.reason
-    assert "HTML에서" not in response.env.details.reason
+    assert response.env.answer in INCOMPLETE
+    assert first_doubt(response.env) is None
+    assert "자료 크기 제한" in response.env.details.reason.text
+    assert "HTML에서" not in response.env.details.reason.text
     assert response.result is False
     parse.assert_not_awaited()
 
@@ -572,10 +586,12 @@ async def test_official_assembly_does_not_wait_and_be_cancellation_closes_owned_
 async def test_unknown_none_and_null_preserve_distinct_json_keys(state, make_parse_client):
     if state == "unknown":
         response = assemble_analysis(url(),
-            MessagePart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN, answer=False,
-                details=MessageDetails(doubt=MessageDoubt.UNKNOWN, reason="분류 미상")),
-            EnvironmentPart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN, answer=False,
-                details=EnvironmentDetails(doubt=EnvDoubt.UNKNOWN, reason="분류 미상")))
+            MessagePart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN, answer=_Answer.NO_RISK_FOUND,
+                details=MessageDetails(doubts=[{"value": MessageDoubt.UNKNOWN, "evidence": "처리 부탁"}],
+                    reason={"text": "분류 미상"})),
+            EnvironmentPart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN, answer=_Answer.NO_RISK_FOUND,
+                details=EnvironmentDetails(doubts=[{"value": EnvDoubt.UNKNOWN, "evidence": "요소"}],
+                    reason={"text": "분류 미상"})))
     elif state == "none":
         client, _ = make_parse_client(parsed=PageProposal())
         message, env = await asyncio.gather(
@@ -587,20 +603,22 @@ async def test_unknown_none_and_null_preserve_distinct_json_keys(state, make_par
         response = assemble_analysis(url(state == "null"))
     data = response.model_dump(mode="json")
     for key in ("message", "env"):
-        assert set(data[key]) == {"brand", "category", "answer", "details"}
-        assert set(data[key]["details"]) == {"doubt", "reason"}
+        assert set(data[key]) - {"collected_at"} == {"brand", "category", "answer", "details"}
+        assert set(data[key]["details"]) == {"doubts", "signals", "reason"}
+        assert set(data[key]["details"]["reason"]) == {"text", "failures"}
         assert data[key]["brand"] == (None if state == "null" else "unknown")
         assert data[key]["category"] == (None if state == "null" else "unknown")
-        assert data[key]["details"]["doubt"] == {"unknown": "unknown", "none": "없음", "null": None}[state]
-        assert data[key]["answer"] is {"unknown": False, "none": True, "null": None}[state]
-        if state == "null":
-            assert data[key]["details"]["reason"]
+        assert [item["value"] for item in data[key]["details"]["doubts"]] == (
+            ["unknown"] if state == "unknown" else [])
+        assert data[key]["answer"] == ("not_run" if state == "null" else "no_risk_found")
+        assert data[key]["details"]["reason"]["text"]
+    assert ("collected_at" in data["env"]) and ("collected_at" not in data["message"])
 
 
-@pytest.mark.parametrize("official", [None, 0, 1, "true", "false", "", [], {}])
+@pytest.mark.parametrize("official", [None, 0, 1, True, False, "true", "false", "", "no_url", [], {}])
 def test_invalid_official_never_produces_classification(official):
     with pytest.raises(ValidationError):
-        assemble_analysis(url(official))
+        UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=official)
 
 
 @pytest.mark.asyncio
@@ -617,8 +635,8 @@ async def test_new_pipeline_never_calls_legacy_decide(official, monkeypatch, mak
     )
     response = assemble_analysis(url(official), message, env)
     assert response.result is official
-    assert message.answer is True
-    assert env.answer is True
+    assert message.answer is _Answer.NO_RISK_FOUND
+    assert env.answer is _Answer.NO_RISK_FOUND
     forbidden.assert_not_called()
 
 
@@ -635,22 +653,22 @@ async def test_real_sdk_stages_and_search_keep_existing_budgets(monkeypatch, mak
     client, _ = make_parse_client(parsed=PageProposal())
     message = await analyze_message_part(TEXT, client=message_client(make_parse_client), model="test")
     env = await analyze_environment_part(page(), client=client, model="test")
-    assert message.answer is True
-    assert env.answer is True
-    assert sorted(deadlines) == [0.05, 2.0, 30.0, 30.0]
+    assert message.answer is _Answer.NO_RISK_FOUND
+    assert env.answer is _Answer.NO_RISK_FOUND
+    assert sorted(deadlines) == [1.0, 2.0, 30.0, 30.0]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text,doubt,category", [
     ("배송 현황을 확인하세요", MessageDoubt.PARCEL_LOOKUP, "택배"),
     ("배송 상태를 조회하세요", MessageDoubt.PARCEL_LOOKUP, "택배"),
-    ("배송 현황 확인 완료입니다", MessageDoubt.NONE, "택배"),
+    ("배송 현황 확인 완료입니다", None, "택배"),
     ("배송 현황 확인과 주문 취소를 해주세요", MessageDoubt.PARCEL_LOOKUP, "unknown"),
 ])
 async def test_parcel_status_wording_keeps_completion_and_mixed_topic_boundaries(
     text, doubt, category, make_parse_client,
 ):
     result = await analyze_message_part(text, client=message_client(make_parse_client), model="test")
-    assert result.answer is True
-    assert result.details.doubt is doubt
+    assert result.answer is _Answer.NO_RISK_FOUND
+    assert first_doubt(result) is doubt
     assert result.category.value == category

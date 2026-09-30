@@ -98,3 +98,44 @@ def test_search_respects_top_k(cases_dir):
     )
 
     assert len(result.matches) == 1
+
+
+def test_concurrent_first_calls_parse_kb_once(cases_dir, monkeypatch):
+    # Five cold requests used to parse the KB in parallel and all missed the
+    # 1s search budget under the GIL.
+    import threading
+
+    import ai.kb.search as module
+
+    started, release, parsed = threading.Event(), threading.Event(), []
+    real_parse = module._parse_case
+
+    def parse(path):
+        parsed.append(path)
+        if not started.is_set():
+            started.set()
+            release.wait(timeout=1)
+        return real_parse(path)
+
+    monkeypatch.setattr(module, "_parse_case", parse)
+    results = []
+    first = threading.Thread(target=lambda: results.append(load_cases(cases_dir)))
+    first.start()
+    started.wait(timeout=1)
+    others = [threading.Thread(target=lambda: results.append(load_cases(cases_dir))) for _ in range(4)]
+    for thread in others:
+        thread.start()
+    for thread in others:
+        thread.join(timeout=0.05)
+    release.set()
+    for thread in [first, *others]:
+        thread.join(timeout=1)
+
+    assert len(parsed) == 3
+    assert len(results) == 5 and all(result is results[0] for result in results)
+
+
+def test_default_and_explicit_kb_path_share_one_cache():
+    from ai.kb.search import CASES_DIR
+
+    assert load_cases() is load_cases(CASES_DIR)

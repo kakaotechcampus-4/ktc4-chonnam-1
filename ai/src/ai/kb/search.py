@@ -6,6 +6,7 @@
 
 import logging
 import re
+import threading
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -19,6 +20,7 @@ LOGGER = logging.getLogger(__name__)
 
 CASES_DIR = Path(__file__).resolve().parent / "case_examples"
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---", re.DOTALL)
+_LOAD_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -82,13 +84,22 @@ def _parse_case(path: Path) -> Case | None:
     )
 
 
-@lru_cache(maxsize=8)
 def load_cases(cases_dir: Path = CASES_DIR) -> tuple[Case, ...]:
     """status가 curated인 레코드만 인덱싱합니다.
 
-    KB 296건을 요청마다 다시 파싱하면 0.15초가 든다. 프로세스 수명 동안
+    KB 를 요청마다 다시 파싱하면 170~290ms 가 든다(측정). 프로세스 수명 동안
     캐시한다. KB 를 고치면 프로세스를 다시 띄워야 반영된다.
+
+    lru_cache 만으로는 동시에 들어온 첫 호출들이 각자 KB 를 파싱한다. 기동 직후
+    5건이 동시에 오면 GIL 경합으로 전부 1초 검색 예산을 넘겼다(측정). 락으로
+    한 번만 파싱하고, 경로를 위치 인자로 넘겨 기본값 호출과 캐시를 공유한다.
     """
+    with _LOAD_LOCK:
+        return _load_cases(Path(cases_dir))
+
+
+@lru_cache(maxsize=8)
+def _load_cases(cases_dir: Path) -> tuple[Case, ...]:
     if not cases_dir.is_dir():
         return ()
 

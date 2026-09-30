@@ -20,13 +20,16 @@ from ai.types import (
 )
 
 
-SEARCH_TIMEOUT_SECONDS = 0.05
+# Search is ~2ms warm, but the first call per process also loads the KB
+# (measured 170-290ms), which timed out the old 50ms budget. gather() waits for
+# both, so this adds time only when extraction finishes before the search.
+SEARCH_TIMEOUT_SECONDS = 1.0
 MAX_MESSAGE_CHARS = 8192
 
 
 async def _search_with_budget(text: str) -> CaseSearchResult:
     # Cancellation stops the coroutine, not an already running worker thread.
-    # search_cases only reads the bounded local KB; BE warms its cache at startup.
+    # search_cases only reads the bounded local KB, cached after the first call.
     return await asyncio.wait_for(
         asyncio.to_thread(search_cases, text), timeout=SEARCH_TIMEOUT_SECONDS
     )
@@ -100,9 +103,9 @@ async def analyze_environment_part(
     """Analyze only supplied page material or an explicit collection failure."""
     inspection = (inspect_html(page.info) if page is not None else
         PageInspection(text="", elements=(), failure=FailureCode.MISSING_RESULT))
-    failure = failure or inspection.failure
-    if failure is not None:
-        analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=failure)
+    stop = failure or inspection.failure
+    if stop is not None:
+        analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=stop)
         return build_environment_part(page, inspection, analysis, failure=failure)
 
     try:
