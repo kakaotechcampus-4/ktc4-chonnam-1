@@ -36,6 +36,7 @@ def _base_job(job_id: str, **overrides) -> dict:
         "result": None,
         "error": None,
         "callback_status": "pending",
+        "callback_error": None,
     }
     job.update(overrides)
     return job
@@ -89,6 +90,7 @@ class TestGetAnalysisJob:
             result={"version": "2.0", "template": {"outputs": [{"simpleText": {"text": "분석 중 문제가 발생했습니다."}}]}},
             error="RuntimeError: boom",
             callback_status="failed",
+            callback_error="kakao_callback_status=FAIL",
         )
 
         response = client.get("/api/analyses/job-failed")
@@ -99,6 +101,9 @@ class TestGetAnalysisJob:
         assert job["error"] is not None
         # 실패해도 사용자에게 보여줄 결과(폴백 메시지)는 비어있지 않아야 한다.
         assert job["result"] is not None
+
+        assert job["callback_status"] == "failed"
+        assert job["callback_error"] == "kakao_callback_status=FAIL"
 
     def test_timeout_job(self, client):
         main.ANALYSIS_JOBS["job-timeout"] = _base_job(
@@ -122,9 +127,14 @@ class TestGetAnalysisJob:
         """콜백 전송 시도 전(분석 중)에는 callback_status가 pending이어야 한다."""
         main.ANALYSIS_JOBS["job-pending-callback"] = _base_job("job-pending-callback")
 
-        response = client.get("/api/analyses/job-pending-callback")
-
-        assert response.json()["job"]["callback_status"] == "pending"
+        response = client.get(
+            "/api/analyses/job-pending-callback"
+        )
+    
+        job = response.json()["job"]
+    
+        assert job["callback_status"] == "pending"
+        assert job["callback_error"] is None
 
     def test_multiple_jobs_are_looked_up_independently(self, client):
         main.ANALYSIS_JOBS["job-a"] = _base_job("job-a", status="running")
@@ -148,7 +158,8 @@ class TestGetAnalysisJob:
         매번 다른 모양을 처리하지 않아도 된다."""
         expected_keys = {
             "job_id", "user_id", "status", "created_at",
-            "completed_at", "result", "error", "callback_status",
+            "completed_at", "result", "error",
+            "callback_status", "callback_error",
         }
 
         for status in ("running", "completed", "failed", "timeout"):
