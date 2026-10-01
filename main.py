@@ -83,6 +83,30 @@ def create_analysis_job(
 
 
 # ============================================================
+# Find Latest Job
+# ============================================================
+
+def find_latest_job_by_user(
+    user_id: str | None
+) -> dict | None:
+    if not user_id:
+        return None
+
+    user_jobs = [
+        job
+        for job in ANALYSIS_JOBS.values()
+        if job.get("user_id") == user_id
+    ]
+
+    if not user_jobs:
+        return None
+
+    return max(
+        user_jobs,
+        key=lambda job: job["created_at"]
+    )
+
+# ============================================================
 # Analysis Job API
 # ============================================================
 
@@ -107,6 +131,37 @@ async def get_analysis_job(job_id: str):
         "success": True,
         "job": job
     }
+
+
+# ============================================================
+# Handle Check Result
+# ============================================================
+
+def handle_check_result(
+    user_id: str | None
+) -> dict:
+    job = find_latest_job_by_user(user_id)
+
+    if job is None:
+        return render_card("k4-no-result")
+
+    status = job.get("status")
+
+    if status == "running":
+        return render_card("k1-still-running")
+
+    if status == "completed":
+        result = job.get("result")
+
+        if result:
+            return result
+
+        return render_card("k4-no-result")
+
+    if status in ("failed", "timeout"):
+        return render_card("r4-unavailable")
+
+    return render_card("k4-no-result")
 
 
 # ============================================================
@@ -136,6 +191,10 @@ async def kakao_skill(
         f"[CALLBACK EXISTS] "
         f"{bool(callback_url)}"
     )
+    
+    # 사용자가 결과 확인 요청하면 최근 분석 결과를 리턴
+    if utterance.strip() == "결과 확인":
+        return handle_check_result(user_id)
 
     # 문자 내용에서 URL과 일반 메시지 분리
     links, message = split_message(utterance)
