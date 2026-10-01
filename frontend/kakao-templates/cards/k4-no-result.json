@@ -4,12 +4,12 @@
     "outputs": [
       {
         "textCard": {
-          "title": "📭 최근 확인한 결과가 없어요",
-          "description": "확인 결과를 찾지 못했어요.\n확인할 문자를 다시 붙여넣어 보내주세요.",
+          "title": "📭 확인 결과를 찾지 못했어요",
+          "description": "확인할 문자를 다시 붙여넣어 보내주세요.",
           "buttonLayout": "vertical",
           "buttons": [
             {
-              "label": "문자 확인하기",
+              "label": "다시 보내기",
               "action": "block",
               "blockId": "{{ block_b1 }}"
             }

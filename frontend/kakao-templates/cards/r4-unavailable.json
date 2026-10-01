@@ -5,7 +5,7 @@
       {
         "textCard": {
           "title": "🙏 지금은 확인을 못 마쳤어요",
-          "description": "저희 쪽 문제로 확인을 끝내지 못했어요.\n보내주신 문자에는 문제가 없어요.\n잠시 뒤에 그대로 다시 시도해주세요.",
+          "description": "문자를 잘못 보내신 게 아니에요.\n잠시 뒤에 그대로 다시 시도해주세요.",
           "buttonLayout": "vertical",
           "buttons": [
             {
