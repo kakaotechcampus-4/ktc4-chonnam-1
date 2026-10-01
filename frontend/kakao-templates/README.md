@@ -24,9 +24,9 @@
 | --- | --- | --- |
 | `block_b1` `block_b1a` `block_b2a` `block_b2b` `block_w2` `block_w2a` `block_r1a` `block_detail` | 버튼 `blockId` | 관리자센터 블록 ID. 블록을 만든 뒤 채운다 |
 | `block_consent` | W3 `동의하고 확인하기` | 동의 기록 후 보류한 문자로 분석을 잇는 스킬 블록 (BE 미구현) |
-| `block_retry` | R4 `다시 시도` | 같은 문자를 서버가 다시 검사하는 스킬 블록 (BE 미구현) |
+| `block_retry` | (지금 안 씀) R4 `다시 시도` | 재검사 미구현이라 R4에서 버튼을 뺐다. 구현하면 되살린다 |
 | `kisa_chatbot_url` `kisa_chat_url` | B2b·R1a 상담 버튼 | KISA 인계 방법 확인 후 |
-| `org_name` `official_url` | R2 | `org_name`은 `message.brand`. `official_url`은 결과에 없다. 브랜드별 공식 홈페이지 주소를 BE 목록(`services/official_domains.py`, 지금은 도메인만 있음)에 더해야 한다. 문자 속 URL은 쓰지 않는다 |
+| `org_name` `official_url` | R2 · R8(`org_name`만) | `org_name`은 `message.brand`. `official_url`은 결과에 없다. 브랜드별 공식 홈페이지 주소를 BE 목록(`services/official_domains.py`, 지금은 도메인만 있음)에 더해야 한다. 문자 속 URL은 쓰지 않는다 |
 | `signal_title` `observed` `reason` `unverified` | 자세히 보기 캐러셀 | 결과의 `details.signals`(검증된 근거)만. 채우는 규칙과 신호별 문구는 `docs/designs/chatbot-copy.md` 4절 "빈칸 채우는 규칙". 128자 안 |
 | `used_info` `sent_info` `retention` `sent_items` `external_service` | W2a·W3 | 개인정보 정책 확인 후. 확정 전 배포 금지 |
 
