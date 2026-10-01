@@ -11,12 +11,12 @@
             {
               "label": "처리 내용 자세히 보기",
               "action": "block",
-              "blockId": "{{ block_w2a }}"
+              "blockId": "6abe5d6a5402049514861b78"
             },
             {
               "label": "스미싱 확인하기",
               "action": "block",
-              "blockId": "{{ block_b1 }}"
+              "blockId": "6aa6a4436d537a3eabb81ad5"
             }
           ]
         }

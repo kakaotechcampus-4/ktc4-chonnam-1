@@ -11,12 +11,12 @@
             {
               "label": "신고하기",
               "action": "block",
-              "blockId": "{{ block_r1a }}"
+              "blockId": "6abba220c841065f2fe49628"
             },
             {
               "label": "자세히 보기",
               "action": "block",
-              "blockId": "{{ block_detail }}"
+              "blockId": "6aad3abfe745d3358bd90c8d"
             }
           ]
         }
