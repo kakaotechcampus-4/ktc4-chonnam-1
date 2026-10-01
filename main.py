@@ -18,7 +18,7 @@ from services.official_domain_service import check_official_domain
 
 # AI 연결
 from ai.pipeline import analyze_message_part, finalize_analysis
-from ai.types import FailureCode, UrlAnalysis
+from ai.types import UrlAnalysis
 
 
 app = FastAPI(lifespan=http_client_lifespan)
@@ -218,7 +218,7 @@ async def run_analysis(
     최종 분석
       → message 결과 전달
       → 격리 페이지 수집기는 아직 미연결
-      → page=None, failure=MISSING_RESULT
+      → page=None으로 전달하여 not_run 처리
       → finalize_analysis()
     
     문자 AI 분석과 urlscan은 독립적인 작업이므로
@@ -446,14 +446,13 @@ async def run_analysis(
             print(
                 "[AI FINAL] "
                 f"domain_match={url_analysis.official} → "
-                "message + missing environment result"
+                "message + environment not_run"
             )
             
             final_result = await finalize_analysis(
                 url=url_analysis,
                 message=message_result,
-                page=None,
-                failure=FailureCode.MISSING_RESULT
+                page=None
             )
 
             final_payload = final_result.model_dump(
