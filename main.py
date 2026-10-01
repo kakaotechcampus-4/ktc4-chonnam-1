@@ -67,7 +67,8 @@ def create_analysis_job(
         "completed_at": None,
         "result": None,
         "error": None,
-        "callback_status": "pending"
+        "callback_status": "pending",
+        "callback_error": None
     }
 
     print(
@@ -744,6 +745,9 @@ async def run_analysis_and_callback(
             else:
                 if job:
                     job["callback_status"] = "failed"
+                    job["callback_error"] = (
+                        f"kakao_callback_status={callback_result_status}"
+                    )
         
                 print(
                     f"[JOB CALLBACK FAILED] "
@@ -756,6 +760,7 @@ async def run_analysis_and_callback(
         
             if job:
                 job["callback_status"] = "failed"
+                job["callback_error"] = "invalid_callback_response"
         
             print(
                 "[CALLBACK WARNING] "
@@ -772,6 +777,9 @@ async def run_analysis_and_callback(
     
         if job:
             job["callback_status"] = "failed"
+            job["callback_error"] = (
+                f"{type(e).__name__}: {e}"
+            )
     
         print(
             f"[CALLBACK SEND FAILED] "
