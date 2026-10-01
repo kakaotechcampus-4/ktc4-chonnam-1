@@ -15,6 +15,8 @@ from backend.src.server.urlscan_service import (
 from backend.src.server.url_utils import split_message
 from backend.src.server.templates.renderer import render_r1_lookalike
 from services.official_domain_service import check_official_domain
+from services.kakao_card_renderer import render_card
+from services.result_card_renderer import render_result_card, merge_kakao_responses
 
 # AI 연결
 from ai.pipeline import analyze_message_part, finalize_analysis
@@ -143,17 +145,11 @@ async def kakao_skill(
 
     # URL이 없는 경우 즉시 응답
     if not links:
-        return kakao_response(
-            "URL을 찾을 수 없습니다.\n"
-            "http:// 또는 https://로 시작하는 URL을 보내주세요."
-        )
+        return render_card("r6-input-required")
 
     # 같은 사용자의 이전 분석이 아직 진행 중인 경우
     if user_id and user_id in RUNNING_USERS:
-        return kakao_response(
-            "이전 요청을 아직 확인하고 있어요. "
-            "잠시 후 다시 시도해주세요."
-        )
+        return render_card("k5-duplicate")
 
     # callbackUrl이 없는 경우 개발/테스트용 동기 처리
     if not callback_url:
@@ -184,16 +180,7 @@ async def kakao_skill(
     )
 
     # 카카오에는 즉시 callback 사용 응답
-    return {
-        "version": "2.0",
-        "useCallback": True,
-        "data": {
-            "text": (
-                "링크를 확인하고 있어요. "
-                "분석이 완료되면 결과를 알려드릴게요."
-            )
-        }
-    }
+    return render_card("r5-analyzing")
 
 
 # ============================================================
@@ -202,31 +189,36 @@ async def kakao_skill(
 
 async def run_analysis(
     links: list[str],
-    message: str
+    message: str,
+    job_id: str | None = None
 ) -> dict:
     """
     현재 AI-BE 연결 테스트 흐름
-    
+
     message
       → AI 문자 분석
-    
+
     URL
       → urlscan
       → score 추출
       → 문자 brand + 최종 domain 기반 official 계산
       → UrlAnalysis 생성
-    
+
     최종 분석
       → message 결과 전달
       → 격리 페이지 수집기는 아직 미연결
       → page=None으로 전달하여 not_run 처리
       → finalize_analysis()
-    
+
     문자 AI 분석과 urlscan은 독립적인 작업이므로
     asyncio.create_task를 이용해 병렬로 실행한다.
+
+    job_id는 결과 카드의 "자세히 보기" 버튼에 꽂혀서,
+    해당 버튼 클릭 시 어떤 분석 결과를 보여줄지 찾는 데 쓰인다
+    (Job 조회 자체는 이 함수의 책임이 아니다).
     """
 
-    result_lines = []
+    card_responses: list[dict] = []
 
     total_start = time.monotonic()
 
@@ -268,8 +260,8 @@ async def run_analysis(
                     f"url={link} uuid 없음"
                 )
 
-                result_lines.append(
-                    f"⚠️ 검사 요청 실패: {link}"
+                card_responses.append(
+                    render_card("r4-unavailable")
                 )
 
                 continue
@@ -296,8 +288,8 @@ async def run_analysis(
                     f"url={link}"
                 )
 
-                result_lines.append(
-                    f"⚠️ 검사 시간 초과: {link}"
+                card_responses.append(
+                    render_card("r4-unavailable")
                 )
 
                 continue
@@ -470,13 +462,13 @@ async def run_analysis(
             )
 
             # ------------------------------------------------
-            # 4. 테스트용 Kakao 출력
+            # 4. Kakao 결과 카드
             # ------------------------------------------------
 
-            result_lines.append(
-                format_ai_result(
-                    link,
-                    final_payload
+            card_responses.append(
+                render_result_card(
+                    final_payload,
+                    job_id=job_id
                 )
             )
 
@@ -487,8 +479,8 @@ async def run_analysis(
                 f"{type(e).__name__}: {e}"
             )
 
-            result_lines.append(
-                f"⚠️ 분석 실패: {link}"
+            card_responses.append(
+                render_card("r4-unavailable")
             )
 
     # 모든 링크가 위에서 continue로 건너뛰어졌다면 message_task를
@@ -520,14 +512,7 @@ async def run_analysis(
         f"{total_elapsed:.2f}s"
     )
 
-    if not result_lines:
-        return kakao_response(
-            "분석 결과를 생성하지 못했습니다."
-        )
-
-    return kakao_response(
-        "\n\n".join(result_lines)
-    )
+    return merge_kakao_responses(card_responses)
 
 
 # ============================================================
@@ -614,7 +599,8 @@ async def run_analysis_and_callback(
             result = await asyncio.wait_for(
                 run_analysis(
                     links,
-                    message
+                    message,
+                    job_id=job_id
                 ),
                 timeout=CALLBACK_DEADLINE_SECONDS
             )
@@ -827,161 +813,6 @@ def kakao_response(
         }
     }
 
-
-# ============================================================
-# AI Result → 테스트용 Kakao 문자열
-# ============================================================
-
-def format_ai_result(
-    original_url: str,
-    ai_result
-) -> str:
-    """
-    AI AnalysisResponse를 카카오톡 simpleText 응답으로 변환한다.
-
-    새 AnalysisResponse 스키마:
-    - url.official: DomainMatch
-    - url.scan.score / scanned_at
-    - message/env.details.doubts
-    - message/env.details.signals
-    - message/env.details.reason.text
-    - message/env.details.reason.failures
-    """
-
-    if hasattr(ai_result, "model_dump"):
-        data = ai_result.model_dump(
-            mode="json"
-        )
-    else:
-        data = ai_result
-
-    url_data = data.get("url") or {}
-    scan_data = url_data.get("scan") or {}
-
-    message_data = data.get("message") or {}
-    message_details = (
-        message_data.get("details") or {}
-    )
-    message_reason = (
-        message_details.get("reason") or {}
-    )
-
-    env_data = data.get("env") or {}
-    env_details = (
-        env_data.get("details") or {}
-    )
-    env_reason = (
-        env_details.get("reason") or {}
-    )
-
-    def format_doubts(
-        doubts: list | None
-    ) -> str:
-        if not doubts:
-            return "없음"
-
-        return "\n".join(
-            (
-                f"- {item.get('value', '알 수 없음')}"
-                f" ({item.get('evidence', '근거 없음')})"
-            )
-            for item in doubts
-        )
-
-    def format_signals(
-        signals: list | None
-    ) -> str:
-        if not signals:
-            return "없음"
-
-        return "\n".join(
-            (
-                f"- {item.get('code', 'unknown')}"
-                f" ({item.get('evidence', '근거 없음')})"
-            )
-            for item in signals
-        )
-
-    def format_failures(
-        failures: list | None
-    ) -> str:
-        if not failures:
-            return "없음"
-
-        return ", ".join(
-            str(failure)
-            for failure in failures
-        )
-
-    message_doubts = format_doubts(
-        message_details.get("doubts")
-    )
-    message_signals = format_signals(
-        message_details.get("signals")
-    )
-    message_failures = format_failures(
-        message_reason.get("failures")
-    )
-
-    env_doubts = format_doubts(
-        env_details.get("doubts")
-    )
-    env_signals = format_signals(
-        env_details.get("signals")
-    )
-    env_failures = format_failures(
-        env_reason.get("failures")
-    )
-
-    text = (
-        "🔎 AI 분석 완료\n\n"
-
-        "[URL 분석]\n"
-        f"입력 URL: {original_url}\n"
-        f"최종 URL: "
-        f"{url_data.get('final_url', '없음')}\n"
-        f"도메인: "
-        f"{url_data.get('domain', '없음')}\n"
-        f"official: "
-        f"{url_data.get('official', '없음')}\n"
-        f"scan score: "
-        f"{scan_data.get('score', '없음')}\n"
-        f"scanned_at: "
-        f"{scan_data.get('scanned_at', '없음')}\n\n"
-
-        "[문자 분석]\n"
-        f"brand: "
-        f"{message_data.get('brand') or '없음'}\n"
-        f"category: "
-        f"{message_data.get('category') or '없음'}\n"
-        f"answer: "
-        f"{message_data.get('answer', '없음')}\n"
-        f"doubts:\n{message_doubts}\n"
-        f"signals:\n{message_signals}\n"
-        f"reason: "
-        f"{message_reason.get('text') or '없음'}\n"
-        f"failures: {message_failures}\n\n"
-
-        "[환경 분석]\n"
-        f"brand: "
-        f"{env_data.get('brand') or '없음'}\n"
-        f"category: "
-        f"{env_data.get('category') or '없음'}\n"
-        f"answer: "
-        f"{env_data.get('answer', '없음')}\n"
-        f"collected_at: "
-        f"{env_data.get('collected_at') or '없음'}\n"
-        f"doubts:\n{env_doubts}\n"
-        f"signals:\n{env_signals}\n"
-        f"reason: "
-        f"{env_reason.get('text') or '없음'}\n"
-        f"failures: {env_failures}\n\n"
-
-        "[최종 판정]\n"
-        f"result: {data.get('result', '없음')}"
-    )
-
-    return text
 
 # ============================================================
 # URLSCAN Result Parser
