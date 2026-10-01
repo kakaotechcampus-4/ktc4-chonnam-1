@@ -32,14 +32,21 @@ class TestRenderCard:
         assert buttons["공식 홈페이지 열기"]["webLinkUrl"] == "https://cjlogistics.com"
 
     def test_unprovided_placeholder_is_left_untouched(self):
-        """FE가 나중에 채울 {{ block_xxx }}는 값이 없으면 그대로 둔다."""
-        card = render_card("r2-official", {"org_name": "CJ대한통운"})
+        """값이 제공되지 않은 placeholder는 그대로 유지한다."""
+        card = render_card(
+            "w3-consent",
+            {
+                "sent_items": "링크",
+                "external_service": "외부 분석 서비스",
+            },
+        )
 
         text_card = card["template"]["outputs"][0]["textCard"]
-        block_button = next(
-            b for b in text_card["buttons"] if b["label"] == "다른 문자 확인하기"
+
+        assert any(
+            button.get("blockId") == "{{ block_consent }}"
+            for button in text_card["buttons"]
         )
-        assert block_button["blockId"] == "{{ block_b1 }}"
 
     def test_missing_values_do_not_crash(self):
         """값을 하나도 안 줘도 placeholder가 그대로 남을 뿐 예외는 없다."""
