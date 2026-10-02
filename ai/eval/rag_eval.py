@@ -249,7 +249,12 @@ def render_report(evaluation: dict, meta: dict) -> str:
     hit3 = smishing["hit3"]
     # test 스미싱이 수십 건이라 한 건이 수 %p 다. 목표 대비 판단에 구간 폭이 필요하다.
     low, high = metrics.wilson(smishing["hits3"], smishing["n"])
-    verdict = "충족" if hit3 >= TARGET_HIT_AT_3 else "미충족"
+    if low >= TARGET_HIT_AT_3:
+        verdict = "충족"
+    elif high < TARGET_HIT_AT_3:
+        verdict = "미충족"
+    else:
+        verdict = "판단 보류"
     lines = [
         f"# RAG 사례 검색 평가: {meta['label']}",
         "",

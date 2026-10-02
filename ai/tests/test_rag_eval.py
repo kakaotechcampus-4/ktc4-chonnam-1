@@ -129,6 +129,22 @@ def test_report_shows_hit3_interval():
     assert "test 스미싱 hit@3: 50.0% (1/2, 95% 구간 9.5%~90.5%)" in report
 
 
+def test_verdict_follows_the_interval_not_the_point():
+    # 1/2 는 점 추정이 목표 50% 와 같지만 구간이 9.5%~90.5% 라 판단할 수 없다.
+    meta = {
+        "label": "t",
+        "date": "2026-10-03",
+        "commit": "abc1234",
+        "kb_total": 3,
+        "settings": "s",
+        "latency": {"first_ms": 1.0, "p50_ms": 0.5, "p95_ms": 0.9},
+    }
+
+    report = rag_eval.render_report(_evaluate(), meta)
+
+    assert "잠정 목표 50.0% 판단 보류" in report
+
+
 def test_parse_ngram_sorts_and_dedupes():
     assert rag_eval.parse_ngram("3,2,3") == (2, 3)
 
