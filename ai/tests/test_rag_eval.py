@@ -135,3 +135,27 @@ def test_make_searcher_uses_given_settings():
     assert len(matches) == rag_eval.TOP_K
     assert matches[0].case_id == "CE-0"
     assert matches[0].similarity == 1.0
+
+
+def test_default_run_times_kb_load_inside_first_search(monkeypatch):
+    # 리포트의 첫 호출 지연에는 KB 로드가 들어가야 한다. load_cases 를 먼저 부르면
+    # 캐시가 차서 첫 검색 시간에서 빠진다.
+    import pytest
+
+    class Stop(Exception):
+        pass
+
+    calls = []
+
+    def searcher(text):
+        calls.append("search")
+        raise Stop
+
+    monkeypatch.setattr(rag_eval, "load_rows", lambda: [{"text": "x"}])
+    monkeypatch.setattr(rag_eval, "default_searcher", searcher)
+    monkeypatch.setattr(rag_eval, "load_cases", lambda: calls.append("load") or ())
+
+    with pytest.raises(Stop):
+        rag_eval.main(["--label", "t"])
+
+    assert calls == ["search"]

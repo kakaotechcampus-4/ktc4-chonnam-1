@@ -313,14 +313,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--tf", choices=("raw", "log"), help="TF 가중: 원 빈도 또는 1+ln(tf)")
     args = parser.parse_args(argv)
 
-    cases = load_cases()
     ngram_sizes = args.ngram or search.NGRAM_SIZES
     sublinear_tf = search.SUBLINEAR_TF if args.tf is None else args.tf == "log"
+    rows = load_rows()
     if args.ngram is None and args.tf is None:
-        searcher = default_searcher
+        # 운영 경로다. 첫 검색에 KB 로드와 색인 생성이 들어가도록 load_cases 보다 먼저 돈다.
+        results = run_search(rows, default_searcher)
+        cases = load_cases()
     else:
-        searcher = make_searcher(cases, ngram_sizes, sublinear_tf)
-    results = run_search(load_rows(), searcher)
+        cases = load_cases()
+        results = run_search(rows, make_searcher(cases, ngram_sizes, sublinear_tf))
     kb_counts = Counter(code.value for case in cases for code in case.categories)
     evaluation = evaluate(results, kb_counts, include_test=not args.dev_only)
     if args.dev_only:
