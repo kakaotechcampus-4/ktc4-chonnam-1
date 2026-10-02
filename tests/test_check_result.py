@@ -226,6 +226,46 @@ class TestCheckResultSkill:
         )
 
         payload = {
+            "intent": {
+                "name": "결과 확인"
+            },
+            "userRequest": {
+                "utterance": "결과 알려줘",
+                "user": {
+                    "id": "kakao-user-1"
+                },
+            }
+        }
+
+        response = client.post(
+            "/kakao/skill",
+            json=payload,
+        )
+
+        assert response.status_code == 200
+
+        expected = main.render_card(
+            "k1-still-running"
+        )
+
+        assert response.json() == expected
+        
+    def test_same_utterance_without_check_result_intent_does_not_query_job(
+        self,
+        client,
+    ):
+        """발화 문자열이 같아도 결과 확인 intent가 아니면 Job 조회로 처리하지 않는다."""
+
+        _create_job(
+            "running-job",
+            "kakao-user-1",
+            status="running",
+        )
+
+        payload = {
+            "intent": {
+                "name": "다른 블록"
+            },
             "userRequest": {
                 "utterance": "결과 확인",
                 "user": {
@@ -242,7 +282,7 @@ class TestCheckResultSkill:
         assert response.status_code == 200
 
         expected = main.render_card(
-            "k1-still-running"
+            "r6-input-required"
         )
 
         assert response.json() == expected

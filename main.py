@@ -186,19 +186,18 @@ async def kakao_skill(
         f"user={user_id} "
         f"utterance={utterance}"
     )
-    
-    print(
-        "[KAKAO INTENT]",
-        body.get("intent")
-    )
 
     print(
         f"[CALLBACK EXISTS] "
         f"{bool(callback_url)}"
     )
     
+    intent_name = (
+        body.get("intent", {}).get("name", "")
+    )
+    
     # 사용자가 결과 확인 요청하면 최근 분석 결과를 리턴
-    if utterance.strip() == "결과 확인":
+    if intent_name == "결과 확인":
         return handle_check_result(user_id)
 
     # 문자 내용에서 URL과 일반 메시지 분리
