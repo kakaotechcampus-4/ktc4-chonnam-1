@@ -8,10 +8,10 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 
 from backend.src.server.urlscan_service import (
     get_http_client,
-    http_client_lifespan,
     submit_url_scan,
     wait_for_url_scan_result,
 )
+from backend.src.server.lifespan import app_lifespan
 from backend.src.server.url_utils import split_message
 from backend.src.server.templates.renderer import render_r1_lookalike
 from services.official_domain_service import check_official_domain
@@ -23,7 +23,7 @@ from ai.pipeline import analyze_message_part, finalize_analysis
 from ai.types import UrlAnalysis
 
 
-app = FastAPI(lifespan=http_client_lifespan)
+app = FastAPI(lifespan=app_lifespan)
 
 
 # TODO:
