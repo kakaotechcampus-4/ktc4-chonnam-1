@@ -1,5 +1,6 @@
 import json
 import re
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from ai.kb.normalize import normalize
@@ -7,6 +8,7 @@ from ai.kb.search import CASES_DIR, load_cases, search_cases
 from ai.types import CategoryCode
 
 DATASETS = Path(__file__).resolve().parents[1] / "eval" / "datasets"
+LINK_TEXT_RE = re.compile(r"h[tx]{2}ps?:/|://|\[\.\]|www\.", re.IGNORECASE)
 RRN_RE = re.compile(r"\d{6}[-\s]?\d{7}")
 PHONE_RE = re.compile(r"01[016789][-\s]?\d{3,4}[-\s]?\d{4}")
 
@@ -18,6 +20,17 @@ def _load_jsonl(name: str) -> list[dict]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def _kb_frontmatter() -> list[dict]:
+    import yaml
+
+    metas = []
+    for path in sorted(CASES_DIR.glob("CE-*.md")):
+        match = re.match(r"\A---\r?\n(.*?)\r?\n---", path.read_text(encoding="utf-8"), re.DOTALL)
+        if match is not None:
+            metas.append(yaml.safe_load(match.group(1)))
+    return metas
 
 
 def test_kb_has_curated_cases():
@@ -135,3 +148,54 @@ def test_benign_messages_do_not_match_kb_strongly():
         result = search_cases(row["text"])
         for match in result.matches:
             assert match.similarity < 0.6, row["text"][:30]
+
+
+def test_every_curated_record_is_indexed():
+    # frontmatter 가 YAML 로 안 읽히거나 variants 가 비면 _parse_case 가 조용히
+    # 버린다. KB 건수가 줄어도 아무도 모르므로 curated 레코드 수와 맞춘다.
+    curated = [meta for meta in _kb_frontmatter() if meta.get("status") == "curated"]
+
+    assert len(load_cases(CASES_DIR)) == len(curated)
+
+
+def test_kb_records_have_no_link_text():
+    # 운영 검색 질의는 링크를 뺀 본문이다. KB 본문에 링크 표기가 남으면 형식이 어긋난다.
+    for case in load_cases(CASES_DIR):
+        for variant in case.variants:
+            assert not LINK_TEXT_RE.search(variant), (case.case_id, variant[:40])
+
+
+def test_rag_testset_rows_carry_split():
+    for row in _load_jsonl("rag_testset.jsonl"):
+        assert row["split"] in {"dev", "test"}, row["id"]
+
+
+def test_rag_testset_source_stays_in_one_split():
+    # 같은 게시물의 문구끼리는 비슷하다. dev 와 test 에 갈라지면 누수다.
+    splits = defaultdict(set)
+    for row in _load_jsonl("rag_testset.jsonl"):
+        if row["group"] == "smishing":
+            splits[row["source"]].add(row["split"])
+
+    assert {source: values for source, values in splits.items() if len(values) > 1} == {}
+
+
+def test_rag_testset_keeps_dev_and_test_smishing_per_category():
+    counts = Counter(
+        (row["category"], row["split"])
+        for row in _load_jsonl("rag_testset.jsonl")
+        if row["group"] == "smishing"
+    )
+    for code in CategoryCode:
+        if code.value in {"other", "unknown"}:
+            continue
+        assert counts[(code.value, "dev")] >= 1, code.value
+        assert counts[(code.value, "test")] >= 1, code.value
+
+
+def test_kb_sources_do_not_overlap_rag_testset():
+    # KB 로 옮긴 출처가 평가에 남으면 같은 게시물 문구로 자기 자신을 찾는다.
+    kb_sources = {meta.get("source") for meta in _kb_frontmatter()} - {None}
+    eval_sources = {row["source"] for row in _load_jsonl("rag_testset.jsonl") if row["source"]}
+
+    assert kb_sources & eval_sources == set()
