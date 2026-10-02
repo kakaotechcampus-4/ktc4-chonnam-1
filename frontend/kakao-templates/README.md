@@ -24,6 +24,7 @@
 | --- | --- | --- |
 | `block_b1` `block_b1a` `block_b2a` `block_b2b` `block_w2` `block_w2a` `block_r1a` `block_detail` | 버튼 `blockId` | **채움** (2026-10-01). 아래 "블록 ID" 표 |
 | `block_consent` | W3 `동의하고 확인하기` | 동의 기록 후 보류한 문자로 분석을 잇는 스킬 블록 (BE 미구현) |
+| `block_detail` | (지금 안 씀) R1·R3 `자세히 보기` | 캐러셀을 보내는 BE 경로가 없어 2026-10-02에 버튼을 뺐다. 구현하면 되살린다 |
 | `block_retry` | (지금 안 씀) R4 `다시 시도` | 재검사 미구현이라 R4에서 버튼을 뺐다. 구현하면 되살린다 |
 | `kisa_chatbot_url` `kisa_chat_url` | B2b·R1a 상담 버튼 | KISA 인계 방법 확인 후 |
 | `org_name` `official_url` | R2 · R8(`org_name`만) | `org_name`은 `message.brand`. `official_url`은 결과에 없다. 브랜드별 공식 홈페이지 주소를 BE 목록(`services/official_domains.py`, 지금은 도메인만 있음)에 더해야 한다. 문자 속 URL은 쓰지 않는다 |
