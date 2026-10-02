@@ -20,7 +20,8 @@ from datetime import date
 from pathlib import Path
 
 import rag_metrics as metrics
-from ai.kb.search import load_cases, search_cases
+from ai.kb import search
+from ai.kb.search import Case, build_index, load_cases, rank, search_cases
 from ai.types import CaseMatch
 
 EVAL_DIR = Path(__file__).resolve().parent
@@ -47,6 +48,20 @@ class RowResult:
 
 def default_searcher(text: str) -> list[CaseMatch]:
     return search_cases(text, min_similarity=0.0, top_k=TOP_K).matches
+
+
+def make_searcher(
+    cases: Sequence[Case], ngram_sizes: tuple[int, ...], sublinear_tf: bool
+) -> Searcher:
+    index = build_index(cases, ngram_sizes=ngram_sizes, sublinear_tf=sublinear_tf)
+    return lambda text: rank(index, text)[:TOP_K]
+
+
+def parse_ngram(value: str) -> tuple[int, ...]:
+    sizes = tuple(sorted({int(part) for part in value.split(",")}))
+    if sizes[0] < 1:
+        raise argparse.ArgumentTypeError("n-gram 크기는 1 이상의 정수다")
+    return sizes
 
 
 def load_rows(path: Path = TESTSET) -> list[dict]:
@@ -294,10 +309,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--dev-only", action="store_true", help="dev 지표만 출력하고 리포트를 쓰지 않는다"
     )
+    parser.add_argument("--ngram", type=parse_ngram, help="예: 2,3. 지정하면 그 설정으로 색인을 새로 만든다")
+    parser.add_argument("--tf", choices=("raw", "log"), help="TF 가중: 원 빈도 또는 1+ln(tf)")
     args = parser.parse_args(argv)
 
-    results = run_search(load_rows(), default_searcher)
     cases = load_cases()
+    ngram_sizes = args.ngram or search.NGRAM_SIZES
+    sublinear_tf = search.SUBLINEAR_TF if args.tf is None else args.tf == "log"
+    if args.ngram is None and args.tf is None:
+        searcher = default_searcher
+    else:
+        searcher = make_searcher(cases, ngram_sizes, sublinear_tf)
+    results = run_search(load_rows(), searcher)
     kb_counts = Counter(code.value for case in cases for code in case.categories)
     evaluation = evaluate(results, kb_counts, include_test=not args.dev_only)
     if args.dev_only:
@@ -315,7 +338,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "date": date.today().isoformat(),
         "commit": _commit(),
         "kb_total": len(cases),
-        "settings": "문자 3-gram Jaccard (search_cases 기본값)",
+        "settings": f"문자 n-gram {ngram_sizes} TF-IDF 코사인, TF {'1+ln(tf)' if sublinear_tf else '원 빈도'}",
         "latency": latency(results),
     }
     path = REPORTS / f"{meta['date']}-rag-{args.label}.md"

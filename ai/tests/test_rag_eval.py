@@ -110,3 +110,28 @@ def test_report_flags_unlabelled_kb_and_escapes_cells():
     assert "측정 불가" in report
     assert "기준값: 0.4000" in report
     assert "줄 바꿈 \\| 파이프" in report
+
+
+def test_parse_ngram_sorts_and_dedupes():
+    assert rag_eval.parse_ngram("3,2,3") == (2, 3)
+
+
+def test_make_searcher_uses_given_settings():
+    from ai.kb.normalize import normalize
+    from ai.kb.search import Case
+
+    cases = [
+        Case(
+            case_id=f"CE-{i}",
+            variants=(text,),
+            normalized=(normalize(text),),
+            categories=(CategoryCode.DELIVERY,),
+        )
+        for i, text in enumerate(["부고 안내", "택배 확인", "과태료 납부", "청첩장 도착"])
+    ]
+
+    matches = rag_eval.make_searcher(cases, (3,), True)("부고 안내")
+
+    assert len(matches) == rag_eval.TOP_K
+    assert matches[0].case_id == "CE-0"
+    assert matches[0].similarity == 1.0
