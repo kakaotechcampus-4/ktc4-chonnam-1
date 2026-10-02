@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "🤔 판단하기 어려워요",
+          "description": "문자 속 링크 대신 택배사 공식 앱이나 홈페이지에서 직접 확인하세요.\n이번 확인에서 위험 근거는 찾지 못했지만, 정상이라고 판단할 근거도 부족해요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "다른 문자 확인하기",
+              "action": "block",
+              "blockId": "6aa6a4436d537a3eabb81ad5"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
