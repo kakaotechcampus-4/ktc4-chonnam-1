@@ -105,6 +105,7 @@ def summarize(results: Sequence[RowResult], threshold: float) -> dict[str, dict]
             entry |= {
                 "hit1": metrics.hit_rate(ranks, 1),
                 "hit3": metrics.hit_rate(ranks, 3),
+                "hits3": sum(1 for rank in ranks if rank is not None and rank <= 3),
                 "mrr": metrics.mrr(ranks),
             }
         summary[group] = entry
@@ -244,7 +245,10 @@ def _failure_lines(title: str, results: Sequence[RowResult]) -> list[str]:
 def render_report(evaluation: dict, meta: dict) -> str:
     kb_counts = evaluation["kb_counts"]
     labelled = sum(kb_counts.values())
-    hit3 = evaluation["test"]["smishing"]["hit3"]
+    smishing = evaluation["test"]["smishing"]
+    hit3 = smishing["hit3"]
+    # test 스미싱이 수십 건이라 한 건이 수 %p 다. 목표 대비 판단에 구간 폭이 필요하다.
+    low, high = metrics.wilson(smishing["hits3"], smishing["n"])
     verdict = "충족" if hit3 >= TARGET_HIT_AT_3 else "미충족"
     lines = [
         f"# RAG 사례 검색 평가: {meta['label']}",
@@ -266,7 +270,7 @@ def render_report(evaluation: dict, meta: dict) -> str:
         "",
         f"- 기준값: {evaluation['threshold']:.4f} (dev hard negative 부착률 {_pct(MAX_HARD_NEGATIVE_RATE)} 이하가 되는 가장 낮은 값)",
         f"- dev hard negative 부착률: {_pct(evaluation['dev']['hard_negative']['attach'])}",
-        f"- test 스미싱 hit@3: {_pct(hit3)} — 잠정 목표 {_pct(TARGET_HIT_AT_3)} {verdict}",
+        f"- test 스미싱 hit@3: {_pct(hit3)} ({smishing['hits3']}/{smishing['n']}, 95% 구간 {_pct(low)}~{_pct(high)}) — 잠정 목표 {_pct(TARGET_HIT_AT_3)} {verdict}",
         "",
         "## 그룹별 지표",
         "",

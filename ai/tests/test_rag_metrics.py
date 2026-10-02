@@ -19,23 +19,17 @@ def _match(score, category="delivery"):
     )
 
 
-def test_rows_from_one_template_land_in_the_same_half():
-    rows = [{"id": f"B-delivery-{i:02d}", "template": "B-delivery-t1"} for i in range(1, 6)]
+def test_is_dev_reads_the_split_field():
+    row = {"id": "S-x-01", "template": None, "source": "https://a"}
 
-    assert len({metrics.is_dev(row) for row in rows}) == 1
-
-
-def test_rows_without_template_split_by_id():
-    assert metrics.split_key({"id": "S-penalty-01", "template": None}) == "S-penalty-01"
-    assert metrics.split_key({"id": "B-penalty-01", "template": "B-penalty-t2"}) == "B-penalty-t2"
+    assert metrics.is_dev({**row, "split": "dev"})
+    assert not metrics.is_dev({**row, "split": "test"})
 
 
-def test_split_is_roughly_half_and_stable():
-    rows = [{"id": f"S-x-{i:03d}", "template": None} for i in range(200)]
-    first = [metrics.is_dev(row) for row in rows]
-
-    assert first == [metrics.is_dev(row) for row in rows]
-    assert 70 <= sum(first) <= 130
+def test_split_key_prefers_template_then_source_then_id():
+    assert metrics.split_key({"id": "B-penalty-01", "template": "B-penalty-t2", "source": None}) == "B-penalty-t2"
+    assert metrics.split_key({"id": "S-penalty-01", "template": None, "source": "https://a"}) == "https://a"
+    assert metrics.split_key({"id": "S-penalty-02", "template": None, "source": None}) == "S-penalty-02"
 
 
 def test_first_hit_rank_skips_wrong_type_and_stops_below_threshold():
@@ -76,3 +70,12 @@ def test_pick_threshold_goes_above_tied_maximum_when_no_candidate_fits():
     hard_negatives = [[_match(0.5)], [_match(0.5)]]
 
     assert metrics.pick_threshold(hard_negatives, 0.0, [0.1, 0.5]) == 0.5001
+
+
+def test_wilson_interval():
+    low, high = metrics.wilson(6, 31)
+
+    assert (round(low, 4), round(high, 4)) == (0.0919, 0.3628)
+    assert metrics.wilson(0, 10)[0] == pytest.approx(0.0, abs=1e-12)
+    assert metrics.wilson(31, 31)[1] == pytest.approx(1.0, abs=1e-12)
+    assert metrics.wilson(0, 0) == (0.0, 0.0)

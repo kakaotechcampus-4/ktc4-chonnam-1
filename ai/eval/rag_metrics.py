@@ -5,7 +5,7 @@
 search.py 가 소수 넷째 자리로 반올림해 보고한다.
 """
 
-import hashlib
+import math
 from collections.abc import Iterable, Sequence
 
 from ai.types import CaseMatch
@@ -15,13 +15,13 @@ SCORE_STEP = 0.0001
 
 
 def split_key(row: dict) -> str:
-    # 합성 정상 문자는 같은 템플릿끼리 거의 중복이다. 템플릿 단위로 묶어야
-    # dev 와 test 에 같은 문제가 갈라져 들어가지 않는다.
-    return row.get("template") or row["id"]
+    # 합성 정상 문자는 같은 템플릿끼리, 스미싱은 같은 게시물끼리 비슷하다.
+    # 이 단위로 묶어 dev 와 test 에 나눴다. 배정은 데이터의 split 필드에 있다.
+    return row.get("template") or row.get("source") or row["id"]
 
 
 def is_dev(row: dict) -> bool:
-    return hashlib.sha256(split_key(row).encode("utf-8")).digest()[0] % 2 == 0
+    return row["split"] == "dev"
 
 
 def top1(matches: Matches) -> float:
@@ -75,3 +75,14 @@ def pick_threshold(
         if attach_rate(constrained, value) <= max_rate:
             return value
     return round(max(top1(matches) for matches in constrained) + SCORE_STEP, 4)
+
+
+def wilson(hits: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """비율의 95% 신뢰구간(Wilson). 표본이 작아도 0~1 을 벗어나지 않는다."""
+    if n == 0:
+        return (0.0, 0.0)
+    p = hits / n
+    denominator = 1 + z * z / n
+    center = (p + z * z / (2 * n)) / denominator
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denominator
+    return (max(0.0, center - half), min(1.0, center + half))

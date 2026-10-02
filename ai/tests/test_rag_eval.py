@@ -112,6 +112,23 @@ def test_report_flags_unlabelled_kb_and_escapes_cells():
     assert "줄 바꿈 \\| 파이프" in report
 
 
+def test_report_shows_hit3_interval():
+    evaluation = _evaluate()
+    meta = {
+        "label": "t",
+        "date": "2026-10-03",
+        "commit": "abc1234",
+        "kb_total": 3,
+        "settings": "s",
+        "latency": {"first_ms": 1.0, "p50_ms": 0.5, "p95_ms": 0.9},
+    }
+
+    report = rag_eval.render_report(evaluation, meta)
+
+    assert evaluation["test"]["smishing"]["hits3"] == 1
+    assert "test 스미싱 hit@3: 50.0% (1/2, 95% 구간 9.5%~90.5%)" in report
+
+
 def test_parse_ngram_sorts_and_dedupes():
     assert rag_eval.parse_ngram("3,2,3") == (2, 3)
 
