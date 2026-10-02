@@ -186,6 +186,11 @@ async def kakao_skill(
         f"user={user_id} "
         f"utterance={utterance}"
     )
+    
+    print(
+        "[KAKAO INTENT]",
+        body.get("intent")
+    )
 
     print(
         f"[CALLBACK EXISTS] "
