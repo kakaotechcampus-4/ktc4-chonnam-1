@@ -170,14 +170,14 @@ def test_rag_testset_rows_carry_split():
         assert row["split"] in {"dev", "test"}, row["id"]
 
 
-def test_rag_testset_source_stays_in_one_split():
-    # 같은 게시물의 문구끼리는 비슷하다. dev 와 test 에 갈라지면 누수다.
+def test_rag_testset_split_unit_stays_in_one_split():
+    # 합성 정상 문자는 같은 템플릿끼리, 스미싱은 같은 게시물끼리 비슷하다.
+    # 한 묶음이 dev 와 test 에 갈라지면 누수다. 행을 손으로 고칠 때도 지킨다.
     splits = defaultdict(set)
     for row in _load_jsonl("rag_testset.jsonl"):
-        if row["group"] == "smishing":
-            splits[row["source"]].add(row["split"])
+        splits[row["template"] or row["source"] or row["id"]].add(row["split"])
 
-    assert {source: values for source, values in splits.items() if len(values) > 1} == {}
+    assert {key: values for key, values in splits.items() if len(values) > 1} == {}
 
 
 def test_rag_testset_keeps_dev_and_test_smishing_per_category():
