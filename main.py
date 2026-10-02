@@ -2,7 +2,7 @@ import asyncio
 import time
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 
@@ -134,6 +134,42 @@ async def get_analysis_job(job_id: str):
 
 
 # ============================================================
+# Time Format
+# ============================================================
+
+def format_completed_at_kst(
+    completed_at: str | None
+) -> str | None:
+    """UTC completed_at을 한국 시간(KST, UTC+9) HH:MM으로 변환한다."""
+
+    if not completed_at:
+        return None
+
+    try:
+        completed_datetime = datetime.fromisoformat(
+            completed_at.replace("Z", "+00:00")
+        )
+
+        if completed_datetime.tzinfo is None:
+            completed_datetime = completed_datetime.replace(
+                tzinfo=timezone.utc
+            )
+
+        kst = timezone(
+            timedelta(hours=9)
+        )
+
+        kst_datetime = completed_datetime.astimezone(
+            kst
+        )
+
+        return kst_datetime.strftime("%H:%M")
+
+    except (ValueError, TypeError):
+        return None
+
+
+# ============================================================
 # Handle Check Result
 # ============================================================
 
@@ -153,10 +189,24 @@ def handle_check_result(
     if status == "completed":
         result = job.get("result")
 
-        if result:
+        if not result:
+            return render_card("k4-no-result")
+
+        completed_time = format_completed_at_kst(
+            job.get("completed_at")
+        )
+
+        if not completed_time:
             return result
 
-        return render_card("k4-no-result")
+        time_message = kakao_response(
+            f"{completed_time}에 확인한 결과예요."
+        )
+
+        return merge_kakao_responses([
+            time_message,
+            result,
+        ])
 
     if status in ("failed", "timeout"):
         return render_card("r4-unavailable")

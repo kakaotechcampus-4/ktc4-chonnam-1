@@ -35,6 +35,7 @@ def _create_job(
     user_id: str,
     status: str = "running",
     created_at: str = "2026-10-02T00:00:00+00:00",
+    completed_at: str | None = None,
     result=None,
 ):
     """결과 확인 테스트용 Job을 저장한다."""
@@ -43,7 +44,7 @@ def _create_job(
         "user_id": user_id,
         "status": status,
         "created_at": created_at,
-        "completed_at": None,
+        "completed_at": completed_at,
         "result": result,
         "error": None,
         "callback_status": "pending",
@@ -141,7 +142,7 @@ class TestHandleCheckResult:
 
         assert response == expected
 
-    def test_completed_job_returns_saved_result(self):
+    def test_completed_job_returns_time_and_saved_result(self):
         saved_result = {
             "version": "2.0",
             "template": {
@@ -159,6 +160,7 @@ class TestHandleCheckResult:
             "completed-job",
             "user-1",
             status="completed",
+            completed_at="2026-10-02T10:23:00+00:00",
             result=saved_result,
         )
 
@@ -166,7 +168,40 @@ class TestHandleCheckResult:
             "user-1"
         )
 
-        assert response == saved_result
+        outputs = response["template"]["outputs"]
+
+        assert outputs[0] == {
+            "simpleText": {
+                "text": "19:23에 확인한 결과예요."
+            }
+        }
+
+        assert outputs[1] == {
+            "simpleText": {
+                "text": "저장된 분석 결과"
+            }
+        }
+        
+    def test_completed_job_without_completed_at_returns_saved_result(
+        self
+    ):
+        saved_result = main.kakao_response(
+            "저장된 분석 결과"
+        )
+
+        _create_job(
+            "completed-job",
+            "user-1",
+            status="completed",
+            completed_at=None,
+            result=saved_result,
+        )
+
+        response = main.handle_check_result(
+            "user-1"
+        )
+
+        assert response == saved_result        
 
     def test_completed_job_without_result_returns_k4(self):
         _create_job(
