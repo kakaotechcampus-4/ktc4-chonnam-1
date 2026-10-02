@@ -1,7 +1,5 @@
 fastapi
 uvicorn[standard]
 httpx
-pytest
-pytest-asyncio
 
 -e ./ai
