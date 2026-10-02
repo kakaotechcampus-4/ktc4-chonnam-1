@@ -4,6 +4,7 @@ from pathlib import Path
 
 from ai.kb.normalize import normalize
 from ai.kb.search import CASES_DIR, load_cases, search_cases
+from ai.types import CategoryCode
 
 DATASETS = Path(__file__).resolve().parents[1] / "eval" / "datasets"
 RRN_RE = re.compile(r"\d{6}[-\s]?\d{7}")
@@ -79,7 +80,7 @@ def _pii_findings(text: str) -> list[str]:
 
 
 def test_datasets_carry_no_obvious_personal_data():
-    for name in ("smishing.jsonl", "benign.jsonl"):
+    for name in ("smishing.jsonl", "benign.jsonl", "rag_testset.jsonl"):
         for row in _load_jsonl(name):
             assert not _pii_findings(row["text"]), (name, row["text"][:40])
 
@@ -94,8 +95,22 @@ def test_kb_records_carry_no_obvious_personal_data():
 def test_eval_dataset_is_disjoint_from_kb():
     kb_normalized = {value for case in load_cases(CASES_DIR) for value in case.normalized}
 
-    for row in _load_jsonl("smishing.jsonl"):
-        assert normalize(row["text"]) not in kb_normalized
+    for row in _load_jsonl("smishing.jsonl") + _load_jsonl("rag_testset.jsonl"):
+        assert normalize(row["text"]) not in kb_normalized, row.get("id", row["text"][:30])
+
+
+def test_rag_testset_is_labelled():
+    rows = _load_jsonl("rag_testset.jsonl")
+    categories = {code.value for code in CategoryCode}
+    assert len({row["id"] for row in rows}) == len(rows)
+    for row in rows:
+        assert row["group"] in {"smishing", "benign", "hard_negative"}, row["id"]
+        assert row["category"] in categories, row["id"]
+        # 실물은 출처 URL 필수, 합성은 템플릿 ID 필수 — 실물 교체 추적용
+        if row["origin"] == "web_public":
+            assert row["source"], row["id"]
+        else:
+            assert row["origin"] == "synthetic_template" and row["template"], row["id"]
 
 
 def test_benign_messages_do_not_match_kb_strongly():
