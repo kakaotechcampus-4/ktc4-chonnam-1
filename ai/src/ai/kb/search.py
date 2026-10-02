@@ -28,7 +28,7 @@ _LOAD_LOCK = threading.Lock()
 # ai/eval/rag_eval.py 의 dev 절반으로 정하는 값입니다. 바꾸면 평가를 다시 돌립니다.
 NGRAM_SIZES: tuple[int, ...] = (3,)
 SUBLINEAR_TF = False
-DEFAULT_MIN_SIMILARITY = 0.2039
+DEFAULT_MIN_SIMILARITY = 0.2102
 
 
 @dataclass(frozen=True)

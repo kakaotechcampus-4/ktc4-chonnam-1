@@ -152,8 +152,10 @@ def _case(case_id, *variants):
 
 
 def test_ngram_in_every_case_weighs_less_than_ngram_in_one():
+    # 기본 n-gram 설정은 평가로 바뀐다. 이 테스트는 IDF 성질만 보므로 크기를 고정한다.
     index = build_index(
-        (_case("A", "고객님 택배 확인"), _case("B", "고객님 부고 확인"), _case("C", "고객님 과태료 확인"))
+        (_case("A", "고객님 택배 확인"), _case("B", "고객님 부고 확인"), _case("C", "고객님 과태료 확인")),
+        ngram_sizes=(2,),
     )
 
     assert index.idf["고객"] < index.idf["부고"]
