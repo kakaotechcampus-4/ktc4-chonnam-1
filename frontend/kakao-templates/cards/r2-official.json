@@ -16,7 +16,7 @@
             {
               "label": "다른 문자 확인하기",
               "action": "block",
-              "blockId": "{{ block_b1 }}"
+              "blockId": "6aa6a4436d537a3eabb81ad5"
             }
           ]
         }

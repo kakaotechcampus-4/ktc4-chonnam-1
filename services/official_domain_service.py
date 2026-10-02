@@ -51,6 +51,8 @@ def is_same_or_subdomain(domain: str, official_domain: str) -> bool:
 def check_official_domain(
     brand: str | None,
     domain: str | None,
+    *,
+    whitelist: dict[str, set[str]] | None = None,
 ) -> DomainMatch:
     """브랜드가 주장하는 도메인이 화이트리스트와 일치하는지 판정한다.
 
@@ -58,6 +60,11 @@ def check_official_domain(
         1. domain이 없거나 빈 문자열/공백뿐이면 대조 자체가 불가능 → unresolved
         2. brand가 없거나 화이트리스트에 등록되지 않았으면 → not_registered
         3. 등록된 공식 도메인과 비교해 일치하면 official, 아니면 brand_mismatch
+
+    `whitelist`를 생략하면 `services.official_domains.OFFICIAL_DOMAINS`를
+    쓴다. 테스트에서 실제 택배사 데이터와 분리된 작은 화이트리스트를
+    주입할 수 있게 하기 위한 인자다 — 운영 데이터가 나중에 늘거나 줄어도
+    판정 로직 자체의 테스트는 흔들리지 않는다.
     """
 
     if domain is None or not domain.strip():
@@ -66,7 +73,8 @@ def check_official_domain(
     if brand is None:
         return "not_registered"
 
-    official_domains = OFFICIAL_DOMAINS.get(brand)
+    active_whitelist = OFFICIAL_DOMAINS if whitelist is None else whitelist
+    official_domains = active_whitelist.get(brand)
 
     if not official_domains:
         return "not_registered"
