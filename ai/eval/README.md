@@ -9,3 +9,23 @@ RAG 유사도는 참고 정보다. 검색 품질과 최종 판정 품질을 분�
 코드·데이터·모델·프롬프트·설정·KB·규칙 버전을 보존한다. 각 지표의 분모·평가법·통과 기준은 명시하며 미합의 수치와 미실행을 통과로 처리하지 않는다. 합성 모형의 결과를 실제 탐지 성능으로 표현하지 않는다.
 
 격리 관측(Observations) 해석은 평가 대상이며, 적응형 보강 조사 비교만 이번 평가 범위 밖에 둔다. 과거 reports는 당시 기록으로 보존하고 새 평가 결과를 별도로 남긴다. 실행 명령은 구현 후 검증하여 추가한다.
+
+## RAG 사례 검색 평가
+
+`ai/` 에서 실행한다. 의존성 설치는 `ai/tests/README.md` 를 따른다.
+
+```bash
+python eval/rag_eval.py --label <방식>             # test 까지 재고 reports/ 에 리포트를 쓴다
+python eval/rag_eval.py --label <방식> --dev-only  # 설정 조정용. dev 지표만 출력한다
+```
+
+Windows 에서 저장소 경로에 한글이 있으면 `.venv` 의 Python 이 `.pth` 를 cp949 로 읽다가
+실패한다. 그때는 시스템 Python(3.11 이상)에 경로를 직접 넘긴다.
+
+```bash
+PYTHONUTF8=1 PYTHONPATH="src;.venv/Lib/site-packages" python eval/rag_eval.py --label <방식>
+```
+
+지표 정의, dev/test 분할, 운영 지점, 잠정 목표와 변경 규칙은
+[설계 문서](../../docs/superpowers/specs/2026-10-02-rag-eval-improvement-design.md)를 따른다.
+설정값은 dev 에서만 조정하고 test 는 설정을 정한 뒤 한 번만 본다.

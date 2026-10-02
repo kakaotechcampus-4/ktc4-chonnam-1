@@ -25,6 +25,8 @@ from ai.types import (
 # both, so this adds time only when extraction finishes before the search.
 SEARCH_TIMEOUT_SECONDS = 1.0
 MAX_MESSAGE_CHARS = 8192
+# Any non-blank text: search_cases returns before touching the KB on blank input.
+_WARM_UP_TEXT = "warm-up"
 
 
 async def _search_with_budget(text: str) -> CaseSearchResult:
@@ -33,6 +35,15 @@ async def _search_with_budget(text: str) -> CaseSearchResult:
     return await asyncio.wait_for(
         asyncio.to_thread(search_cases, text), timeout=SEARCH_TIMEOUT_SECONDS
     )
+
+
+def warm_up_case_search() -> CaseSearchResult:
+    """Fill the caches the case search uses, so no request pays the KB load.
+
+    Runs search_cases itself rather than a loader, so whatever it caches (the
+    cases and the TF-IDF index today) is filled by construction.
+    """
+    return search_cases(_WARM_UP_TEXT)
 
 
 def _failure_code(error: Exception) -> FailureCode:
