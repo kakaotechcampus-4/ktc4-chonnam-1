@@ -62,15 +62,14 @@ class TestSelectResultCard:
 
         assert select_result_card(analysis) == "r9-uncertain"
 
-    def test_brand_mismatch_is_lookalike_even_without_signals(self):
-        # S1-목록 외 성격이어도 brand_mismatch 자체가 사칭 근거다
+    def test_brand_mismatch_without_signals_is_not_official(self):
         analysis = _analysis(
             "brand_mismatch",
             _part("no_risk_found", brand="CJ대한통운"),
             _part("not_run"),
         )
 
-        assert select_result_card(analysis) == "r1-lookalike"
+        assert select_result_card(analysis) == "r8-not-official"
 
     def test_brand_mismatch_with_signals_is_still_lookalike(self):
         analysis = _analysis(
@@ -80,26 +79,34 @@ class TestSelectResultCard:
         )
 
         assert select_result_card(analysis) == "r1-lookalike"
+        
+    def test_brand_mismatch_with_unknown_brand_is_uncertain(self):
+        analysis = _analysis(
+            "brand_mismatch",
+            _part("no_risk_found", brand="unknown"),
+            _part("not_run"),
+        )
 
-    def test_not_registered_with_known_brand_is_not_official_card(self):
-        # S1-목록 외 (예: 목록에 없는 제휴사 주소)
+        assert select_result_card(analysis) == "r9-uncertain"
+        
+    def test_not_registered_with_known_brand_is_uncertain(self):
         analysis = _analysis(
             "not_registered",
             _part("no_risk_found", brand="누리몰"),
             _part("not_run"),
         )
 
-        assert select_result_card(analysis) == "r8-not-official"
+        assert select_result_card(analysis) == "r9-uncertain"
 
-    def test_not_registered_without_brand_is_inconclusive(self):
-        """브랜드 자체를 특정 못 하면 org_name을 채울 수 없어 r8 대신 r3."""
+
+    def test_not_registered_without_brand_is_uncertain(self):
         analysis = _analysis(
             "not_registered",
             _part("no_risk_found", brand=None),
             _part("not_run"),
         )
 
-        assert select_result_card(analysis) == "r3-inconclusive"
+        assert select_result_card(analysis) == "r9-uncertain"
 
     def test_unresolved_is_uncertain(self):
         analysis = _analysis(

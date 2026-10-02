@@ -14,7 +14,6 @@ FE·AI가 "정상이라고 말할 조건"(docs/designs/result-meaning-cases.md
 
 RESULT_CARD_LOOKALIKE = "r1-lookalike"
 RESULT_CARD_OFFICIAL = "r2-official"
-RESULT_CARD_INCONCLUSIVE = "r3-inconclusive"
 RESULT_CARD_NOT_OFFICIAL = "r8-not-official"
 RESULT_CARD_UNCERTAIN = "r9-uncertain"
 
@@ -64,11 +63,9 @@ def select_result_card(analysis_result: dict) -> str:
         return RESULT_CARD_UNCERTAIN
 
     if official == "brand_mismatch":
-        return RESULT_CARD_LOOKALIKE
+        if message.get("brand") == "unknown":
+            return RESULT_CARD_UNCERTAIN
 
-    if official == "not_registered":
-        if not message.get("brand"):
-            return RESULT_CARD_INCONCLUSIVE
         return RESULT_CARD_NOT_OFFICIAL
 
     return RESULT_CARD_UNCERTAIN

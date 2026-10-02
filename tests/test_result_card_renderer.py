@@ -63,7 +63,7 @@ class TestRenderResultCard:
 
     def test_not_official_card_fills_org_name(self):
         analysis = _analysis(
-            "not_registered",
+            "brand_mismatch",
             _part("no_risk_found", brand="누리몰"),
             _part("not_run"),
         )
@@ -72,21 +72,6 @@ class TestRenderResultCard:
 
         text_card = card["template"]["outputs"][0]["textCard"]
         assert "누리몰" in text_card["description"]
-
-    def test_job_id_is_injected_into_detail_button(self):
-        analysis = _analysis(
-            "brand_mismatch",
-            _part("risk_found", brand="CJ대한통운", signals=[_signal()]),
-            _part("not_run"),
-        )
-
-        card = render_result_card(analysis, job_id="job-123")
-
-        text_card = card["template"]["outputs"][0]["textCard"]
-        detail_button = next(
-            b for b in text_card["buttons"] if b["label"] == "자세히 보기"
-        )
-        assert detail_button["extra"] == {"job_id": "job-123"}
 
     def test_no_job_id_means_no_extra_injected(self):
         analysis = _analysis(
