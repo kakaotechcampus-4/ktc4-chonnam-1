@@ -41,6 +41,23 @@ def test_kb_stored_normalized_field_is_not_stale():
         assert meta["normalized"] == normalize(meta["variants"][0]), path.name
 
 
+def test_kb_categories_are_known_and_single():
+    # _parse_case 는 모르는 유형 코드를 조용히 버린다. 오타가 나면 검색 평가에서
+    # hit 실패로만 보이므로 저장된 frontmatter 를 직접 검사한다. 테스트셋처럼
+    # 대표 유형 하나만 붙인다. 여러 개를 허용하면 hit 이 부풀려진다.
+    import yaml
+
+    allowed = {code.value for code in CategoryCode} - {"other", "unknown"}
+    for path in sorted(CASES_DIR.glob("CE-*.md")):
+        raw = path.read_text(encoding="utf-8")
+        match = re.match(r"\A---\r?\n(.*?)\r?\n---", raw, re.DOTALL)
+        if match is None:
+            continue
+        categories = yaml.safe_load(match.group(1)).get("categories") or []
+        assert len(categories) <= 1, path.name
+        assert set(categories) <= allowed, path.name
+
+
 def test_kb_records_are_deduplicated():
     # 한 레코드 안에서는 여러 변종이 같은 정규화 결과를 갖는 것이 정상입니다.
     # 금지되는 것은 서로 다른 레코드가 같은 변종을 나눠 갖는 것입니다.
