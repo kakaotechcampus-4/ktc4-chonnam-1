@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>스미싱 파이프라인 검토</title>
+<style>
+:root{
+  --bg:#f7f7f5; --surface:#ffffff; --text:#1d1d1b; --muted:#66655f; --line:#dcdad3;
+  --accent:#2f5bd3; --accent-soft:#e6ecfb;
+  --high:#c0362c; --high-soft:#fbe9e7; --mid:#b26a00; --mid-soft:#fdf1df; --low:#5f6b7a; --low-soft:#eef0f3;
+  --ok:#1f7a4d; --ok-soft:#e3f3ea;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#161614; --surface:#1f1f1c; --text:#ecebe6; --muted:#a3a29b; --line:#383732;
+    --accent:#8aa8ff; --accent-soft:#232c45;
+    --high:#ff8a7e; --high-soft:#3a1f1c; --mid:#f2b45a; --mid-soft:#3a2c16; --low:#aab4c2; --low-soft:#2a2d33;
+    --ok:#6fd3a0; --ok-soft:#173226;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161614; --surface:#1f1f1c; --text:#ecebe6; --muted:#a3a29b; --line:#383732;
+  --accent:#8aa8ff; --accent-soft:#232c45;
+  --high:#ff8a7e; --high-soft:#3a1f1c; --mid:#f2b45a; --mid-soft:#3a2c16; --low:#aab4c2; --low-soft:#2a2d33;
+  --ok:#6fd3a0; --ok-soft:#173226;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif}
+main{max-width:1040px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:1.7rem;margin:0 0 6px;letter-spacing:-.01em}
+h2{font-size:1.25rem;margin:48px 0 8px}
+h3{font-size:1.05rem;margin:0 0 6px}
+p{margin:0 0 12px}
+.lead{color:var(--muted);max-width:68ch}
+code{font-family:ui-monospace,Consolas,monospace;font-size:.88em;background:var(--accent-soft);padding:1px 5px;border-radius:4px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:20px}
+.stat b{display:block;font-size:1.6rem;line-height:1.2}
+.stat span{color:var(--muted);font-size:.9rem}
+
+/* flow */
+.flow-wrap{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:760px){.flow-wrap{grid-template-columns:1fr}}
+.flow{display:flex;flex-direction:column;gap:0}
+.step{all:unset;cursor:pointer;display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;position:relative}
+.step:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.step[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.step .n{flex:none;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:.8rem;font-weight:600;background:var(--bg);border:1px solid var(--line)}
+.step .t{flex:1;min-width:0}
+.step .t small{display:block;color:var(--muted);font-size:.8rem;line-height:1.3}
+.dots{display:flex;gap:3px;flex:none}
+.dot{width:8px;height:8px;border-radius:50%}
+.dot.high{background:var(--high)}.dot.mid{background:var(--mid)}.dot.low{background:var(--low)}
+.arrow{height:14px;margin-left:24px;border-left:2px solid var(--line)}
+.zone{font-size:.75rem;color:var(--muted);margin:10px 0 4px 2px;text-transform:none;letter-spacing:.02em}
+.zone.iso{color:var(--mid)}
+.detail{position:sticky;top:16px}
+.detail .what{background:var(--bg);border-radius:8px;padding:12px 14px;margin:10px 0 16px}
+.issue{border:1px solid var(--line);border-left:4px solid var(--low);border-radius:8px;padding:10px 12px;margin-bottom:10px}
+.issue.high{border-left-color:var(--high)}.issue.mid{border-left-color:var(--mid)}
+.issue header{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:4px}
+.issue .id{font-weight:700}
+.badge{font-size:.72rem;padding:1px 7px;border-radius:999px;font-weight:600}
+.badge.high{background:var(--high-soft);color:var(--high)}.badge.mid{background:var(--mid-soft);color:var(--mid)}.badge.low{background:var(--low-soft);color:var(--low)}
+.issue .row{font-size:.92rem;margin:2px 0}
+.issue .row b{color:var(--muted);font-weight:600;margin-right:4px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.85rem;color:var(--muted);margin:8px 0 14px}
+.legend span{display:flex;align-items:center;gap:5px}
+.filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.chip{all:unset;cursor:pointer;font-size:.85rem;padding:4px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface)}
+.chip[aria-pressed="true"]{background:var(--text);color:var(--bg);border-color:var(--text)}
+.chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.empty{color:var(--muted);font-size:.92rem}
+
+/* simulator */
+.sim{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}
+@media (max-width:760px){.sim{grid-template-columns:1fr}}
+fieldset{border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin:0 0 12px}
+legend{font-weight:600;font-size:.9rem;padding:0 4px}
+label.f{display:flex;gap:8px;align-items:flex-start;padding:4px 0;font-size:.92rem;cursor:pointer}
+label.f input{margin-top:5px}
+label.f .w{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+.hard{font-size:.7rem;font-weight:700;color:var(--high);margin-left:4px}
+.verdict{border-radius:12px;padding:16px;margin-bottom:12px}
+.verdict .v{font-size:1.4rem;font-weight:700}
+.v-danger{background:var(--high-soft);color:var(--high)}
+.v-caution{background:var(--mid-soft);color:var(--mid)}
+.v-check{background:var(--low-soft);color:var(--low)}
+.v-ok{background:var(--ok-soft);color:var(--ok)}
+.calc{font-variant-numeric:tabular-nums;font-size:.92rem}
+.calc div{display:flex;justify-content:space-between;border-bottom:1px dashed var(--line);padding:4px 0}
+ol.rules{padding-left:20px;margin:12px 0 0;font-size:.9rem}
+ol.rules li{padding:3px 6px;border-radius:6px;color:var(--muted)}
+ol.rules li.hit{background:var(--accent-soft);color:var(--text);font-weight:600}
+.warn{margin-top:12px;font-size:.9rem;border-left:3px solid var(--mid);padding:6px 10px;background:var(--mid-soft);border-radius:0 6px 6px 0}
+.warn:empty{display:none}
+
+/* priorities */
+.prio{counter-reset:p;list-style:none;padding:0;margin:0;display:grid;gap:10px}
+.prio li{counter-increment:p;display:flex;gap:12px;align-items:flex-start}
+.prio li::before{content:counter(p);flex:none;width:30px;height:30px;border-radius:50%;background:var(--text);color:var(--bg);display:grid;place-items:center;font-weight:700}
+.prio a{color:var(--accent);cursor:pointer;text-decoration:underline}
+footer{margin-top:48px;color:var(--muted);font-size:.85rem}
+</style>
+</head>
+<body>
+<main>
+  <h1>스미싱 확인 파이프라인 설계 검토</h1>
+  <p class="lead">택배 사칭 문자의 링크를 우리 서버가 직접 조사하는 설계(2026-10-01 문서)를 흐름 순서대로 따라가며, 각 단계에서 무엇을 하는지와 어디가 약한지를 보여줍니다. 행 번호는 원본 설계 문서 기준입니다.</p>
+
+  <div class="stats">
+    <div class="card stat"><b>22건</b><span>찾은 결함</span></div>
+    <div class="card stat"><b style="color:var(--high)">8건</b><span>높음 — 판정이 틀리거나 격리가 뚫림</span></div>
+    <div class="card stat"><b style="color:var(--mid)">10건</b><span>중간 — 특정 조건에서 오탐·서비스 저하</span></div>
+    <div class="card stat"><b style="color:var(--low)">4건</b><span>낮음 — 문서 명확성</span></div>
+  </div>
+
+  <h2>1. 문자 하나가 판정되기까지</h2>
+  <p class="lead">왼쪽 단계를 누르면 오른쪽에 쉬운 설명과 그 단계의 결함이 나옵니다. 점 색이 결함의 심각도입니다. 주황색 구역은 의심 링크에 실제로 접속하는 "격리 수집기"입니다.</p>
+  <div class="legend">
+    <span><i class="dot high"></i>높음</span><span><i class="dot mid"></i>중간</span><span><i class="dot low"></i>낮음</span>
+  </div>
+  <div class="filters" role="group" aria-label="심각도 필터">
+    <button class="chip" data-sev="all" aria-pressed="true">전체</button>
+    <button class="chip" data-sev="high" aria-pressed="false">높음만</button>
+    <button class="chip" data-sev="mid" aria-pressed="false">중간만</button>
+    <button class="chip" data-sev="low" aria-pressed="false">낮음만</button>
+  </div>
+  <div class="flow-wrap">
+    <div class="flow" id="flow"></div>
+    <div class="card detail" id="detail" aria-live="polite"></div>
+  </div>
+
+  <h2>2. 판정 규칙 직접 돌려보기</h2>
+  <p class="lead">링크에서 발견된 특징을 골라 보세요. 설계 문서의 점수 공식과 판정 규칙 그대로 계산합니다. 3-1, 3-2 같은 판정 결함이 실제로 어떻게 드러나는지 확인할 수 있습니다.</p>
+  <div class="sim">
+    <div id="simForm"></div>
+    <div>
+      <div class="verdict" id="verdict"></div>
+      <div class="card calc" id="calc"></div>
+      <div class="warn" id="warn"></div>
+    </div>
+  </div>
+
+  <h2>3. 먼저 고칠 5가지</h2>
+  <p class="lead">구현 전에 설계 문서에 반영해야 할 항목입니다. 항목 번호를 누르면 흐름도의 해당 단계로 이동합니다.</p>
+  <ol class="prio" id="prio"></ol>
+
+  <footer>근거: <code>2026-10-01-smishing-pipeline-design.md</code> 한 문서만 검토했습니다. 저장소의 다른 문서와는 비교하지 않았습니다. 작성 2026-10-03.</footer>
+</main>
+
+<script>
+const ISSUES = {
+  "1-1":{sev:"high",title:"수집기가 어디서 도는지 정해져 있지 않음",lines:"8, 114, 321",impact:"메인 서버와 한 대에 같이 띄우면 격리는 컨테이너 하나뿐입니다. 브라우저가 뚫리면 메인 서버의 비밀키까지 노출됩니다.",fix:"배치를 확정하고 §5에 격리 수준(호스트 분리 또는 컨테이너 강화)을 적습니다."},
+  "1-2":{sev:"high",title:"공격자 HTML을 격리 밖에서 파싱",lines:"73, 80, 290",impact:"격리 원칙이 '접속'만 막습니다. 공격자가 만든 HTML이 메인 서버로 넘어와 파서 취약점·자원 고갈이 격리 밖에서 일어납니다.",fix:"특징 추출을 수집기 안에서 끝내고, 밖으로는 검증된 구조화 값만 보냅니다."},
+  "1-3":{sev:"mid",title:"'판정에 LLM 안 씀'인데 증거 2개가 문자 분석에서 옴",lines:"69, 81, 140–141",impact:"같은 문자가 다른 판정을 낼 수 있고, 문자 본문에 지시문을 넣어 증거를 지울 수 있습니다.",fix:"결정성이 성립하는 범위를 명시하고, 문자 분석 결과를 검증하는 단계를 둡니다."},
+  "1-4":{sev:"mid",title:"URL 속 개인정보를 인정하면서 urlscan에만 대응",lines:"221, 230, 280, 293–294",impact:"캐시 키·비교 기록·라벨에 수신자 토큰과 전화번호가 그대로 남습니다.",fix:"URL도 마스킹 대상에 넣고 보관 기간을 정합니다."},
+  "1-5":{sev:"low",title:"핵심 전제에 확인 출처가 없음",lines:"103, 294",impact:"콜백 '5분'이 틀리면 응답을 20초까지 늦추는 설계가 무너집니다.",fix:"다른 외부 사실처럼 확인 날짜와 출처를 적습니다."},
+  "2-1":{sev:"high",title:"공식 주소에서는 JS 실행(3단계)을 건너뜀",lines:"101, 167",impact:"공식 페이지 안의 JS 리다이렉트나 #fragment 리다이렉트를 거쳐 가짜 사이트로 가도 '위험 신호 미발견'이 나옵니다.",fix:"공식 경로도 3단계에 넣거나, JS 리다이렉트를 확인하지 못하면 미발견을 주지 않습니다."},
+  "2-2":{sev:"high",title:"허용 목록 비교가 너무 넓음",lines:"166–169, 189, 192",impact:"탈취된 서브도메인이나 http:// 공식 주소도 미발견이 됩니다. 목록을 잘못 바꾸면 판정이 바로 바뀝니다.",fix:"호스트 전체 일치, HTTPS와 유효한 인증서 필수, 목록 변경 시 리뷰와 기록."},
+  "2-3":{sev:"high",title:"내부망 접근(SSRF) 방어에 빈틈",lines:"149, 288",impact:"DNS 리바인딩, IPv6나 0177.0.0.1 같은 우회 표기, 사설 IP로 풀리는 호스트명, file:·intent: 스킴, 임의 포트로 내부망에 닿을 수 있습니다.",fix:"검사한 IP로 직접 연결하고, IPv6·우회 표기를 포함하고, 허용 스킴·포트와 egress 방화벽 규칙을 명시합니다."},
+  "2-4":{sev:"high",title:"단계마다 URL을 다르게 해석할 수 있음",lines:"189",impact:"https://cjlogistics.com@evil.xyz 를 1단계는 공식 도메인으로, 2·3단계는 evil.xyz로 해석할 수 있습니다.",fix:"URL 정규화를 한 번만 하고 모든 단계가 그 결과를 함께 씁니다."},
+  "2-5":{sev:"high",title:"남용 방지가 없음",lines:"37, 45, 252, 326",impact:"누구나 임의 URL을 대신 방문시킬 수 있고, CPU 과금이 폭증하고, 브라우저 2개를 점유해 전원이 시간 초과를 받습니다. 사기범의 탐지 시험기가 되고, 콜백 주소로 메인 서버가 임의 주소에 요청을 보냅니다.",fix:"카카오 요청 검증, 사용자별·전역 횟수 제한, 대기열 상한, 콜백 호스트 허용 목록."},
+  "2-6":{sev:"mid",title:"수집할 때 자원 상한이 부족함",lines:"71, 92, 289, 291",impact:"압축 폭탄, 끝없는 응답, 아주 느린 응답, 거대한 RDAP 응답, 디스크에 남는 다운로드 조각.",fix:"압축을 푼 크기 기준으로 받는 도중 끊기, 읽기 타임아웃, RDAP 크기 제한, 다운로드는 디스크에 쓰지 않기."},
+  "2-7":{sev:"mid",title:"우리의 방문이 공격자에게 신호가 됨",lines:"294, 322",impact:"수신자별 토큰이 든 링크를 방문하면 공격자는 '이 번호는 살아 있다'는 걸 알게 됩니다. 1회용 링크도 소모됩니다.",fix:"§7 위험 목록에 넣고 감수할지 결정합니다."},
+  "2-8":{sev:"mid",title:"캐시 오염, 결과 조회 권한",lines:"103, 280",impact:"수집기에만 정상 화면을 보여주면 그 결과가 3시간 캐시되어 다른 사용자의 판정이 낮아집니다. 남의 결과를 조회할 수도 있습니다.",fix:"클로킹이 의심되면 캐시를 짧게, 결과 조회는 요청한 사람에게만."},
+  "2-9":{sev:"mid",title:"응답에 의심 링크가 그대로 나갈 수 있음",lines:"196–207",impact:"결과 메시지에 의심 URL이 클릭 가능한 링크로 다시 나가고, 공격자가 쓴 텍스트가 그대로 노출됩니다.",fix:"hxxp, [.] 같은 무력화 표기와 외부 텍스트 길이·내용 제한."},
+  "2-10":{sev:"low",title:"보안 절에 위협 모델이 없음",lines:"284–330",impact:"무엇을 누구로부터 지키는지가 없어서 위 항목들이 빠졌습니다. 테스트와 열린 질문에도 보안 항목이 없습니다.",fix:"위협 모델 표(지킬 대상, 공격자, 신뢰 경계)와 보안 테스트를 추가합니다."},
+  "3-1":{sev:"high",title:"lookalike_domain 하나로 '위험' 확정",lines:"139, 319",impact:"'택배사 이름이 들어간 도메인'만으로 무조건 위험이 되어 정상 제휴몰·블로그가 오탐됩니다.",fix:"hard에서 빼고 점수 특징으로 바꿉니다. 퓨니코드만으로는 0점, 문자 체계가 섞였거나(라틴+키릴 등) 허용 목록 브랜드와 생김새가 같을 때만 +50."},
+  "3-2":{sev:"mid",title:"감점이 판정에 거의 영향이 없음",lines:"151–153, 170–172",impact:"신호가 하나라도 있으면 점수와 상관없이 '주의'가 되므로, 음수 점수와 감점 조정은 판정을 바꾸지 못합니다.",fix:"점수 범위가 비교용이라는 점과 감점의 실제 역할을 명시합니다."},
+  "3-3":{sev:"mid",title:"시간 초과일 때 brand_mismatch 기준이 모호",lines:"140, 183",impact:"최종 URL을 모르는데도 예시에서는 +40을 줍니다.",fix:"시간 초과 시 입력 URL로 대신하는지 정의합니다."},
+  "3-4":{sev:"mid",title:"전환 기준 표본 50건이 너무 작음",lines:"242–243",impact:"탐지율 90%의 95% 신뢰구간이 약 78~96%라 실제 80%짜리도 통과할 수 있습니다.",fix:"표본을 늘리거나 신뢰구간 하한을 기준으로 삼습니다."},
+  "3-5":{sev:"mid",title:"reported_before 목록에 만료·등록 규칙이 없음",lines:"138, 319",impact:"위협 피드에 90일 기준을 둔 이유(재등록 도메인 오탐)가 여기에도 그대로 해당합니다.",fix:"만료 기준과 등록·검토 절차를 정합니다."},
+  "3-6":{sev:"low",title:"학습 단계에서 기준값 50의 의미가 바뀜",lines:"211",impact:"(2p−1)×100으로 바꾸면 50은 확률 0.75를 뜻합니다.",fix:"학습으로 넘어갈 때 기준값을 다시 정한다고 적습니다."},
+  "3-7":{sev:"low",title:"상업적 사용 확인이 일부 출처에서 빠짐",lines:"26, 320, 327",impact:"rdap.org와 KISA WHOIS API의 이용 조건이 확인되지 않았습니다.",fix:"확인 목록에 추가합니다."}
+};
+
+const STEPS = [
+  {id:"in",zone:"메인 서버",name:"카카오로 문자 입력",sub:"URL이 있는지 확인",what:"사용자가 의심 문자를 카카오톡 챗봇에 붙여 넣습니다. 링크가 없으면 바로 안내하고 끝내고, 있으면 '확인 중'이라고 먼저 답한 뒤 조사를 시작합니다.",issues:["2-5"]},
+  {id:"msg",name:"문자 분석",sub:"어느 택배사를 사칭? 무엇을 요구?",what:"문자 내용에서 사칭하는 택배사와 요구하는 행동(앱 설치, 결제, 개인정보 등)을 뽑습니다. 링크 조사와 동시에 돕니다. 여기서 나온 값이 증거 점수에 들어갑니다.",issues:["1-3"]},
+  {id:"s1",name:"1단계 · 주소 문자열 검사",sub:"접속하지 않고 주소만 봄",what:"링크에 접속하지 않고 주소 글자만 봅니다. 공식 택배사 주소 목록과 맞는지, 비슷하게 흉내 낸 주소인지, 신고된 적 있는지, 도메인이 언제 생겼는지(RDAP)를 확인합니다. 여기서 확실한 위험(hard)이 나오면 2·3단계를 건너뜁니다.",issues:["2-4","2-2","3-1","3-5","3-7"]},
+  {id:"s2",zone:"격리 수집기 — 의심 링크에 실제로 접속하는 곳",iso:true,name:"2단계 · 가볍게 접속 (httpx)",sub:"리다이렉트 추적, 다운로드 감지",what:"격리된 수집기가 휴대폰인 척 링크에 접속합니다. 다른 주소로 넘기는지(최대 5번), 앱 파일을 내려받게 하는지, 입력칸이 있는지 HTML을 받아 봅니다. 3초 안에 끝내야 합니다.",issues:["2-3","2-6","2-7","1-1"]},
+  {id:"s3",iso:true,name:"3단계 · 실제 브라우저 (Playwright)",sub:"필요할 때만 JS 실행",what:"페이지가 자바스크립트로 그려지거나 숨겨진 리다이렉트가 의심될 때만 진짜 브라우저로 열어 봅니다. 무겁기 때문에 동시에 2페이지까지만 돌립니다.",issues:["2-1","1-1"]},
+  {id:"pf",zone:"다시 메인 서버",name:"페이지 특징 추출",sub:"HTML → 입력칸·브랜드·폼",what:"받아 온 HTML에서 비밀번호·카드번호 입력칸, 다른 도메인으로 가는 폼, 페이지에 적힌 택배사 이름 같은 특징을 뽑습니다.",issues:["1-2"]},
+  {id:"sc",name:"점수 계산과 판정 규칙",sub:"위험 · 주의 · 확인 필요 · 미발견",what:"특징마다 정해진 점수를 더하고, 규칙을 위에서부터 적용해 4단계 판정을 냅니다. 아래 '판정 규칙 직접 돌려보기'에서 직접 해 볼 수 있습니다.",issues:["3-2","3-3","3-6"]},
+  {id:"out",name:"사용자에게 응답",sub:"근거 + 미확인 항목 + 행동 가이드",what:"판정과 이유 2~3개, 확인하지 못한 것, '결제는 공식 앱에서' 같은 행동 가이드를 보냅니다. 위험하면 KISA 118을 안내합니다. 결과는 카카오 콜백으로 나중에 보냅니다.",issues:["2-9","1-5"]},
+  {id:"log",name:"캐시와 기록",sub:"재사용 · 비교 · 전환 판단",what:"같은 링크가 또 오면 빨리 답하도록 링크 특징을 저장하고, urlscan과 결과를 비교해 기록합니다. 이 기록으로 urlscan을 대체할지 결정합니다.",issues:["2-8","1-4","3-4"]},
+  {id:"doc",zone:"문서 전체",name:"보안 절 (§5) 자체",sub:"구조의 문제",what:"보안 내용은 7개 항목이 나열되어 있지만, 무엇을 누구로부터 지키는지 정리한 위협 모델이 없습니다.",issues:["2-10"]}
+];
+
+let current="s1", sevFilter="all";
+const flow=document.getElementById("flow"), detail=document.getElementById("detail");
+
+function esc(s){return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]))}
+
+function renderFlow(){
+  flow.innerHTML="";
+  STEPS.forEach((s,i)=>{
+    if(s.zone){const z=document.createElement("div");z.className="zone"+(s.iso?" iso":"");z.textContent=s.zone;flow.appendChild(z)}
+    else if(i>0){const a=document.createElement("div");a.className="arrow";flow.appendChild(a)}
+    const b=document.createElement("button");
+    b.className="step";b.setAttribute("aria-pressed",s.id===current);
+    if(s.iso) b.style.borderStyle="dashed";
+    const dots=s.issues.filter(id=>sevFilter==="all"||ISSUES[id].sev===sevFilter).map(id=>`<i class="dot ${ISSUES[id].sev}"></i>`).join("");
+    b.innerHTML=`<span class="n">${i+1}</span><span class="t">${esc(s.name)}<small>${esc(s.sub)}</small></span><span class="dots">${dots}</span>`;
+    b.onclick=()=>{current=s.id;renderFlow();renderDetail()};
+    flow.appendChild(b);
+  });
+}
+
+function renderDetail(){
+  const s=STEPS.find(x=>x.id===current);
+  const list=s.issues.filter(id=>sevFilter==="all"||ISSUES[id].sev===sevFilter);
+  const sevName={high:"높음",mid:"중간",low:"낮음"};
+  detail.innerHTML=`<h3>${esc(s.name)}</h3>
+    <div class="what"><b>이 단계가 하는 일</b><br>${esc(s.what)}</div>
+    <h3>여기서 찾은 결함 ${list.length}건</h3>
+    ${list.length?list.map(id=>{const x=ISSUES[id];return `<article class="issue ${x.sev}">
+      <header><span class="id">${id}</span><span class="badge ${x.sev}">${sevName[x.sev]}</span><span>${esc(x.title)}</span></header>
+      <div class="row"><b>무슨 일이 생기나</b>${esc(x.impact)}</div>
+      <div class="row"><b>제안</b>${esc(x.fix)}</div>
+      <div class="row"><b>근거</b>${x.lines}행</div></article>`}).join(""):`<p class="empty">이 심각도의 결함은 없습니다.</p>`}`;
+}
+
+document.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{
+  sevFilter=c.dataset.sev;
+  document.querySelectorAll(".chip").forEach(x=>x.setAttribute("aria-pressed",x===c));
+  renderFlow();renderDetail();
+});
+
+/* simulator — 설계 문서 §2 그대로 */
+const FEATS=[
+  {g:"증거",k:"threat_feed",n:"위협 피드에 등재",w:100,hard:true},
+  {g:"증거",k:"reported_before",n:"사람이 확인한 스미싱 도메인",w:50,hard:true},
+  {g:"증거",k:"lookalike_domain",n:"택배사 흉내 도메인 (토큰 포함만으로도)",w:30,hard:true},
+  {g:"증거",k:"brand_mismatch",n:"사칭 택배사의 공식 도메인이 아님",w:40},
+  {g:"증거",k:"risky_action",n:"문자가 앱 설치·결제·개인정보 요구",w:30},
+  {g:"증거",k:"input_form",n:"민감 정보 입력칸",w:40},
+  {g:"증거",k:"app_download",n:"APK·실행 파일 다운로드",w:50},
+  {g:"증거",k:"cross_domain_form",n:"폼이 다른 도메인으로 전송",w:25},
+  {g:"평판",k:"new_domain",n:"생긴 지 30일 이내 도메인",w:40},
+  {g:"평판",k:"abused_tld",n:"남용이 많은 TLD",w:15},
+  {g:"평판",k:"old_domain",n:"2년 이상 된 도메인",w:-20},
+  {g:"평판",k:"popular_domain",n:"인기 도메인 (상위 10만)",w:-30}
+];
+const PRESETS=[
+  {n:"정상 제휴몰 (택배사 이름 포함)",on:["lookalike_domain","old_domain","popular_domain"],off:false,ok:false},
+  {n:"신규 도메인만",on:["new_domain"]},
+  {n:"인기 도메인에 올린 APK",on:["app_download","popular_domain"]},
+  {n:"공식 조회 페이지",on:[],official:true},
+];
+const simForm=document.getElementById("simForm");
+function buildSim(){
+  let h=`<div class="filters" role="group" aria-label="예시">${PRESETS.map((p,i)=>`<button class="chip" data-p="${i}" aria-pressed="false">${esc(p.n)}</button>`).join("")}</div>`;
+  ["증거","평판"].forEach(g=>{
+    h+=`<fieldset><legend>${g} 특징${g==="평판"?" (감점은 여기서만)":""}</legend>`;
+    FEATS.filter(f=>f.g===g).forEach(f=>{
+      h+=`<label class="f"><input type="checkbox" data-k="${f.k}"><span>${esc(f.n)}${f.hard?'<span class="hard">HARD</span>':""}</span><span class="w">${f.w>0?"+":""}${f.w}</span></label>`;
+    });
+    h+=`</fieldset>`;
+  });
+  h+=`<fieldset><legend>확인 범위</legend>
+    <label class="f"><input type="checkbox" id="official"><span>최종 주소가 공식 택배사 조회 경로</span></label>
+    <label class="f"><input type="checkbox" id="failed"><span>확인하지 못한 단계가 있음 (check_failed)</span></label></fieldset>`;
+  simForm.innerHTML=h;
+  simForm.addEventListener("change",calc);
+  simForm.querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>{
+    const p=PRESETS[b.dataset.p];
+    simForm.querySelectorAll("[data-k]").forEach(c=>c.checked=p.on.includes(c.dataset.k));
+    document.getElementById("official").checked=!!p.official;
+    document.getElementById("failed").checked=false;
+    simForm.querySelectorAll("[data-p]").forEach(x=>x.setAttribute("aria-pressed",x===b));
+    calc();
+  });
+}
+function calc(){
+  const on=[...simForm.querySelectorAll("[data-k]:checked")].map(c=>FEATS.find(f=>f.k===c.dataset.k));
+  const official=document.getElementById("official").checked, failed=document.getElementById("failed").checked;
+  const ev=on.filter(f=>f.g==="증거").reduce((a,f)=>a+f.w,0);
+  const rep=on.filter(f=>f.g==="평판").reduce((a,f)=>a+f.w,0);
+  const repUsed=ev>0?Math.max(rep,0):rep;
+  const score=Math.max(-100,Math.min(100,ev+repUsed));
+  const hard=on.some(f=>f.hard), plus=on.some(f=>f.w>0);
+  let rule,v,cls;
+  if(hard){rule=1;v="위험";cls="v-danger"}
+  else if(official&&!plus&&!failed){rule=2;v="위험 신호 미발견";cls="v-ok"}
+  else if(score>=50){rule=3;v="위험";cls="v-danger"}
+  else if(plus){rule=4;v="주의";cls="v-caution"}
+  else {rule=5;v="확인 필요";cls="v-check"}
+  const msg={"위험":"이 링크는 누르지 마세요","주의":"위험 신호가 있어요","확인 필요":"위험 신호는 못 찾았지만 믿을 수 있는 주소인지도 확인하지 못했어요","위험 신호 미발견":"확인한 범위에서 위험 신호를 찾지 못했어요"}[v];
+  const vd=document.getElementById("verdict");vd.className="verdict "+cls;
+  vd.innerHTML=`<div class="v">${v}</div><div>사용자가 받는 첫 줄: "${msg}"</div>`;
+  const rules=["hard 특징이 하나라도 있으면 → 위험","공식 경로 + 플러스 특징 없음 + 실패 없음 → 미발견","점수 50 이상 → 위험","플러스 특징이 하나라도 있으면 → 주의","나머지 → 확인 필요"];
+  document.getElementById("calc").innerHTML=`
+    <div><span>증거 합</span><b>${ev}</b></div>
+    <div><span>평판 합${ev>0&&rep<0?" (증거가 있어 0으로 올림)":""}</span><b>${rep}${ev>0&&rep<0?" → 0":""}</b></div>
+    <div><span>점수 (−100~100)</span><b>${score}</b></div>
+    <ol class="rules">${rules.map((r,i)=>`<li class="${i+1===rule?"hit":""}">${r}</li>`).join("")}</ol>`;
+  const w=[];
+  if(on.some(f=>f.k==="lookalike_domain")&&!on.some(f=>f.hard&&f.k!=="lookalike_domain")&&score<50)
+    w.push("3-1: 점수는 "+score+"점인데 lookalike_domain이 hard라서 무조건 '위험'입니다. 정상 제휴몰도 이렇게 됩니다.");
+  if(rule===4&&rep<0) w.push("3-2: 감점("+rep+")이 있어도 플러스 특징이 하나라도 있으면 '주의'입니다. 감점이 판정을 바꾸지 못합니다.");
+  if(rule===2) w.push("2-1: 공식 경로는 3단계(JS 실행)를 건너뜁니다. 공식 페이지 안의 JS 리다이렉트는 보지 못한 채 미발견이 나옵니다.");
+  document.getElementById("warn").innerHTML=w.map(esc).join("<br>");
+}
+
+/* priorities */
+const PRIO=[["2-1","s3","'위험 신호 미발견' 판정의 신뢰가 여기에 걸려 있습니다."],["1-1, 1-2","s2","이게 정해져야 격리가 무엇을 보장하는지 말할 수 있습니다."],["2-5","in","지금은 누구나 수집기를 원격으로 부릴 수 있습니다."],["2-3","s2","내부망과 클라우드 메타데이터 접근을 막는 핵심 방어입니다."],["3-1","s1","지금 작동하는 hard 신호 중 오탐 위험이 가장 큽니다."]];
+document.getElementById("prio").innerHTML=PRIO.map(([ids,step,why])=>`<li><div><a data-step="${step}">${ids}</a> ${esc(ISSUES[ids.split(",")[0]].title)}<br><span style="color:var(--muted)">${why}</span></div></li>`).join("");
+document.querySelectorAll("#prio a").forEach(a=>a.onclick=()=>{
+  current=a.dataset.step;sevFilter="all";
+  document.querySelectorAll(".chip[data-sev]").forEach(x=>x.setAttribute("aria-pressed",x.dataset.sev==="all"));
+  renderFlow();renderDetail();flow.scrollIntoView({behavior:"smooth",block:"start"});
+});
+
+renderFlow();renderDetail();buildSim();
+simForm.querySelector('[data-p="0"]').click();
+</script>
+</body>
+</html>
