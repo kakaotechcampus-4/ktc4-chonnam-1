@@ -6,17 +6,17 @@ import html
 import re
 
 from ai.message_requests import action_requested, normalized_with_positions, request_context
-from ai.page import PageInspection, select_env_doubt
+from ai.page import PageElement, PageInspection
 from ai.taxonomy import (
-    MessageCandidate, classify_topic, identify_brand, message_candidates,
-    select_message_doubt,
+    MessageCandidate, classify_topic, filter_message_candidates, identify_brand,
+    message_candidates,
 )
 from ai.types import (
-    AnalysisResponse, AnalysisStatus, Brand, CaseSearchResult, EnvDoubt,
-    EnvironmentDetails, EnvironmentPart, EvidenceSource, FailureCode,
-    IsolatedPage, MessageAnalysis, MessageDetails, MessageDoubt, MessagePart,
-    PageAnalysis, RiskSignal, RiskSignalCode, SignalAnalysis, Topic, UrlAnalysis,
-    _all_null,
+    AnalysisResponse, AnalysisStatus, AnswerState, Brand, CaseSearchResult,
+    DomainMatch, EnvDoubtItem, EnvironmentDetails, EnvironmentPart,
+    EvidenceSource, FailureCode, IsolatedPage, MessageAnalysis, MessageDetails,
+    MessageDoubt, MessageDoubtItem, MessagePart, PageAnalysis, Reason,
+    RiskSignal, RiskSignalCode, SignalAnalysis, SignalItem, Topic, UrlAnalysis,
 )
 
 
@@ -86,6 +86,21 @@ def _join_reasons(reasons: list[str]) -> str:
     return " ".join(dict.fromkeys(reason for reason in reasons if reason))
 
 
+def _describe(element: PageElement) -> str:
+    """Summarize an inspected element for the wire without raw markup."""
+    labels = [field.labels[0] for field in element.fields if field.labels]
+    if labels:
+        return f"{', '.join(dict.fromkeys(labels))} 입력 필드"
+    return " ".join(element.text.split())[:80] or f"{element.tag} 요소"
+
+
+def _answer(completed: bool, has_signals: bool, has_material: bool) -> AnswerState:
+    """docs/scheme.md §4: completion first, then signals."""
+    if completed:
+        return AnswerState.RISK_FOUND if has_signals else AnswerState.NO_RISK_FOUND
+    return AnswerState.PARTIAL if has_material else AnswerState.FAILED
+
+
 def build_message_part(
     text: str, extracted: MessageAnalysis, cases: CaseSearchResult,
     signals: SignalAnalysis, *, failure: FailureCode | None = None,
@@ -96,6 +111,9 @@ def build_message_part(
         and extracted.analysis_status is AnalysisStatus.COMPLETED
         and cases.status is AnalysisStatus.COMPLETED
         and signals.status is AnalysisStatus.COMPLETED)
+    failures = list(dict.fromkeys(code for code in (failure, signals.failure) if code is not None))
+    if not completed and not failures:
+        failures.append(FailureCode.MISSING_RESULT)
     # Collect facts independently of the taxonomy's synthetic failure candidate.
     # A real, unclassified request can itself span the entire input.
     candidates = message_candidates(text, extracted.model_copy(
@@ -105,8 +123,15 @@ def build_message_part(
             else MessageDoubt.APP_INSTALL if signal.code is RiskSignalCode.INSTALL_PROMPT
             else MessageDoubt.UNKNOWN)
         candidates.append(MessageCandidate(doubt, signal.evidence_ref, text.index(signal.evidence_ref)))
-    doubt = select_message_doubt(candidates) if candidates else (
-        MessageDoubt.NONE if completed else None)
+    kept = filter_message_candidates(candidates)
+    # A rule match nested in a longer same-value quote is the same request.
+    kept = [candidate for candidate in kept if not any(
+        other.doubt is candidate.doubt and len(other.evidence) > len(candidate.evidence)
+        and other.start <= candidate.start
+        and candidate.start + len(candidate.evidence) <= other.start + len(other.evidence)
+        for other in kept)]
+    doubts = [MessageDoubtItem(value=value, evidence=evidence) for value, evidence in dict.fromkeys(
+        (candidate.doubt, candidate.evidence) for candidate in kept)]
     quotes = [candidate.evidence for candidate in sorted(candidates, key=lambda item: item.start)]
     quotes = [quote for quote in quotes if not any(quote != other and quote in other for other in quotes)]
     reasons = [f"문자에서 '{plain}'라고 안내했습니다." for quote in dict.fromkeys(quotes)
@@ -117,16 +142,19 @@ def build_message_part(
         reasons.append("문자 분석을 완료하지 못했습니다.")
     if cases.status is AnalysisStatus.FALLBACK:
         reasons.append("사례 검색 결과를 확보하지 못했습니다.")
-    for code in (failure, signals.failure):
-        if code is not None:
-            reasons.append(_FAILURE_REASONS[code])
+    if not completed:
+        reasons.extend(_FAILURE_REASONS[code] for code in failures)
     brand, category = identify_brand(text, extracted), classify_topic(text, extracted)
     if extracted.analysis_status is not AnalysisStatus.COMPLETED:
         brand = None if brand is Brand.UNKNOWN else brand
         category = None if category is Topic.UNKNOWN else category
     return MessagePart(brand=brand, category=category,
-        answer=(not accepted) if completed else None,
-        details=MessageDetails(doubt=doubt, reason=_join_reasons(reasons)))
+        answer=_answer(completed, bool(accepted), bool(text.strip())),
+        details=MessageDetails(
+            doubts=doubts,
+            signals=[SignalItem(code=signal.code, evidence=signal.evidence_ref) for signal in accepted],
+            reason=Reason(text=_join_reasons(reasons) or "문자 분석을 완료하지 못했습니다.",
+                failures=[] if completed else failures)))
 
 
 def build_environment_part(
@@ -134,20 +162,27 @@ def build_environment_part(
     *, failure: FailureCode | None = None,
 ) -> EnvironmentPart:
     """Describe only inspected HTML existence and labeled collector metadata."""
-    codes = [code for code in (failure, inspection.failure, analysis.failure) if code is not None]
     if page is None:
-        codes.append(FailureCode.MISSING_RESULT)
+        # No page material: nothing ran unless BE reported why collection failed.
+        code = failure or FailureCode.MISSING_RESULT
+        return EnvironmentPart(
+            answer=AnswerState.NOT_RUN if failure is None else AnswerState.FAILED,
+            details=EnvironmentDetails(reason=Reason(text=_FAILURE_REASONS[code], failures=[code])))
+    codes = list(dict.fromkeys(
+        code for code in (failure, inspection.failure, analysis.failure) if code is not None))
     completed = not codes and analysis.status is AnalysisStatus.COMPLETED
-    doubt = select_env_doubt(inspection.elements) if inspection.elements else (
-        EnvDoubt.NONE if completed else None)
-    reasons = [f"전달된 HTML에서 {element.doubt.value}을 확인했습니다." for element in inspection.elements]
-    if completed and not inspection.elements:
+    if not completed and not codes:
+        codes.append(FailureCode.MISSING_RESULT)
+    elements = sorted(inspection.elements, key=lambda item: item.start)
+    has_material = bool(elements or inspection.text.strip())
+    reasons = [f"전달된 HTML에서 {element.doubt.value}을 확인했습니다." for element in elements]
+    if completed and not elements:
         reasons.append("제공된 HTML에서 분류 대상 요소를 확인하지 못했습니다.")
-    analysis_completed = page is not None and analysis.status is AnalysisStatus.COMPLETED
+    analysis_completed = analysis.status is AnalysisStatus.COMPLETED
     brand = analysis.brand if analysis_completed or analysis.brand is not Brand.UNKNOWN else None
     category = analysis.category if analysis_completed or analysis.category is not Topic.UNKNOWN else None
     metadata: list[str] = []
-    if page is not None and not completed:
+    if not completed:
         if brand is None:
             try:
                 brand = Brand(page.brand)
@@ -164,25 +199,33 @@ def build_environment_part(
                 metadata.append(category.value)
     if metadata:
         reasons.append(f"격리 환경 전달 정보: {', '.join(metadata)}.")
-    reasons.extend(_FAILURE_REASONS[code] for code in codes)
-    elements = {element.element_id for element in inspection.elements}
+    if not completed:
+        reasons.extend(_FAILURE_REASONS[code] for code in codes)
+    by_id = {element.element_id: element for element in elements}
     accepted = [signal for signal in analysis.signals
-        if signal.evidence_source is EvidenceSource.OBSERVATION and signal.evidence_ref in elements]
+        if signal.evidence_source is EvidenceSource.OBSERVATION and signal.evidence_ref in by_id]
     if any(signal.code is RiskSignalCode.CREDENTIAL_REQUEST for signal in accepted):
         reasons.append("전달된 HTML 입력 요소에서 민감한 금융 인증정보 요구를 확인했습니다.")
     return EnvironmentPart(brand=brand, category=category,
-        answer=(not accepted) if completed else None,
-        details=EnvironmentDetails(doubt=doubt, reason=_join_reasons(reasons)))
+        answer=_answer(completed, bool(accepted), has_material),
+        collected_at=page.collected_at,
+        details=EnvironmentDetails(
+            doubts=[EnvDoubtItem(value=element.doubt, evidence=_describe(element))
+                for element in elements],
+            signals=[SignalItem(code=signal.code, evidence=_describe(by_id[signal.evidence_ref]))
+                for signal in accepted],
+            reason=Reason(text=_join_reasons(reasons) or "환경 분석을 완료하지 못했습니다.",
+                failures=[] if completed else codes)))
 
 
 def missing_message_part() -> MessagePart:
-    return MessagePart(details=MessageDetails(
-        reason="문자 분석 결과를 전달받지 못했습니다."))
+    return MessagePart(answer=AnswerState.NOT_RUN, details=MessageDetails(reason=Reason(
+        text="문자 분석 결과를 전달받지 못했습니다.", failures=[FailureCode.MISSING_RESULT])))
 
 
 def missing_environment_part() -> EnvironmentPart:
-    return EnvironmentPart(details=EnvironmentDetails(
-        reason="환경 분석 결과를 전달받지 못했습니다."))
+    return EnvironmentPart(answer=AnswerState.NOT_RUN, details=EnvironmentDetails(reason=Reason(
+        text="환경 분석 결과를 전달받지 못했습니다.", failures=[FailureCode.MISSING_RESULT])))
 
 
 def assemble_analysis(
@@ -190,9 +233,9 @@ def assemble_analysis(
     env: EnvironmentPart | None = None,
 ) -> AnalysisResponse:
     """Preserve supplied analyses and calculate their aggregate result."""
-    if message is None or _all_null(message):
-        message = missing_message_part()
-    if env is None or _all_null(env):
-        env = missing_environment_part()
-    result = url.official is True and message.answer is True and env.answer is True
+    message = message or missing_message_part()
+    env = env or missing_environment_part()
+    result = (url.official is DomainMatch.OFFICIAL
+        and message.answer is AnswerState.NO_RISK_FOUND
+        and env.answer is AnswerState.NO_RISK_FOUND)
     return AnalysisResponse(url=url, message=message, env=env, result=result)

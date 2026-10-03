@@ -1,0 +1,26 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "☎️ 신고하거나 상담받기",
+          "description": "상황에 맞는 방법을 바로 알려드릴게요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "문자만 받았어요",
+              "action": "block",
+              "blockId": "6ab78d64322b97a3a1cc9567"
+            },
+            {
+              "label": "링크를 눌렀어요",
+              "action": "block",
+              "blockId": "6ab78d883dd52f826f111e49"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

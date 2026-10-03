@@ -7,7 +7,8 @@ import pytest
 
 import ai.llm.page as page_analysis
 import ai.pipeline.analysis as analysis
-from ai.types import FailureCode, MessagePart, UrlAnalysis
+from ai.pipeline.results import missing_message_part
+from ai.types import AnswerState, DomainMatch, FailureCode, UrlAnalysis
 
 
 @pytest.fixture
@@ -26,19 +27,20 @@ def example(monkeypatch):
 
 
 def url(official=False):
-    return UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=official)
+    return UrlAnalysis(final_url="https://example.com/a", domain="example.com",
+        official=DomainMatch.OFFICIAL if official else DomainMatch.NOT_REGISTERED)
 
 
 @pytest.mark.asyncio
 async def test_false_example_returns_complete_failure_result(example):
-    example["analyze_message_part"] = AsyncMock(return_value=MessagePart())
+    example["analyze_message_part"] = AsyncMock(return_value=missing_message_part())
     response = await example["analyze_request"]("body",
         AsyncMock(return_value=url()),
         AsyncMock(return_value=(None, FailureCode.TIMEOUT)))
     assert response.result is False
-    assert response.env.answer is None
-    assert "시간" in response.env.details.reason
-    assert response.message.answer is None
+    assert response.env.answer is AnswerState.FAILED
+    assert "시간" in response.env.details.reason.text
+    assert response.message.answer is AnswerState.NOT_RUN
     assert set(response.model_dump(mode="json")) == {"url", "message", "env", "result"}
 
 
@@ -80,9 +82,10 @@ async def test_example_cleans_started_tasks_on_every_exit(example, outcome):
             response = await asyncio.wait_for(task, 1)
             assert response.result is False
             for part in (response.message, response.env):
-                assert part.brand is part.category is part.answer is None
-                assert part.details.doubt is None
-                assert part.details.reason
+                assert part.brand is part.category is None
+                assert part.answer is AnswerState.NOT_RUN
+                assert part.details.doubts == []
+                assert part.details.reason.failures == [FailureCode.MISSING_RESULT]
         assert stopped[0].is_set() and stopped[1].is_set()
     finally:
         if not task.done():
@@ -92,9 +95,9 @@ async def test_example_cleans_started_tasks_on_every_exit(example, outcome):
 
 @pytest.mark.asyncio
 async def test_false_example_analyzes_collected_page(example, monkeypatch, make_parse_client):
-    from ai.types import IsolatedPage, MessageDetails, MessageDoubt, PageProposal, Brand, Topic
+    from ai.types import IsolatedPage, MessageDetails, MessagePart, PageProposal, Brand, Reason, Topic
     source_message = MessagePart(brand=Brand.UNKNOWN, category=Topic.UNKNOWN,
-        answer=True, details=MessageDetails(doubt=MessageDoubt.NONE, reason="명시적인 요구 없음"))
+        answer=AnswerState.NO_RISK_FOUND, details=MessageDetails(reason=Reason(text="명시적인 요구 없음")))
     source_page = IsolatedPage(brand="unknown", category="unknown", info="<p>안녕하세요</p>")
     client, parse = make_parse_client(parsed=PageProposal())
     class OwnedClient:
@@ -108,6 +111,6 @@ async def test_false_example_analyzes_collected_page(example, monkeypatch, make_
     response = await example["analyze_request"]("body", AsyncMock(return_value=url()),
         AsyncMock(return_value=(source_page, None)))
     assert response.message == source_message
-    assert response.env.answer is True
+    assert response.env.answer is AnswerState.NO_RISK_FOUND
     assert response.result is False
     parse.assert_awaited_once()

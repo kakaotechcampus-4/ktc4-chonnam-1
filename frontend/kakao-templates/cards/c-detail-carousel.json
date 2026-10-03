@@ -1,0 +1,39 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "carousel": {
+          "type": "textCard",
+          "items": [
+            {
+              "title": "{{ signal_title }}",
+              "description": "확인한 내용\n{{ observed }}\n\n의심되는 이유\n{{ reason }}"
+            },
+            {
+              "title": "이번 분석으로 확인하지 못한 부분",
+              "description": "{{ unverified }}\n확인한 자료를 바탕으로 스미싱이 의심된다는 결과를 안내했으며, 확인하지 못한 부분은 판단에 포함하지 않았습니다."
+            },
+            {
+              "title": "문자 속 링크에 접속하지 마세요",
+              "description": "문자에서 안내한 앱을 설치하거나 개인정보를 입력하지 마세요.\n추가 확인이 필요하면 한국인터넷진흥원의 스미싱 확인 서비스를 이용해 주세요.",
+              "buttonLayout": "vertical",
+              "buttons": [
+                {
+                  "label": "신고하기",
+                  "action": "block",
+                  "blockId": "6abba220c841065f2fe49628"
+                },
+                {
+                  "label": "다른 문자 확인하기",
+                  "action": "block",
+                  "blockId": "6aa6a4436d537a3eabb81ad5"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

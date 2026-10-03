@@ -2,24 +2,28 @@ import asyncio
 import time
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
-import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 
 from backend.src.server.urlscan_service import (
+    get_http_client,
     submit_url_scan,
     wait_for_url_scan_result,
 )
+from backend.src.server.lifespan import app_lifespan
 from backend.src.server.url_utils import split_message
 from backend.src.server.templates.renderer import render_r1_lookalike
+from services.official_domain_service import check_official_domain
+from services.kakao_card_renderer import render_card
+from services.result_card_renderer import render_result_card, merge_kakao_responses
 
 # AI 연결
 from ai.pipeline import analyze_message_part, finalize_analysis
-from ai.types import FailureCode, UrlAnalysis
+from ai.types import UrlAnalysis
 
 
-app = FastAPI()
+app = FastAPI(lifespan=app_lifespan)
 
 
 # TODO:
@@ -37,12 +41,6 @@ ANALYSIS_JOBS: dict[str, dict] = {}
 
 # 콜백 URL 유효 시간을 고려한 안전 마진
 CALLBACK_DEADLINE_SECONDS = 45.0
-
-
-# TODO:
-# AI-BE 연동 테스트를 위한 임시 threshold.
-# 실제 threshold는 urlscan 테스트 후 확정.
-TEST_SCORE_THRESHOLD = 0
 
 
 # ============================================================
@@ -71,7 +69,8 @@ def create_analysis_job(
         "completed_at": None,
         "result": None,
         "error": None,
-        "callback_status": "pending"
+        "callback_status": "pending",
+        "callback_error": None
     }
 
     print(
@@ -82,6 +81,30 @@ def create_analysis_job(
 
     return job_id
 
+
+# ============================================================
+# Find Latest Job
+# ============================================================
+
+def find_latest_job_by_user(
+    user_id: str | None
+) -> dict | None:
+    if not user_id:
+        return None
+
+    user_jobs = [
+        job
+        for job in ANALYSIS_JOBS.values()
+        if job.get("user_id") == user_id
+    ]
+
+    if not user_jobs:
+        return None
+
+    return max(
+        user_jobs,
+        key=lambda job: job["created_at"]
+    )
 
 # ============================================================
 # Analysis Job API
@@ -111,6 +134,87 @@ async def get_analysis_job(job_id: str):
 
 
 # ============================================================
+# Time Format
+# ============================================================
+
+def format_completed_at_kst(
+    completed_at: str | None
+) -> str | None:
+    """UTC completed_at을 한국 시간(KST, UTC+9) HH:MM으로 변환한다."""
+
+    if not completed_at:
+        return None
+
+    try:
+        completed_datetime = datetime.fromisoformat(
+            completed_at.replace("Z", "+00:00")
+        )
+
+        if completed_datetime.tzinfo is None:
+            completed_datetime = completed_datetime.replace(
+                tzinfo=timezone.utc
+            )
+
+        kst = timezone(
+            timedelta(hours=9)
+        )
+
+        kst_datetime = completed_datetime.astimezone(
+            kst
+        )
+
+        return kst_datetime.strftime("%H:%M")
+
+    except (ValueError, TypeError):
+        return None
+
+
+# ============================================================
+# Handle Check Result
+# ============================================================
+
+def handle_check_result(
+    user_id: str | None
+) -> dict:
+    job = find_latest_job_by_user(user_id)
+
+    if job is None:
+        return render_card("k4-no-result")
+
+    status = job.get("status")
+
+    if status == "running":
+        return render_card("k1-still-running")
+
+    if status == "completed":
+        result = job.get("result")
+
+        if not result:
+            return render_card("k4-no-result")
+
+        completed_time = format_completed_at_kst(
+            job.get("completed_at")
+        )
+
+        if not completed_time:
+            return result
+
+        time_message = kakao_response(
+            f"{completed_time}에 확인한 결과예요."
+        )
+
+        return merge_kakao_responses([
+            time_message,
+            result,
+        ])
+
+    if status in ("failed", "timeout"):
+        return render_card("r4-unavailable")
+
+    return render_card("k4-no-result")
+
+
+# ============================================================
 # Kakao Skill
 # ============================================================
 
@@ -137,6 +241,14 @@ async def kakao_skill(
         f"[CALLBACK EXISTS] "
         f"{bool(callback_url)}"
     )
+    
+    intent_name = (
+        body.get("intent", {}).get("name", "")
+    )
+    
+    # 사용자가 결과 확인 요청하면 최근 분석 결과를 리턴
+    if intent_name == "결과 확인":
+        return handle_check_result(user_id)
 
     # 문자 내용에서 URL과 일반 메시지 분리
     links, message = split_message(utterance)
@@ -146,17 +258,11 @@ async def kakao_skill(
 
     # URL이 없는 경우 즉시 응답
     if not links:
-        return kakao_response(
-            "URL을 찾을 수 없습니다.\n"
-            "http:// 또는 https://로 시작하는 URL을 보내주세요."
-        )
+        return render_card("r6-input-required")
 
     # 같은 사용자의 이전 분석이 아직 진행 중인 경우
     if user_id and user_id in RUNNING_USERS:
-        return kakao_response(
-            "이전 요청을 아직 확인하고 있어요. "
-            "잠시 후 다시 시도해주세요."
-        )
+        return render_card("k5-duplicate")
 
     # callbackUrl이 없는 경우 개발/테스트용 동기 처리
     if not callback_url:
@@ -187,16 +293,7 @@ async def kakao_skill(
     )
 
     # 카카오에는 즉시 callback 사용 응답
-    return {
-        "version": "2.0",
-        "useCallback": True,
-        "data": {
-            "text": (
-                "링크를 확인하고 있어요. "
-                "분석이 완료되면 결과를 알려드릴게요."
-            )
-        }
-    }
+    return render_card("r5-analyzing")
 
 
 # ============================================================
@@ -205,7 +302,8 @@ async def kakao_skill(
 
 async def run_analysis(
     links: list[str],
-    message: str
+    message: str,
+    job_id: str | None = None
 ) -> dict:
     """
     현재 AI-BE 연결 테스트 흐름
@@ -216,31 +314,24 @@ async def run_analysis(
     URL
       → urlscan
       → score 추출
-      → official 계산
+      → 문자 brand + 최종 domain 기반 official 계산
       → UrlAnalysis 생성
 
-    official=True
-      → finalize_analysis(url)
+    최종 분석
+      → message 결과 전달
+      → 격리 페이지 수집기는 아직 미연결
+      → page=None으로 전달하여 not_run 처리
+      → finalize_analysis()
 
-    official=False
-      → finalize_analysis(
-            url,
-            message,
-            page=None,
-            failure=COLLECTION_FAILED
-        )
+    문자 AI 분석과 urlscan은 독립적인 작업이므로
+    asyncio.create_task를 이용해 병렬로 실행한다.
 
-    현재 격리 페이지 수집기는 아직 연결하지 않는다.
-
-    문자 AI 분석과 urlscan은 서로의 입력을 필요로 하지 않는 독립적인
-    작업이므로, 문자 분석을 먼저 끝낸 뒤 URL을 처리하던 순차 실행을
-    asyncio.create_task로 동시에 시작하도록 바꿨다. urlscan이 문자
-    분석보다 훨씬 오래 걸리므로(공식 가이드 기준 최소 30초), URL 루프
-    안에서 message_result가 실제로 필요한 시점에는 이미 끝나 있을
-    가능성이 높다 (docs/experiments/ 에 전후 소요시간 비교 기록).
+    job_id는 결과 카드의 "자세히 보기" 버튼에 꽂혀서,
+    해당 버튼 클릭 시 어떤 분석 결과를 보여줄지 찾는 데 쓰인다
+    (Job 조회 자체는 이 함수의 책임이 아니다).
     """
 
-    result_lines = []
+    card_responses: list[dict] = []
 
     total_start = time.monotonic()
 
@@ -282,8 +373,8 @@ async def run_analysis(
                     f"url={link} uuid 없음"
                 )
 
-                result_lines.append(
-                    f"⚠️ 검사 요청 실패: {link}"
+                card_responses.append(
+                    render_card("r4-unavailable")
                 )
 
                 continue
@@ -310,8 +401,8 @@ async def run_analysis(
                     f"url={link}"
                 )
 
-                result_lines.append(
-                    f"⚠️ 검사 시간 초과: {link}"
+                card_responses.append(
+                    render_card("r4-unavailable")
                 )
 
                 continue
@@ -340,15 +431,11 @@ async def run_analysis(
             )
 
             # ------------------------------------------------
-            # 2-4. urlscan score → official
+            # 2-4. print urlscan result
             # ------------------------------------------------
 
-            url_analysis = build_ai_url_analysis(
-                parsed_result
-            )
-
             print(
-                "========== URLSCAN SCORE TEST =========="
+                "========== URLSCAN RESULT =========="
             )
             print(
                 f"[INPUT URL]   "
@@ -356,11 +443,11 @@ async def run_analysis(
             )
             print(
                 f"[FINAL URL]   "
-                f"{url_analysis.final_url}"
+                f"{parsed_result.get('final_url')}"
             )
             print(
                 f"[DOMAIN]      "
-                f"{url_analysis.domain}"
+                f"{parsed_result.get('domain')}"
             )
             print(
                 f"[SCORE]       "
@@ -379,15 +466,7 @@ async def run_analysis(
                 f"{parsed_result.get('brands')}"
             )
             print(
-                f"[TEST T]      "
-                f"{TEST_SCORE_THRESHOLD}"
-            )
-            print(
-                f"[OFFICIAL?]   "
-                f"{url_analysis.official}"
-            )
-            print(
-                "========================================"
+                "===================================="
             )
 
             # ------------------------------------------------
@@ -438,6 +517,30 @@ async def run_analysis(
                 # finalize_analysis는 message=None도 처리 가능
                 message_result = None
 
+            # ============================================================
+            # BE 공식 도메인 대조
+            # ============================================================
+            
+            brand = (
+                message_result.brand
+                if message_result is not None
+                else None
+            )
+            
+            url_analysis = build_ai_url_analysis(
+                parsed_result,
+                brand
+            )
+            
+            print(
+                "[DOMAIN MATCH]",
+                {
+                    "brand": brand,
+                    "domain": url_analysis.domain,
+                    "official": url_analysis.official
+                }
+            )
+
             # =================================================
             # 3. AI 최종 분석
             # =================================================
@@ -446,35 +549,17 @@ async def run_analysis(
                 "========== AI FINAL ANALYSIS =========="
             )
 
-            if url_analysis.official:
-                # official=True이면 AI 계약상
-                # 문자/페이지 분석 없이 조기 반환 가능
-
-                print(
-                    "[AI FINAL] "
-                    "official=True → early return"
-                )
-
-                final_result = await finalize_analysis(
-                    url=url_analysis
-                )
-
-            else:
-                # 현재는 격리 페이지 수집기를 연결하지 않았으므로
-                # COLLECTION_FAILED로 명시
-
-                print(
-                    "[AI FINAL] "
-                    "official=False → "
-                    "message + collection failure"
-                )
-
-                final_result = await finalize_analysis(
-                    url=url_analysis,
-                    message=message_result,
-                    page=None,
-                    failure=FailureCode.COLLECTION_FAILED
-                )
+            print(
+                "[AI FINAL] "
+                f"domain_match={url_analysis.official} → "
+                "message + environment not_run"
+            )
+            
+            final_result = await finalize_analysis(
+                url=url_analysis,
+                message=message_result,
+                page=None
+            )
 
             final_payload = final_result.model_dump(
                 mode="json"
@@ -490,14 +575,13 @@ async def run_analysis(
             )
 
             # ------------------------------------------------
-            # 4. 테스트용 Kakao 출력
+            # 4. Kakao 결과 카드
             # ------------------------------------------------
 
-            result_lines.append(
-                format_ai_result(
-                    link,
+            card_responses.append(
+                render_result_card(
                     final_payload,
-                    parsed_result.get("score")
+                    job_id=job_id
                 )
             )
 
@@ -508,8 +592,8 @@ async def run_analysis(
                 f"{type(e).__name__}: {e}"
             )
 
-            result_lines.append(
-                f"⚠️ 분석 실패: {link}"
+            card_responses.append(
+                render_card("r4-unavailable")
             )
 
     # 모든 링크가 위에서 continue로 건너뛰어졌다면 message_task를
@@ -541,14 +625,7 @@ async def run_analysis(
         f"{total_elapsed:.2f}s"
     )
 
-    if not result_lines:
-        return kakao_response(
-            "분석 결과를 생성하지 못했습니다."
-        )
-
-    return kakao_response(
-        "\n\n".join(result_lines)
-    )
+    return merge_kakao_responses(card_responses)
 
 
 # ============================================================
@@ -556,33 +633,22 @@ async def run_analysis(
 # ============================================================
 
 def build_ai_url_analysis(
-    parsed_result: dict
+    parsed_result: dict,
+    brand: str | None
 ) -> UrlAnalysis:
     """
-    urlscan 결과를 AI UrlAnalysis 계약으로 변환한다.
+    URL 분석 결과를 AI UrlAnalysis 계약으로 변환한다.
 
-    현재 테스트 정책:
+    official은 urlscan score로 추론하지 않고,
+    문자 분석에서 확인한 brand와 최종 domain을
+    BE 화이트리스트로 대조하여 결정한다.
 
-        score <= TEST_SCORE_THRESHOLD
-            → official=True
-
-        score > TEST_SCORE_THRESHOLD
-            → official=False
-
-    실제 운영 threshold는 추후 확정한다.
+    urlscan score는 판정과 분리된 기록용 값이다.
     """
 
-    final_url = parsed_result.get(
-        "final_url"
-    )
-
-    domain = parsed_result.get(
-        "domain"
-    )
-
-    score = parsed_result.get(
-        "score"
-    )
+    final_url = parsed_result.get("final_url")
+    domain = parsed_result.get("domain")
+    score = parsed_result.get("score")
 
     if not final_url:
         raise ValueError(
@@ -594,19 +660,21 @@ def build_ai_url_analysis(
             "urlscan 결과에 domain이 없습니다."
         )
 
-    if score is None:
-        raise ValueError(
-            "urlscan 결과에 score가 없습니다."
-        )
-
-    official = (
-        score <= TEST_SCORE_THRESHOLD
+    official = check_official_domain(
+        brand=brand,
+        domain=domain
     )
 
     raw_url_result = {
         "final_url": final_url,
         "domain": domain,
-        "official": official
+        "official": official,
+        "scan": {
+            "score": score,
+            "scanned_at": datetime.now(
+                timezone.utc
+            ).isoformat()
+        }
     }
 
     print(
@@ -644,7 +712,8 @@ async def run_analysis_and_callback(
             result = await asyncio.wait_for(
                 run_analysis(
                     links,
-                    message
+                    message,
+                    job_id=job_id
                 ),
                 timeout=CALLBACK_DEADLINE_SECONDS
             )
@@ -727,12 +796,11 @@ async def run_analysis_and_callback(
             "[CALLBACK] 결과 전송 시작"
         )
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                callback_url,
-                json=result,
-                timeout=10.0
-            )
+        response = await get_http_client().post(
+            callback_url,
+            json=result,
+            timeout=10.0
+        )
 
         print(
             f"[CALLBACK STATUS] "
@@ -776,6 +844,9 @@ async def run_analysis_and_callback(
             else:
                 if job:
                     job["callback_status"] = "failed"
+                    job["callback_error"] = (
+                        f"kakao_callback_status={callback_result_status}"
+                    )
         
                 print(
                     f"[JOB CALLBACK FAILED] "
@@ -788,6 +859,7 @@ async def run_analysis_and_callback(
         
             if job:
                 job["callback_status"] = "failed"
+                job["callback_error"] = "invalid_callback_response"
         
             print(
                 "[CALLBACK WARNING] "
@@ -804,6 +876,9 @@ async def run_analysis_and_callback(
     
         if job:
             job["callback_status"] = "failed"
+            job["callback_error"] = (
+                f"{type(e).__name__}: {e}"
+            )
     
         print(
             f"[CALLBACK SEND FAILED] "
@@ -850,96 +925,6 @@ def kakao_response(
             ]
         }
     }
-
-
-# ============================================================
-# AI Result → 테스트용 Kakao 문자열
-# ============================================================
-
-def format_ai_result(
-    link: str,
-    payload: dict,
-    score: int | float | None
-) -> str:
-
-    url_result = payload.get(
-        "url",
-        {}
-    ) or {}
-
-    message_result = payload.get(
-        "message",
-        {}
-    ) or {}
-
-    env_result = payload.get(
-        "env",
-        {}
-    ) or {}
-
-    message_details = message_result.get(
-        "details",
-        {}
-    ) or {}
-
-    env_details = env_result.get(
-        "details",
-        {}
-    ) or {}
-
-    final_result = payload.get(
-        "result"
-    )
-
-    def display(value):
-        """
-        테스트 출력용.
-        None인 경우 알아보기 쉽게 표시한다.
-        """
-        return "없음" if value is None else str(value)
-
-    return (
-        "🔎 AI 분석 완료\n\n"
-
-        "[URL 분석]\n"
-        f"입력 URL: {link}\n"
-        f"최종 URL: "
-        f"{display(url_result.get('final_url'))}\n"
-        f"도메인: "
-        f"{display(url_result.get('domain'))}\n"
-        f"urlscan score: "
-        f"{display(score)}\n"
-        f"official: "
-        f"{display(url_result.get('official'))}\n\n"
-
-        "[문자 분석]\n"
-        f"brand: "
-        f"{display(message_result.get('brand'))}\n"
-        f"category: "
-        f"{display(message_result.get('category'))}\n"
-        f"answer: "
-        f"{display(message_result.get('answer'))}\n"
-        f"doubt: "
-        f"{display(message_details.get('doubt'))}\n"
-        f"reason: "
-        f"{display(message_details.get('reason'))}\n\n"
-
-        "[환경 분석]\n"
-        f"brand: "
-        f"{display(env_result.get('brand'))}\n"
-        f"category: "
-        f"{display(env_result.get('category'))}\n"
-        f"answer: "
-        f"{display(env_result.get('answer'))}\n"
-        f"doubt: "
-        f"{display(env_details.get('doubt'))}\n"
-        f"reason: "
-        f"{display(env_details.get('reason'))}\n\n"
-
-        "[최종 판정]\n"
-        f"result: "
-        f"{display(final_result)}"
-    )
 
 
 # ============================================================
