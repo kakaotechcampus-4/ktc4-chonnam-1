@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "📋 확인할 문자를 보내주세요",
+          "description": "링크가 포함된 문자 전체를 복사해\n아래 입력창에 붙여넣고 보내 주세요.\n문자 붙여넣기 시, 민감한 개인정보가 포함되지 않도록 주의해주세요.\n\n※ 문자 속 링크는 누르지 마세요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "문자 복사하는 법",
+              "action": "block",
+              "blockId": "6aad62fc707aa28d466cd3a1"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

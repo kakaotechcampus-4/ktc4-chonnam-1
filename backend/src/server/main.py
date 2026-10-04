@@ -1,15 +1,19 @@
 import asyncio
 
-import httpx
 from fastapi import BackgroundTasks, FastAPI, Request
 
-from urlscan_service import submit_url_scan, wait_for_url_scan_result
+from urlscan_service import (
+    get_http_client,
+    http_client_lifespan,
+    submit_url_scan,
+    wait_for_url_scan_result,
+)
 from url_utils import split_message
 
 from templates.renderer import render_r1_lookalike
 
 
-app = FastAPI()
+app = FastAPI(lifespan=http_client_lifespan)
 
 
 # TODO:
@@ -315,12 +319,11 @@ async def run_analysis_and_callback(
 
         print("[CALLBACK] 결과 전송 시작")
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                callback_url,
-                json=result,
-                timeout=10.0
-            )
+        response = await get_http_client().post(
+            callback_url,
+            json=result,
+            timeout=10.0
+        )
 
         # callback 디버깅을 위해 반드시 기록
         print(

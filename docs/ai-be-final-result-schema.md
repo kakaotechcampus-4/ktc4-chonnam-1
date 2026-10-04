@@ -14,7 +14,7 @@
 
 ## 입력과 공개 함수
 
-파이프라인은 하나의 원격 JSON envelope를 받는 API로 정의되지 않았다. 현재 공개 API는 다음 네 Python 함수다. BE의 권장 흐름은 문자 분석 후 `finalize_analysis()`를 호출해 전체 결과를 받는 것이다. 페이지 분석과 조립 함수는 기존 호출 호환성과 개별 사용을 위해 유지한다.
+파이프라인은 하나의 원격 JSON envelope를 받는 API로 정의되지 않았다. 현재 공개 API는 다음 다섯 Python 함수다. BE의 권장 흐름은 문자 분석 후 `finalize_analysis()`를 호출해 전체 결과를 받는 것이다. 페이지 분석과 조립 함수는 기존 호출 호환성과 개별 사용을 위해 유지한다. `warm_up_case_search()`는 분석이 아니라 서버 기동 준비용이다.
 
 | 함수 | 입력 | 반환과 역할 |
 | --- | --- | --- |
@@ -22,6 +22,7 @@
 | `async finalize_analysis(url: UrlAnalysis, message: MessagePart \| None = None, page: IsolatedPage \| None = None, *, failure: FailureCode \| None = None, client: AsyncOpenAI \| None = None, model: str \| None = None) -> AnalysisResponse` | 검증한 URL, 앞서 받은 문자 결과, 격리 수집 자료와 실패 코드 | 공식 여부와 무관하게 전달된 페이지를 분석한 뒤 전체 최종 결과 반환 |
 | `async analyze_environment_part(page: IsolatedPage \| None, *, failure: FailureCode \| None = None, client: AsyncOpenAI \| None = None, model: str \| None = None) -> EnvironmentPart` | 성공 시 수집 페이지, 실패 시 `page=None`과 구체적인 실패 코드 | 전달된 HTML과 수집 상태를 분석한 `EnvironmentPart` |
 | `assemble_analysis(url: UrlAnalysis, message: MessagePart \| None = None, env: EnvironmentPart \| None = None) -> AnalysisResponse` | 검증된 URL 결과와 두 부분 결과 | I/O 없이 최종 응답 조립 |
+| `warm_up_case_search() -> CaseSearchResult` | 없음 | 사례 검색이 쓰는 KB·색인 캐시를 채운다. BE 가 서버 기동 시(lifespan) 한 번 부른다. 동기 함수이며 KB 를 읽다 난 예외는 그대로 올린다 |
 
 `client`와 `model`은 테스트·설정 주입용 선택 인자다. BE가 AI 내부의 LLM 설정이나 호출을 대신 구현하는 입력이 아니다.
 

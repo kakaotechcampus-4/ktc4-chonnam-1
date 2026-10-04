@@ -1,11 +1,14 @@
 import json
 import re
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from ai.kb.normalize import normalize
 from ai.kb.search import CASES_DIR, load_cases, search_cases
+from ai.types import CategoryCode
 
 DATASETS = Path(__file__).resolve().parents[1] / "eval" / "datasets"
+LINK_TEXT_RE = re.compile(r"h[tx]{2}ps?:/|://|\[\.\]|www\.", re.IGNORECASE)
 RRN_RE = re.compile(r"\d{6}[-\s]?\d{7}")
 PHONE_RE = re.compile(r"01[016789][-\s]?\d{3,4}[-\s]?\d{4}")
 
@@ -17,6 +20,17 @@ def _load_jsonl(name: str) -> list[dict]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def _kb_frontmatter() -> list[dict]:
+    import yaml
+
+    metas = []
+    for path in sorted(CASES_DIR.glob("CE-*.md")):
+        match = re.match(r"\A---\r?\n(.*?)\r?\n---", path.read_text(encoding="utf-8"), re.DOTALL)
+        if match is not None:
+            metas.append(yaml.safe_load(match.group(1)))
+    return metas
 
 
 def test_kb_has_curated_cases():
@@ -38,6 +52,23 @@ def test_kb_stored_normalized_field_is_not_stale():
         if meta.get("status") != "curated":
             continue
         assert meta["normalized"] == normalize(meta["variants"][0]), path.name
+
+
+def test_kb_categories_are_known_and_single():
+    # _parse_case 는 모르는 유형 코드를 조용히 버린다. 오타가 나면 검색 평가에서
+    # hit 실패로만 보이므로 저장된 frontmatter 를 직접 검사한다. 테스트셋처럼
+    # 대표 유형 하나만 붙인다. 여러 개를 허용하면 hit 이 부풀려진다.
+    import yaml
+
+    allowed = {code.value for code in CategoryCode} - {"other", "unknown"}
+    for path in sorted(CASES_DIR.glob("CE-*.md")):
+        raw = path.read_text(encoding="utf-8")
+        match = re.match(r"\A---\r?\n(.*?)\r?\n---", raw, re.DOTALL)
+        if match is None:
+            continue
+        categories = yaml.safe_load(match.group(1)).get("categories") or []
+        assert len(categories) <= 1, path.name
+        assert set(categories) <= allowed, path.name
 
 
 def test_kb_records_are_deduplicated():
@@ -79,7 +110,7 @@ def _pii_findings(text: str) -> list[str]:
 
 
 def test_datasets_carry_no_obvious_personal_data():
-    for name in ("smishing.jsonl", "benign.jsonl"):
+    for name in ("smishing.jsonl", "benign.jsonl", "rag_testset.jsonl"):
         for row in _load_jsonl(name):
             assert not _pii_findings(row["text"]), (name, row["text"][:40])
 
@@ -94,8 +125,22 @@ def test_kb_records_carry_no_obvious_personal_data():
 def test_eval_dataset_is_disjoint_from_kb():
     kb_normalized = {value for case in load_cases(CASES_DIR) for value in case.normalized}
 
-    for row in _load_jsonl("smishing.jsonl"):
-        assert normalize(row["text"]) not in kb_normalized
+    for row in _load_jsonl("smishing.jsonl") + _load_jsonl("rag_testset.jsonl"):
+        assert normalize(row["text"]) not in kb_normalized, row.get("id", row["text"][:30])
+
+
+def test_rag_testset_is_labelled():
+    rows = _load_jsonl("rag_testset.jsonl")
+    categories = {code.value for code in CategoryCode}
+    assert len({row["id"] for row in rows}) == len(rows)
+    for row in rows:
+        assert row["group"] in {"smishing", "benign", "hard_negative"}, row["id"]
+        assert row["category"] in categories, row["id"]
+        # 실물은 출처 URL 필수, 합성은 템플릿 ID 필수 — 실물 교체 추적용
+        if row["origin"] == "web_public":
+            assert row["source"], row["id"]
+        else:
+            assert row["origin"] == "synthetic_template" and row["template"], row["id"]
 
 
 def test_benign_messages_do_not_match_kb_strongly():
@@ -103,3 +148,54 @@ def test_benign_messages_do_not_match_kb_strongly():
         result = search_cases(row["text"])
         for match in result.matches:
             assert match.similarity < 0.6, row["text"][:30]
+
+
+def test_every_curated_record_is_indexed():
+    # frontmatter 가 YAML 로 안 읽히거나 variants 가 비면 _parse_case 가 조용히
+    # 버린다. KB 건수가 줄어도 아무도 모르므로 curated 레코드 수와 맞춘다.
+    curated = [meta for meta in _kb_frontmatter() if meta.get("status") == "curated"]
+
+    assert len(load_cases(CASES_DIR)) == len(curated)
+
+
+def test_kb_records_have_no_link_text():
+    # 운영 검색 질의는 링크를 뺀 본문이다. KB 본문에 링크 표기가 남으면 형식이 어긋난다.
+    for case in load_cases(CASES_DIR):
+        for variant in case.variants:
+            assert not LINK_TEXT_RE.search(variant), (case.case_id, variant[:40])
+
+
+def test_rag_testset_rows_carry_split():
+    for row in _load_jsonl("rag_testset.jsonl"):
+        assert row["split"] in {"dev", "test"}, row["id"]
+
+
+def test_rag_testset_split_unit_stays_in_one_split():
+    # 합성 정상 문자는 같은 템플릿끼리, 스미싱은 같은 게시물끼리 비슷하다.
+    # 한 묶음이 dev 와 test 에 갈라지면 누수다. 행을 손으로 고칠 때도 지킨다.
+    splits = defaultdict(set)
+    for row in _load_jsonl("rag_testset.jsonl"):
+        splits[row["template"] or row["source"] or row["id"]].add(row["split"])
+
+    assert {key: values for key, values in splits.items() if len(values) > 1} == {}
+
+
+def test_rag_testset_keeps_dev_and_test_smishing_per_category():
+    counts = Counter(
+        (row["category"], row["split"])
+        for row in _load_jsonl("rag_testset.jsonl")
+        if row["group"] == "smishing"
+    )
+    for code in CategoryCode:
+        if code.value in {"other", "unknown"}:
+            continue
+        assert counts[(code.value, "dev")] >= 1, code.value
+        assert counts[(code.value, "test")] >= 1, code.value
+
+
+def test_kb_sources_do_not_overlap_rag_testset():
+    # KB 로 옮긴 출처가 평가에 남으면 같은 게시물 문구로 자기 자신을 찾는다.
+    kb_sources = {meta.get("source") for meta in _kb_frontmatter()} - {None}
+    eval_sources = {row["source"] for row in _load_jsonl("rag_testset.jsonl") if row["source"]}
+
+    assert kb_sources & eval_sources == set()

@@ -353,14 +353,14 @@ def _overlaps(left: MessageCandidate, right: MessageCandidate) -> bool:
     return left.start < right_end and right.start < left_end
 
 
-def _first_candidate(candidates: list[MessageCandidate]) -> MessageDoubt:
-    if not candidates:
-        return MessageDoubt.NONE
-    return min(candidates, key=lambda item: (item.start, -len(item.evidence))).doubt
+def select_message_doubt(candidates: list[MessageCandidate]) -> MessageDoubt | None:
+    """포함 관계를 정리한 후 원문 순서로 대표값을 선택한다. 후보가 없으면 None."""
+    filtered = filter_message_candidates(candidates)
+    return filtered[0].doubt if filtered else None
 
 
-def select_message_doubt(candidates: list[MessageCandidate]) -> MessageDoubt:
-    """포함 관계를 정리한 후 원문 순서로 대표값을 선택한다."""
+def filter_message_candidates(candidates: list[MessageCandidate]) -> list[MessageCandidate]:
+    """포함 관계로 가려진 후보를 지우고 원문 순서로 정렬한다."""
 
     concrete = {
         MessageDoubt.APP_INSTALL,
@@ -392,9 +392,8 @@ def select_message_doubt(candidates: list[MessageCandidate]) -> MessageDoubt:
 
     filtered: list[MessageCandidate] = []
     for candidate in candidates:
-        if candidate.doubt in {MessageDoubt.NONE, MessageDoubt.UNKNOWN} and any(
-            item.doubt not in {MessageDoubt.NONE, MessageDoubt.UNKNOWN}
-            for item in candidates
+        if candidate.doubt is MessageDoubt.UNKNOWN and any(
+            item.doubt is not MessageDoubt.UNKNOWN for item in candidates
         ):
             continue
         suppressed = False
@@ -413,4 +412,4 @@ def select_message_doubt(candidates: list[MessageCandidate]) -> MessageDoubt:
                 break
         if not suppressed:
             filtered.append(candidate)
-    return _first_candidate(filtered)
+    return sorted(filtered, key=lambda item: (item.start, -len(item.evidence)))

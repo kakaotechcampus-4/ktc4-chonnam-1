@@ -42,7 +42,7 @@ def test_script_comment_and_ignored_content_are_not_observed_forms():
     result = inspect_html(html)
 
     assert result.failure is None
-    assert select_env_doubt(result.elements) is EnvDoubt.NONE
+    assert select_env_doubt(result.elements) is None
     assert result.text == "배송 안내"
     assert "script-token" not in result.text
 
@@ -258,7 +258,7 @@ def test_script_only_is_empty_but_meaningful_generic_page_is_successful_none():
     assert script_only.elements == ()
     assert generic.failure is None
     assert generic.elements == ()
-    assert select_env_doubt(generic.elements) is EnvDoubt.NONE
+    assert select_env_doubt(generic.elements) is None
 
 
 def test_completed_payment_text_and_bare_feature_titles_are_not_structures():
