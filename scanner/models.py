@@ -19,3 +19,21 @@ class CollectResult:
     title: str | None
     elapsed_ms: int
     failures: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class StaticCheckResult:
+    """1단계 정적 검사 결과 (docs/scanner-static-checks-proposal.md).
+
+    기존 공식 도메인 비교에 KISA 목록 대조·Punycode/Unicode 사칭 분석을
+    더한다. 여기서도 위험 "판정"은 안 한다 — kisa_listed/lookalike_of는
+    scorer 가 가중치를 매길 사실일 뿐이다.
+    """
+
+    domain: str
+    official_match: str  # services.official_domain_service.DomainMatch 값
+    is_punycode: bool
+    decoded_domain: str | None  # punycode 디코딩 결과. 디코딩 대상이 아니거나 실패하면 None
+    kisa_listed: bool
+    lookalike_of: str | None  # 시각적으로 혼동되는 공식 도메인 (없으면 None)
+    failures: tuple[str, ...] = field(default_factory=tuple)
