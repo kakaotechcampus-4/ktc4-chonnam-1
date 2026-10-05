@@ -16,6 +16,7 @@ urlscan 이 대신 해주던 "URL 방문·수집"을 우리 코드로 옮기는 
 """
 
 import asyncio
+import dataclasses
 import ipaddress
 import re
 import ssl
@@ -170,6 +171,10 @@ def _result(
     )
 
 
+def _default_insecure_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(verify=False)
+
+
 async def collect_url(
     url: str,
     *,
@@ -178,23 +183,47 @@ async def collect_url(
     max_redirects: int = MAX_REDIRECTS,
     timeout: float = FETCH_TIMEOUT_SECONDS,
     html_limit: int = HTML_LIMIT_BYTES,
+    allow_insecure_retry: bool = True,
+    make_insecure_client: Callable[[], httpx.AsyncClient] = _default_insecure_client,
 ) -> CollectResult:
     """URL 하나를 방문해 리다이렉트·응답·HTML 을 수집한다.
 
     실패해도 예외를 올리지 않는다 — 확인하지 못한 것은 `failures` 에 남기고
     그때까지 모은 정보(redirect_chain 등)는 그대로 돌려준다. `client` 를
     넘기지 않으면 이 호출 동안만 쓰는 클라이언트를 만들고 끝에 닫는다.
+
+    TLS 인증서 검증에 실패하면(`tls_cert_verify_failed`) `verify=False`로
+    한 번 더 전체를 재시도한다 — 스미싱 페이지가 검증 안 되는 서버 뒤에
+    redirect 체인을 숨겨둔 사례(link24.kr 등)가 있어, 검증 실패만으로
+    포기하면 final_url 을 영영 못 얻는다. 재시도가 성공해도
+    `tls_cert_verify_failed` 는 failures 에 그대로 남긴다 — 위험 신호로
+    쓸 "검증이 실패했다는 사실"이지, 수집 성공 여부와는 별개다(점수 계산은
+    scorer 몫). TLS 검증 실패 외의 다른 실패는 재시도하지 않는다 —
+    `verify=False`의 영향 범위는 아직 조사 전이라 좁게 유지한다.
+    재시도는 남은 시간 예산 안에서만 돈다(전체 상한은 `timeout`과 같다).
     """
 
     start = time.monotonic()
+    deadline = start + timeout
     owns_client = client is None
     if owns_client:
         client = httpx.AsyncClient()
     try:
-        return await _collect(url, client, resolve, max_redirects, timeout, html_limit, start)
+        result = await _collect(url, client, resolve, max_redirects, timeout, html_limit, start)
     finally:
         if owns_client:
             await client.aclose()
+
+    if not allow_insecure_retry or result.failures != ("tls_cert_verify_failed",):
+        return result
+
+    remaining = max(deadline - time.monotonic(), 0.001)
+    async with make_insecure_client() as insecure_client:
+        retry = await _collect(
+            url, insecure_client, resolve, max_redirects, remaining, html_limit, start
+        )
+
+    return dataclasses.replace(retry, failures=("tls_cert_verify_failed", *retry.failures))
 
 
 async def _collect(

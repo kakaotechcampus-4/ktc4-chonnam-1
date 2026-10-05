@@ -42,14 +42,22 @@ def run(url: str, routes: dict[str, httpx.Response], *, slow: frozenset[str] = f
 
 
 def run_raising(url: str, make_error: Callable[[httpx.Request], Exception]) -> CollectResult:
-    """handler 가 지정한 예외를 올리게 해서 네트워크 계층 실패를 흉내 낸다."""
+    """handler 가 지정한 예외를 올리게 해서 네트워크 계층 실패를 흉내 낸다.
+
+    예외 분류(_is_cert_verify_failure) 자체를 보는 테스트용이라
+    allow_insecure_retry 는 꺼둔다 — 켜두면 tls_cert_verify_failed 일 때
+    실제 네트워크로 재시도해버린다. 재시도 흐름은
+    TestInsecureRetryOnTlsFailure 가 따로 본다.
+    """
 
     async def handler(request: httpx.Request) -> httpx.Response:
         raise make_error(request)
 
     async def go() -> CollectResult:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            return await collect_url(url, client=client, resolve=resolve_stub)
+            return await collect_url(
+                url, client=client, resolve=resolve_stub, allow_insecure_retry=False
+            )
 
     return asyncio.run(go())
 
@@ -151,8 +159,8 @@ class TestInvalidUrl:
 
 class TestTlsCertificateVerification:
     """link24.kr/DlMFKmF 실사례: 인증서 검증 실패가 connection_failed 에
-    묻히지 않고 별도로 구분되는지 확인한다. verify=False 로 우회하지 않는다
-    (의도적으로 보류 — 윤여경님 요청)."""
+    묻히지 않고 별도로 구분되는지 확인한다 (분류 로직 자체만 본다 —
+    verify=False 재시도는 TestInsecureRetryOnTlsFailure 가 따로 본다)."""
 
     def test_expired_certificate_is_distinguished_from_connection_failed(self):
         def make_error(request: httpx.Request) -> Exception:
@@ -193,6 +201,113 @@ class TestTlsCertificateVerification:
         result = run_raising("https://refused.example/", make_error)
 
         assert result.failures == ("connection_failed",)
+
+
+def _cert_verify_error(request: httpx.Request) -> httpx.ConnectError:
+    return httpx.ConnectError(
+        "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+        "unable to get local issuer certificate",
+        request=request,
+    )
+
+
+class TestInsecureRetryOnTlsFailure:
+    """팀장님 요청(link24.kr → getbarrel.com 사례): verify=True 가
+    인증서 검증에서 실패하면 verify=False 로 전체를 한 번 더 시도하고,
+    성공해도 검증에 실패했었다는 사실은 failures 에 남긴다."""
+
+    def _run(
+        self, url: str, *, secure_handler, insecure_handler=None, allow_insecure_retry=True,
+    ) -> CollectResult:
+        async def go() -> CollectResult:
+            kwargs = {}
+            if insecure_handler is not None:
+                kwargs["make_insecure_client"] = lambda: httpx.AsyncClient(
+                    transport=httpx.MockTransport(insecure_handler)
+                )
+            async with httpx.AsyncClient(transport=httpx.MockTransport(secure_handler)) as client:
+                return await collect_url(
+                    url, client=client, resolve=resolve_stub,
+                    allow_insecure_retry=allow_insecure_retry, **kwargs,
+                )
+
+        return asyncio.run(go())
+
+    def test_retry_recovers_redirect_target_and_keeps_the_tls_fact(self):
+        async def secure_handler(request: httpx.Request) -> httpx.Response:
+            raise _cert_verify_error(request)
+
+        async def insecure_handler(request: httpx.Request) -> httpx.Response:
+            if str(request.url) == "https://link24.kr/x":
+                return redirect("https://getbarrel.com/landing")
+            return page("<p>getbarrel</p>")
+
+        result = self._run("https://link24.kr/x", secure_handler=secure_handler,
+                            insecure_handler=insecure_handler)
+
+        assert result.failures == ("tls_cert_verify_failed",)
+        assert result.final_url == "https://getbarrel.com/landing"
+        assert result.status_code == 200
+        assert "getbarrel" in result.html
+
+    def test_retry_failure_is_combined_with_the_tls_fact(self):
+        async def secure_handler(request: httpx.Request) -> httpx.Response:
+            raise _cert_verify_error(request)
+
+        async def insecure_handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("Connection refused", request=request)
+
+        result = self._run("https://link24.kr/x", secure_handler=secure_handler,
+                            insecure_handler=insecure_handler)
+
+        assert result.failures == ("tls_cert_verify_failed", "connection_failed")
+
+    def test_retry_truncation_is_combined_with_the_tls_fact(self):
+        async def secure_handler(request: httpx.Request) -> httpx.Response:
+            raise _cert_verify_error(request)
+
+        async def insecure_handler(request: httpx.Request) -> httpx.Response:
+            return page("a" * (HTML_LIMIT_BYTES + 10))
+
+        result = self._run("https://link24.kr/x", secure_handler=secure_handler,
+                            insecure_handler=insecure_handler)
+
+        assert result.failures == ("tls_cert_verify_failed", "html_truncated")
+
+    def test_allow_insecure_retry_false_skips_the_retry(self):
+        called = False
+
+        async def secure_handler(request: httpx.Request) -> httpx.Response:
+            raise _cert_verify_error(request)
+
+        async def insecure_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal called
+            called = True
+            return page("<p>should not be reached</p>")
+
+        result = self._run("https://link24.kr/x", secure_handler=secure_handler,
+                            insecure_handler=insecure_handler, allow_insecure_retry=False)
+
+        assert result.failures == ("tls_cert_verify_failed",)
+        assert result.html == ""
+        assert called is False
+
+    def test_non_tls_failures_do_not_trigger_retry(self):
+        called = False
+
+        async def secure_handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("Connection refused", request=request)
+
+        async def insecure_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal called
+            called = True
+            return page("<p>should not be reached</p>")
+
+        result = self._run("https://down.example/", secure_handler=secure_handler,
+                            insecure_handler=insecure_handler)
+
+        assert result.failures == ("connection_failed",)
+        assert called is False
 
 
 class TestBlockedAddress:
