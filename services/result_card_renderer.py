@@ -17,11 +17,117 @@ DETAIL_BUTTON_LABEL = "자세히 보기"
 MAX_CAROUSEL_SIGNAL_ITEMS = 8  # + C2 + C3 = 10장 (카카오 캐러셀 상한)
 _EVIDENCE_MAX_LENGTH = 60
 
+_UNKNOWN = "unknown"
+_MAX_REQUESTED_ACTIONS = 3
+_NO_RISK = "no_risk_found"
+_PARTIAL = "partial"
+_R9_NO_LINES = "- 없음"
+
 
 def _truncate_evidence(evidence: str) -> str:
     if len(evidence) <= _EVIDENCE_MAX_LENGTH:
         return evidence
     return evidence[: _EVIDENCE_MAX_LENGTH - 1] + "…"
+
+
+def _r9_org_label(brand: str | None) -> str:
+    if brand and brand != _UNKNOWN:
+        return brand
+    return "보낸 기관의"
+
+
+def _r9_sender_lines(brand: str | None) -> tuple[str | None, str]:
+    """보낸 곳은 항상 '확인하지 못한 것'에 들어간다 (PR #39 멘토 리뷰:
+    "검찰청이라고 주장한다"와 "검찰청이 보냈다"를 구분하라는 지적)."""
+    if brand and brand != _UNKNOWN:
+        return f"문자에 적힌 보낸 곳: {brand}", "실제로 보낸 곳"
+    return None, "실제로 보낸 곳"
+
+
+def _r9_requested_actions_line(doubts: list[dict]) -> str | None:
+    values = [
+        doubt.get("value") for doubt in doubts
+        if doubt.get("value") and doubt.get("value") != _UNKNOWN
+    ]
+    if not values:
+        return None
+    joined = ", ".join(values[:_MAX_REQUESTED_ACTIONS])
+    return f"문자에서 요구한 것: {joined}"
+
+
+def _r9_address_lines(official: str | None, brand: str | None) -> tuple[str | None, str | None]:
+    if official == "official":
+        if brand and brand != _UNKNOWN:
+            return f"주소가 {brand} 공식 주소와 같아요", None
+        return "주소가 공식 주소 목록에 있어요", None
+    if official in ("not_registered", "brand_mismatch"):
+        return "공식 주소 목록에 없는 주소예요", None
+    if official == "unresolved":
+        return None, "주소가 공식 주소인지"
+    return None, None
+
+
+def _r9_message_lines(answer: str | None) -> tuple[str | None, str | None]:
+    if answer == _NO_RISK:
+        return "문자에서 위험 신호를 찾지 못했어요", None
+    if answer == _PARTIAL:
+        return "문자 일부에서 위험 신호를 찾지 못했어요", "문자 나머지"
+    if answer in ("failed", "not_run"):
+        return None, "문자 내용"
+    return None, None
+
+
+def _r9_env_lines(answer: str | None) -> tuple[str | None, str | None]:
+    if answer == _NO_RISK:
+        return "페이지에서 위험 신호를 찾지 못했어요", None
+    if answer == _PARTIAL:
+        return "페이지 일부에서 위험 신호를 찾지 못했어요", "페이지 나머지"
+    if answer == "failed":
+        return None, "페이지 내용 (열지 못했어요)"
+    if answer == "not_run":
+        return None, "페이지 내용"
+    return None, None
+
+
+def _r9_blank_values(analysis_result: dict) -> dict[str, str]:
+    """r9-uncertain의 `{{ org_label }}`, `{{ checked }}`, `{{ unchecked }}`를 채운다.
+
+    docs/designs/chatbot-copy.md "R9 판단 보류 → 빈칸 채우는 규칙"의 표를
+    그대로 따른다. 행 순서: 보낸 곳 → 요구 행동 → 주소 → 문자 → 페이지.
+    """
+
+    url = analysis_result.get("url") or {}
+    message = analysis_result.get("message") or {}
+    env = analysis_result.get("env") or {}
+    brand = message.get("brand")
+
+    sender_checked, sender_unchecked = _r9_sender_lines(brand)
+    requested_checked = _r9_requested_actions_line(
+        (message.get("details") or {}).get("doubts") or []
+    )
+    address_checked, address_unchecked = _r9_address_lines(url.get("official"), brand)
+    message_checked, message_unchecked = _r9_message_lines(message.get("answer"))
+    env_checked, env_unchecked = _r9_env_lines(env.get("answer"))
+
+    checked = [
+        line for line in (
+            sender_checked, requested_checked, address_checked,
+            message_checked, env_checked,
+        )
+        if line
+    ]
+    unchecked = [
+        line for line in (
+            sender_unchecked, address_unchecked, message_unchecked, env_unchecked,
+        )
+        if line
+    ]
+
+    return {
+        "org_label": _r9_org_label(brand),
+        "checked": "\n".join(f"- {line}" for line in checked) or _R9_NO_LINES,
+        "unchecked": "\n".join(f"- {line}" for line in unchecked) or _R9_NO_LINES,
+    }
 
 
 def _inject_job_id(card: dict, job_id: str | None) -> dict:
@@ -67,6 +173,9 @@ def _result_card_values(analysis_result: dict, card_name: str) -> dict[str, str]
         domain = url.get("domain")
         if domain:
             values["official_url"] = f"https://{domain}"
+
+    if card_name == "r9-uncertain":
+        values.update(_r9_blank_values(analysis_result))
 
     return values
 
