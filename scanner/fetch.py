@@ -18,6 +18,7 @@ urlscan 이 대신 해주던 "URL 방문·수집"을 우리 코드로 옮기는 
 import asyncio
 import ipaddress
 import re
+import ssl
 import time
 from collections.abc import Awaitable, Callable
 from urllib.parse import urljoin, urlsplit
@@ -26,6 +27,9 @@ import httpx
 
 from scanner.models import CollectResult
 
+# failures 에 들어가는 값: invalid_scheme, invalid_url, blocked_address,
+# redirect_limit, timeout, tls_cert_verify_failed, connection_failed,
+# html_truncated(성공 응답에 덧붙는 경고성 값, 위 값들과 성격이 다르다).
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT_SECONDS = 10.0
 HTML_LIMIT_BYTES = 131_072  # 128 KiB. 초과분은 버리고 failures 에 html_truncated 를 남긴다.
@@ -119,6 +123,27 @@ def _decode(body: bytes, encoding: str | None) -> str:
         return body.decode(encoding or "utf-8", errors="replace")
     except LookupError:
         return body.decode("utf-8", errors="replace")
+
+
+def _is_cert_verify_failure(exc: BaseException) -> bool:
+    """만료·자체서명·호스트명 불일치 등 TLS 인증서 검증 실패인지 판별한다.
+
+    httpx 는 이 오류를 httpcore.ConnectError 로 감싸고, 실제 ssl.SSLError 는
+    그 예외의 `args[0]`에 들어간다 — httpx/httpcore 의 공개 API가 아니라
+    버전에 따라 감싸는 깊이가 달라질 수 있어 `__cause__`/`__context__` 체인을
+    몇 단계 따라가며 확인한다. 못 찾아도 메시지 문자열(`CERTIFICATE_VERIFY_FAILED`)
+    로 한 번 더 확인한다.
+    """
+    node: BaseException | None = exc
+    for _ in range(4):
+        if node is None:
+            break
+        if isinstance(node, ssl.SSLError):
+            return True
+        if node.args and isinstance(node.args[0], ssl.SSLError):
+            return True
+        node = node.__cause__ or node.__context__
+    return "CERTIFICATE_VERIFY_FAILED" in str(exc)
 
 
 def _result(
@@ -245,10 +270,9 @@ async def _collect(
             )
     except (TimeoutError, httpx.TimeoutException):
         return _result(url, chain, final_url=current, elapsed_start=start, failures=("timeout",))
-    except httpx.HTTPError:
-        return _result(
-            url, chain, final_url=current, elapsed_start=start, failures=("connection_failed",)
-        )
+    except httpx.HTTPError as e:
+        failure = "tls_cert_verify_failed" if _is_cert_verify_failure(e) else "connection_failed"
+        return _result(url, chain, final_url=current, elapsed_start=start, failures=(failure,))
 
     return _result(
         url, chain, final_url=current, elapsed_start=start, failures=("redirect_limit",)

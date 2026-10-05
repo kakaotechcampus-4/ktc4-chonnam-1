@@ -7,6 +7,8 @@ redirect, timeout, 잘못된 URL, localhost/private IP, HTML 이 아닌 응답,
 """
 
 import asyncio
+import ssl
+from collections.abc import Callable
 
 import httpx
 
@@ -37,6 +39,19 @@ def run(url: str, routes: dict[str, httpx.Response], *, slow: frozenset[str] = f
             return await collect_url(url, client=client, resolve=resolve_stub, timeout=timeout)
 
     return asyncio.run(go()), seen
+
+
+def run_raising(url: str, make_error: Callable[[httpx.Request], Exception]) -> CollectResult:
+    """handler 가 지정한 예외를 올리게 해서 네트워크 계층 실패를 흉내 낸다."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise make_error(request)
+
+    async def go() -> CollectResult:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await collect_url(url, client=client, resolve=resolve_stub)
+
+    return asyncio.run(go())
 
 
 def redirect(to: str) -> httpx.Response:
@@ -130,6 +145,52 @@ class TestInvalidUrl:
 
     def test_unreachable_host_is_connection_failed(self):
         result, _ = run("https://down.example/", {})
+
+        assert result.failures == ("connection_failed",)
+
+
+class TestTlsCertificateVerification:
+    """link24.kr/DlMFKmF 실사례: 인증서 검증 실패가 connection_failed 에
+    묻히지 않고 별도로 구분되는지 확인한다. verify=False 로 우회하지 않는다
+    (의도적으로 보류 — 윤여경님 요청)."""
+
+    def test_expired_certificate_is_distinguished_from_connection_failed(self):
+        def make_error(request: httpx.Request) -> Exception:
+            return httpx.ConnectError(
+                "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+                "certificate has expired (_ssl.c:1028)",
+                request=request,
+            )
+
+        result = run_raising("https://expired.example/", make_error)
+
+        assert result.failures == ("tls_cert_verify_failed",)
+
+    def test_wrapped_ssl_cause_is_also_distinguished(self):
+        """실제 httpx/httpcore 는 ssl.SSLError 를 감싼 예외를 __cause__ 로 올린다."""
+
+        def make_error(request: httpx.Request) -> Exception:
+            ssl_error = ssl.SSLCertVerificationError(
+                1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+                "self-signed certificate (_ssl.c:1028)",
+            )
+            wrapped = RuntimeError(ssl_error)  # httpcore.ConnectError 역할
+            try:
+                raise wrapped
+            except RuntimeError as cause:
+                error = httpx.ConnectError("connect failed", request=request)
+                error.__cause__ = cause
+                return error
+
+        result = run_raising("https://self-signed.example/", make_error)
+
+        assert result.failures == ("tls_cert_verify_failed",)
+
+    def test_other_connect_errors_stay_connection_failed(self):
+        def make_error(request: httpx.Request) -> Exception:
+            return httpx.ConnectError("Connection refused", request=request)
+
+        result = run_raising("https://refused.example/", make_error)
 
         assert result.failures == ("connection_failed",)
 
