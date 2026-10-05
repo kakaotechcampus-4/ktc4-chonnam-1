@@ -22,6 +22,9 @@ from services.result_card_renderer import render_result_card, merge_kakao_respon
 from ai.pipeline import analyze_message_part, finalize_analysis
 from ai.types import UrlAnalysis
 
+from scanner.fetch import collect_url
+from urllib.parse import urlparse
+
 
 app = FastAPI(lifespan=app_lifespan)
 
@@ -354,7 +357,13 @@ async def run_analysis(
     # ========================================================
 
     for link in links:
+        collector_task = None
         try:
+            # 자체 URL Collector를 urlscan과 병렬 실행한다.
+            # 현재는 Shadow Mode이므로 실제 분석 결과에는 사용하지 않는다.
+            collector_task = asyncio.create_task(
+                collect_url(link)
+            )
             urlscan_start = time.monotonic()
 
             # ------------------------------------------------
@@ -376,6 +385,9 @@ async def run_analysis(
                 card_responses.append(
                     render_card("r4-unavailable")
                 )
+
+                if not collector_task.done():
+                    collector_task.cancel()
 
                 continue
 
@@ -404,6 +416,8 @@ async def run_analysis(
                 card_responses.append(
                     render_card("r4-unavailable")
                 )
+                if not collector_task.done():
+                    collector_task.cancel()
 
                 continue
 
@@ -429,6 +443,86 @@ async def run_analysis(
                 f"[PARSED RESULT] "
                 f"{parsed_result}"
             )
+            # ------------------------------------------------
+            # 2-3-1. 자체 Collector Shadow 비교
+            # ------------------------------------------------
+
+            try:
+                collector_result = await collector_task
+
+                collector_domain = None
+
+                if collector_result.final_url:
+                    collector_domain = urlparse(
+                        collector_result.final_url
+                    ).hostname
+
+                print(
+                    "========== URL COLLECTOR SHADOW =========="
+                )
+                print(
+                    f"[INPUT URL]             "
+                    f"{collector_result.input_url}"
+                )
+                print(
+                    f"[URLSCAN FINAL URL]     "
+                    f"{parsed_result.get('final_url')}"
+                )
+                print(
+                    f"[COLLECTOR FINAL URL]   "
+                    f"{collector_result.final_url}"
+                )
+                print(
+                    f"[FINAL URL MATCH]       "
+                    f"{parsed_result.get('final_url') == collector_result.final_url}"
+                )
+                print(
+                    f"[URLSCAN DOMAIN]        "
+                    f"{parsed_result.get('domain')}"
+                )
+                print(
+                    f"[COLLECTOR DOMAIN]      "
+                    f"{collector_domain}"
+                )
+                print(
+                    f"[DOMAIN MATCH]          "
+                    f"{parsed_result.get('domain') == collector_domain}"
+                )
+                print(
+                    f"[URLSCAN ELAPSED]       "
+                    f"{urlscan_elapsed:.2f}s"
+                )
+                print(
+                    f"[COLLECTOR ELAPSED]     "
+                    f"{collector_result.elapsed_ms}ms"
+                )
+                print(
+                    f"[COLLECTOR STATUS]      "
+                    f"{collector_result.status_code}"
+                )
+                print(
+                    f"[COLLECTOR TITLE]       "
+                    f"{collector_result.title}"
+                )
+                print(
+                    f"[COLLECTOR REDIRECTS]   "
+                    f"{collector_result.redirect_chain}"
+                )
+                print(
+                    f"[COLLECTOR FAILURES]    "
+                    f"{collector_result.failures}"
+                )
+                print(
+                    "=========================================="
+                )
+
+            except Exception as e:
+                # Shadow Mode이므로 Collector 실패가 기존 분석을 깨면 안 된다.
+                print(
+                    f"[COLLECTOR SHADOW ERROR] "
+                    f"url={link} "
+                    f"{type(e).__name__}: {e}"
+                )
 
             # ------------------------------------------------
             # 2-4. print urlscan result
@@ -586,6 +680,11 @@ async def run_analysis(
             )
 
         except Exception as e:
+            if (
+                collector_task is not None
+                and not collector_task.done()
+            ):
+                collector_task.cancel()
             print(
                 f"[ANALYSIS ERROR] "
                 f"url={link} "
