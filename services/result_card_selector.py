@@ -41,11 +41,13 @@ def select_result_card(analysis_result: dict) -> str:
        수집기 미연결로 env가 not_run인 현재 상황) → "판단하기 어려워요".
        result-meaning-cases.md 6절 항목 9가 미해결 상태로 남긴 질문의
        잠정 답이다 ("후보는 S4 결론 줄").
-    4. official == "brand_mismatch" → 위험 카드 (사칭 패턴 자체가 근거).
-    5. official == "not_registered"인데 브랜드 자체를 특정 못 했으면
-       → "확인할 정보가 부족해요" (org_name을 채울 수 없는 경우).
-    6. official == "not_registered"면 → "공식 주소 목록에 없어요".
-    7. 그 외(unresolved 등) → "판단하기 어려워요".
+    4. official == "brand_mismatch"인데 브랜드 자체를 특정 못 했으면
+       (brand == "unknown") → "판단하기 어려워요" (org_name을 채울 수
+       없는 경우).
+    5. official == "brand_mismatch"면 → "공식 주소가 아니에요"
+       (FE 명세 변경: signals 없이는 brand_mismatch만으로 위험 단정
+       안 함, d8b325a).
+    6. 그 외(not_registered, unresolved 등) → "판단하기 어려워요".
     """
 
     url = analysis_result.get("url") or {}
