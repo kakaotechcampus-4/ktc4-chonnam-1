@@ -35,6 +35,11 @@ FAILURE_LIMIT = 10
 MAX_HARD_NEGATIVE_RATE = 0.05
 TARGET_HIT_AT_3 = 0.50
 SYNTHETIC_WARNING = "정상·hard negative 문자는 합성이다. 이 수치를 실제 오탐률로 인용하지 않는다."
+# 운영에서 AI 는 BE 가 주소를 지운 본문만 받는다. 출처 원문(text)이 아니라 그 형태로 잰다.
+QUERY_NOTE = (
+    "질의: 각 행의 `message` (출처 원문 `text` 에서 주소를 지운 본문). "
+    "처리 규칙은 `eval/datasets/README.md`."
+)
 
 Searcher = Callable[[str], list[CaseMatch]]
 
@@ -72,11 +77,16 @@ def load_rows(path: Path = TESTSET) -> list[dict]:
     ]
 
 
+def drop_excluded(rows: Sequence[dict]) -> list[dict]:
+    # exclude 가 붙은 행은 판단을 보류한 행이다. 데이터에는 남기고 평가에서만 뺀다.
+    return [row for row in rows if "exclude" not in row]
+
+
 def run_search(rows: Sequence[dict], searcher: Searcher) -> list[RowResult]:
     results = []
     for row in rows:
         start = time.perf_counter()
-        matches = searcher(row["text"])
+        matches = searcher(row["message"])
         results.append(RowResult(row, matches, time.perf_counter() - start))
     return results
 
@@ -228,7 +238,7 @@ def _failure_lines(title: str, results: Sequence[RowResult]) -> list[str]:
     lines = [f"### {title}", ""]
     if not results:
         return [*lines, "없음.", ""]
-    lines += ["| id | top-1 | 원문 | 붙은 사례 |", "|---|---|---|---|"]
+    lines += ["| id | top-1 | 질의 | 붙은 사례 |", "|---|---|---|---|"]
     for result in results:
         if result.matches:
             top = result.matches[0]
@@ -237,7 +247,7 @@ def _failure_lines(title: str, results: Sequence[RowResult]) -> list[str]:
         else:
             case = "—"
         lines.append(
-            f"| {result.row['id']} | {metrics.top1(result.matches):.4f} | {_cell(result.row['text'])} | {case} |"
+            f"| {result.row['id']} | {metrics.top1(result.matches):.4f} | {_cell(result.row['message'])} | {case} |"
         )
     return [*lines, ""]
 
@@ -262,6 +272,12 @@ def render_report(evaluation: dict, meta: dict) -> str:
         "",
         f"설정: {meta['settings']}",
         "",
+        QUERY_NOTE,
+        "",
+    ]
+    if meta.get("excluded"):
+        lines += [f"평가 제외: {meta['excluded']}행 (`exclude` 필드. 사유는 각 행에 적었다)", ""]
+    lines += [
         f"> {SYNTHETIC_WARNING}",
         "",
     ]
@@ -324,7 +340,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     ngram_sizes = args.ngram or search.NGRAM_SIZES
     sublinear_tf = search.SUBLINEAR_TF if args.tf is None else args.tf == "log"
-    rows = load_rows()
+    all_rows = load_rows()
+    rows = drop_excluded(all_rows)
     if args.ngram is None and args.tf is None:
         # 운영 경로다. 첫 검색에 KB 로드와 색인 생성이 들어가도록 load_cases 보다 먼저 돈다.
         results = run_search(rows, default_searcher)
@@ -349,6 +366,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "date": date.today().isoformat(),
         "commit": _commit(),
         "kb_total": len(cases),
+        "excluded": len(all_rows) - len(rows),
         "settings": f"문자 n-gram {ngram_sizes} TF-IDF 코사인, TF {'1+ln(tf)' if sublinear_tf else '원 빈도'}",
         "latency": latency(results),
     }

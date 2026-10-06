@@ -8,7 +8,16 @@ from ai.kb.search import CASES_DIR, load_cases, search_cases
 from ai.types import CategoryCode
 
 DATASETS = Path(__file__).resolve().parents[1] / "eval" / "datasets"
-LINK_TEXT_RE = re.compile(r"h[tx]{2}ps?:/|://|\[\.\]|www\.", re.IGNORECASE)
+# AI 는 BE 가 주소를 지운 본문만 받는다. 스킴(가린 hxxps:// 포함)·가린 점 [.]·www.·
+# 스킴 없는 도메인(li**.cc/H***, infos-a*****ts.com)을 모두 주소로 본다.
+ADDRESS_RE = re.compile(
+    r"[a-z]{3,6}://|\[\.\]|www\.|"
+    r"(?<![A-Za-z0-9*_-])[A-Za-z0-9*_-]+(?:\.[A-Za-z0-9*_-]+)*\.[A-Za-z*]{2,}(?![A-Za-z0-9*_-])",
+    re.IGNORECASE,
+)
+# 위 검사는 최상위 도메인 목록 없이 모양만 본다. 목록(Public Suffix List)에 없는 끝부분이라
+# 주소가 아닌 것으로 확인한 표기만 둔다. `.point` 는 최상위 도메인이 아니다.
+NOT_DOMAINS = {"L.POINT"}
 RRN_RE = re.compile(r"\d{6}[-\s]?\d{7}")
 PHONE_RE = re.compile(r"01[016789][-\s]?\d{3,4}[-\s]?\d{4}")
 
@@ -126,7 +135,9 @@ def test_eval_dataset_is_disjoint_from_kb():
     kb_normalized = {value for case in load_cases(CASES_DIR) for value in case.normalized}
 
     for row in _load_jsonl("smishing.jsonl") + _load_jsonl("rag_testset.jsonl"):
-        assert normalize(row["text"]) not in kb_normalized, row.get("id", row["text"][:30])
+        # 주소를 지우면 KB 레코드와 같아질 수 있다. 검색하는 message 도 본다.
+        for text in (row["text"], row.get("message", row["text"])):
+            assert normalize(text) not in kb_normalized, row.get("id", row["text"][:30])
 
 
 def test_rag_testset_is_labelled():
@@ -145,7 +156,7 @@ def test_rag_testset_is_labelled():
 
 def test_benign_messages_do_not_match_kb_strongly():
     for row in _load_jsonl("benign.jsonl"):
-        result = search_cases(row["text"])
+        result = search_cases(row["message"])
         for match in result.matches:
             assert match.similarity < 0.6, row["text"][:30]
 
@@ -158,11 +169,31 @@ def test_every_curated_record_is_indexed():
     assert len(load_cases(CASES_DIR)) == len(curated)
 
 
-def test_kb_records_have_no_link_text():
-    # 운영 검색 질의는 링크를 뺀 본문이다. KB 본문에 링크 표기가 남으면 형식이 어긋난다.
+def _addresses(text: str) -> list[str]:
+    return [found for found in ADDRESS_RE.findall(text) if found.upper() not in NOT_DOMAINS]
+
+
+def test_kb_records_have_no_address():
+    # 운영 검색 질의는 주소를 뺀 본문이다. KB 본문에 주소가 남으면 형식이 어긋난다.
     for case in load_cases(CASES_DIR):
         for variant in case.variants:
-            assert not LINK_TEXT_RE.search(variant), (case.case_id, variant[:40])
+            assert not _addresses(variant), (case.case_id, variant[:40])
+
+
+def test_search_datasets_carry_address_free_message():
+    # 평가는 text(출처 원문)가 아니라 message(AI 가 받는 형태)로 검색한다.
+    for name in ("rag_testset.jsonl", "benign.jsonl"):
+        for row in _load_jsonl(name):
+            label = (name, row.get("id", row["text"][:30]))
+            if "exclude" in row:
+                # 주소인지 판단을 보류한 행은 평가에서 빠진다. 사유는 비워 두지 않는다.
+                assert row["exclude"].strip(), label
+                continue
+            assert not _addresses(row["message"]), label
+            assert row["message"].strip(), label
+            if not _addresses(row["text"]):
+                # 주소가 없던 행은 손대지 않는다.
+                assert row["message"] == row["text"], label
 
 
 def test_rag_testset_rows_carry_split():

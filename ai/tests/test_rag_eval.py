@@ -22,6 +22,7 @@ def _result(row_id, group, category, score, matched_category="delivery", text=No
         "group": group,
         "category": category,
         "text": text or f"{row_id} 본문",
+        "message": text or f"{row_id} 본문",
         "template": None,
     }
     return rag_eval.RowResult(row, [_match(score, matched_category)], 0.0)
@@ -145,6 +146,56 @@ def test_verdict_follows_the_interval_not_the_point():
     assert "잠정 목표 50.0% 판단 보류" in report
 
 
+def test_search_uses_message_not_source_text():
+    # 운영에서 AI 는 BE 가 주소를 지운 본문만 받는다. 출처 원문(text)으로 재면 운영과 조건이 다르다.
+    queries = []
+    rows = [{"text": "배송 확인 https://a.example/x", "message": "배송 확인"}]
+
+    rag_eval.run_search(rows, lambda text: queries.append(text) or [])
+
+    assert queries == ["배송 확인"]
+
+
+def test_report_shows_query_rule_and_failed_message():
+    miss = _result("test-s3", "smishing", "penalty", 0.1, text="원문")
+    miss.row["message"] = "질의 본문"
+    meta = {
+        "label": "t",
+        "date": "2026-10-03",
+        "commit": "abc1234",
+        "kb_total": 3,
+        "settings": "s",
+        "latency": {"first_ms": 1.0, "p50_ms": 0.5, "p95_ms": 0.9},
+    }
+
+    report = rag_eval.render_report(_evaluate(results=[*RESULTS, miss]), meta)
+
+    assert rag_eval.QUERY_NOTE in report
+    assert "| test-s3 | 0.1000 | 질의 본문 |" in report
+
+
+def test_rows_marked_exclude_are_left_out():
+    rows = [{"id": "a"}, {"id": "b", "exclude": "주소 판단 보류"}]
+
+    assert rag_eval.drop_excluded(rows) == [{"id": "a"}]
+
+
+def test_report_counts_excluded_rows():
+    meta = {
+        "label": "t",
+        "date": "2026-10-03",
+        "commit": "abc1234",
+        "kb_total": 3,
+        "settings": "s",
+        "latency": {"first_ms": 1.0, "p50_ms": 0.5, "p95_ms": 0.9},
+        "excluded": 5,
+    }
+
+    report = rag_eval.render_report(_evaluate(), meta)
+
+    assert "평가 제외: 5행" in report
+
+
 def test_parse_ngram_sorts_and_dedupes():
     assert rag_eval.parse_ngram("3,2,3") == (2, 3)
 
@@ -184,7 +235,7 @@ def test_default_run_times_kb_load_inside_first_search(monkeypatch):
         calls.append("search")
         raise Stop
 
-    monkeypatch.setattr(rag_eval, "load_rows", lambda: [{"text": "x"}])
+    monkeypatch.setattr(rag_eval, "load_rows", lambda: [{"message": "x"}])
     monkeypatch.setattr(rag_eval, "default_searcher", searcher)
     monkeypatch.setattr(rag_eval, "load_cases", lambda: calls.append("load") or ())
 
