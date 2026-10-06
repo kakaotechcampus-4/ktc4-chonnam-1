@@ -2,7 +2,7 @@
 
 | 파일 | 내용 |
 |---|---|
-| `smishing.jsonl` | 팀이 수집한 실물 스미싱. KB에 등재하지 않은 분량 |
+| `smishing.jsonl` | 실물 스미싱. KB `team_collected` 와 같은 원본에서 KB에 등재하지 않은 분량. 인터넷 크롤링분과 팀원 수신분이 섞여 건별 구분·출처 링크 없음(`ai/src/ai/kb/README.md` 의 "출처 현황") |
 | `benign.jsonl` | 실제 택배사·쇼핑몰 정상 알림 |
 
 각 줄은 `{"text": "...", "label": "smishing" | "benign"}` 이다. `benign.jsonl` 에는
