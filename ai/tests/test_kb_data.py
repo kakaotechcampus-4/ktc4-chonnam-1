@@ -242,3 +242,56 @@ def test_kb_sources_do_not_overlap_rag_testset():
     eval_sources = {row["source"] for row in _load_jsonl("rag_testset.jsonl") if row["source"]}
 
     assert kb_sources & eval_sources == set()
+
+
+NORM_DIR = CASES_DIR.parent / "norm_rules"
+NORM_BUSINESSES = {"delivery", "penalty", "overseas_payment"}
+NORM_KINDS = {"impersonation", "procedure", "verification"}
+
+
+def _norm_records() -> list[tuple[Path, dict]]:
+    import yaml
+
+    records = []
+    for path in sorted(NORM_DIR.glob("NR-*.md")):
+        match = re.match(r"\A---\r?\n(.*?)\r?\n---", path.read_text(encoding="utf-8"), re.DOTALL)
+        assert match is not None, f"{path.name}: frontmatter 없음"
+        records.append((path, yaml.safe_load(match.group(1))))
+    return records
+
+
+def test_norm_records_follow_template():
+    # 규범은 판정이 아니라 설명·확인 경로에 쓰인다. 출처 원문과 한 줄씩 대조할 수 있어야
+    # 검토가 가능하므로 문장 하나, 적용 범위, 출처별 원문 발췌를 필수로 둔다.
+    records = _norm_records()
+    assert records
+    for path, meta in records:
+        name = path.name
+        assert meta["id"] == path.stem, name
+        assert meta["status"] in {"draft", "curated"}, name
+        assert meta["business"] in NORM_BUSINESSES, name
+        assert meta["kind"] in NORM_KINDS, name
+        assert str(meta["statement"]).strip(), name
+        assert all(str(meta["applies_to"][key]).strip() for key in ("org", "region", "period")), name
+        assert meta["sources"], name
+        for source in meta["sources"]:
+            assert re.match(r"https?://", source["url"]), name
+            for key in ("name", "published_at", "checked_at", "license"):
+                assert str(source[key]).strip(), (name, key)
+            quotes = source["quote"] if isinstance(source["quote"], list) else [source["quote"]]
+            assert quotes and all(str(quote).strip() for quote in quotes), (name, "quote")
+        if meta["status"] == "curated":
+            assert meta["reviewer"] not in (None, "", "미지정") and meta["reviewed_at"], name
+
+
+def test_impersonation_norms_name_claim_pretext_action_and_cases():
+    # 사칭 패턴은 "기관이 보냈다" 가 아니라 "기관이라고 주장한다" 로 적는다.
+    kb_ids = {case.case_id for case in load_cases(CASES_DIR)}
+    for path, meta in _norm_records():
+        if meta["kind"] != "impersonation":
+            continue
+        pattern = meta["pattern"]
+        for key in ("claimed_org", "pretext", "requested_action"):
+            assert str(pattern[key]).strip(), (path.name, key)
+        assert meta["related_cases"], path.name
+        assert set(meta["related_cases"]) <= kb_ids, path.name
