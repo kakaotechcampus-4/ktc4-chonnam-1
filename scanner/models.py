@@ -37,3 +37,16 @@ class StaticCheckResult:
     kisa_listed: bool
     lookalike_of: str | None  # 시각적으로 혼동되는 공식 도메인 (없으면 None)
     failures: tuple[str, ...] = field(default_factory=tuple)
+
+@dataclass(frozen=True)
+class UrlEvidence:
+    """URL 하나에 대해 BE가 수집한 검사 증거 묶음.
+
+    이 모델은 사실값만 보관하며 위험 점수나 최종 판정을 만들지 않는다.
+    scorer가 도입되기 전까지는 관찰 및 비교 용도로 사용한다.
+    """
+
+    input_static: StaticCheckResult
+    final_static: StaticCheckResult | None
+    collector: CollectResult
+    urlscan: dict
