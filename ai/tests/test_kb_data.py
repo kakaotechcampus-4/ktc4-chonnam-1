@@ -196,6 +196,18 @@ def test_search_datasets_carry_address_free_message():
                 assert row["message"] == row["text"], label
 
 
+def test_near_dup_marks_point_to_kb_cases_on_smishing_rows():
+    # near_dup_of 는 KB 에 거의 같은 사례가 있다는 사람 판정이다(기준은 datasets/README.md).
+    # 정상 문자가 KB 사례와 닮은 것은 의도한 시험이라 표시하지 않는다.
+    kb_ids = {case.case_id for case in load_cases(CASES_DIR)}
+    marked = [row for row in _load_jsonl("rag_testset.jsonl") if "near_dup_of" in row]
+
+    assert marked
+    for row in marked:
+        assert row["group"] == "smishing", row["id"]
+        assert row["near_dup_of"] in kb_ids, row["id"]
+
+
 def test_rag_testset_rows_carry_split():
     for row in _load_jsonl("rag_testset.jsonl"):
         assert row["split"] in {"dev", "test"}, row["id"]

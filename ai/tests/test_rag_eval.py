@@ -174,6 +174,52 @@ def test_report_shows_query_rule_and_failed_message():
     assert "| test-s3 | 0.1000 | 질의 본문 |" in report
 
 
+def _known(row_id, category, score, matched_category="delivery"):
+    result = _result(row_id, "smishing", category, score, matched_category)
+    result.row["near_dup_of"] = "CE-1"
+    return result
+
+
+def test_campaign_split_separates_known_and_new_smishing():
+    # near_dup_of 는 KB 에 거의 같은 사례가 있다는 사람 판정이다. 정상 문자는 나누지 않는다.
+    results = [
+        _known("test-k1", "delivery", 0.9),
+        _known("test-k2", "penalty", 0.8),
+        _result("test-n1", "smishing", "delivery", 0.5),
+        _result("test-h9", "hard_negative", "delivery", 0.9),
+    ]
+
+    split = rag_eval.campaign_split(results, threshold=0.4)
+
+    assert (split["known"]["n"], split["known"]["hits3"]) == (2, 1)
+    assert (split["new"]["n"], split["new"]["hits3"]) == (1, 1)
+
+
+def test_campaign_split_handles_empty_side():
+    split = rag_eval.campaign_split([_result("test-n1", "smishing", "delivery", 0.5)], threshold=0.4)
+
+    assert split["known"] == {"n": 0}
+
+
+def test_report_shows_known_and_new_campaign_hit3():
+    results = [*RESULTS, _known("test-k1", "delivery", 0.9), _known("test-k2", "penalty", 0.8)]
+    meta = {
+        "label": "t",
+        "date": "2026-10-03",
+        "commit": "abc1234",
+        "kb_total": 3,
+        "settings": "s",
+        "latency": {"first_ms": 1.0, "p50_ms": 0.5, "p95_ms": 0.9},
+    }
+
+    report = rag_eval.render_report(_evaluate(results=results), meta)
+
+    # test 스미싱: 아는 캠페인 k1(hit)·k2(miss), 새 캠페인 s1(hit)·s2(miss)
+    assert "  - 아는 캠페인: 50.0% (1/2," in report
+    assert "  - 새 캠페인: 50.0% (1/2," in report
+    assert "## 스미싱: 아는 캠페인 / 새 캠페인" in report
+
+
 def test_rows_marked_exclude_are_left_out():
     rows = [{"id": "a"}, {"id": "b", "exclude": "주소 판단 보류"}]
 

@@ -40,6 +40,10 @@ QUERY_NOTE = (
     "질의: 각 행의 `message` (출처 원문 `text` 에서 주소를 지운 본문). "
     "처리 규칙은 `eval/datasets/README.md`."
 )
+CAMPAIGN_NOTE = (
+    "아는 캠페인은 KB 에 거의 같은 사례가 있는 스미싱이다(`near_dup_of`, 사람 판정). "
+    "작은 변형을 견디는 정도와 처음 보는 표현을 찾는 정도를 따로 본다. 기준은 `eval/datasets/README.md`."
+)
 
 Searcher = Callable[[str], list[CaseMatch]]
 
@@ -128,6 +132,29 @@ def summarize(results: Sequence[RowResult], threshold: float) -> dict[str, dict]
     return summary
 
 
+def campaign_split(results: Sequence[RowResult], threshold: float) -> dict[str, dict]:
+    # 문자 n-gram 검색은 KB 에 거의 같은 문구가 있으면 찾고 표현이 다르면 놓친다.
+    # 둘을 섞은 평균은 그 차이를 가리므로 near_dup_of(사람 판정)로 나눠 잰다.
+    smishing = _in_group(results, "smishing")
+    split = {}
+    for side, part in (
+        ("known", [result for result in smishing if "near_dup_of" in result.row]),
+        ("new", [result for result in smishing if "near_dup_of" not in result.row]),
+    ):
+        if not part:
+            split[side] = {"n": 0}
+            continue
+        ranks = [_rank(result, threshold) for result in part]
+        split[side] = {
+            "n": len(part),
+            "hit1": metrics.hit_rate(ranks, 1),
+            "hit3": metrics.hit_rate(ranks, 3),
+            "hits3": sum(1 for rank in ranks if rank is not None and rank <= 3),
+            "mrr": metrics.mrr(ranks),
+        }
+    return split
+
+
 def category_table(
     results: Sequence[RowResult], threshold: float, kb_counts: Mapping[str, int]
 ) -> list[dict]:
@@ -179,9 +206,15 @@ def evaluate(
         max_rate,
         [metrics.top1(result.matches) for result in dev],
     )
-    evaluation = {"threshold": threshold, "kb_counts": dict(kb_counts), "dev": summarize(dev, threshold)}
+    evaluation = {
+        "threshold": threshold,
+        "kb_counts": dict(kb_counts),
+        "dev": summarize(dev, threshold),
+        "campaigns": {"dev": campaign_split(dev, threshold)},
+    }
     if include_test:
         evaluation["test"] = summarize(test, threshold)
+        evaluation["campaigns"]["test"] = campaign_split(test, threshold)
         evaluation["categories"] = category_table(test, threshold, kb_counts)
         evaluation["misses"], evaluation["attached"] = failures(test, threshold)
     return evaluation
@@ -207,6 +240,26 @@ def _cell(text: str) -> str:
 
 def _count(pair: tuple[int, int]) -> str:
     return f"{pair[0]}/{pair[1]}"
+
+
+def _hit3_text(entry: dict) -> str:
+    if not entry["n"]:
+        return "해당 행 없음"
+    low, high = metrics.wilson(entry["hits3"], entry["n"])
+    return f"{_pct(entry['hit3'])} ({entry['hits3']}/{entry['n']}, 95% 구간 {_pct(low)}~{_pct(high)})"
+
+
+def _campaign_lines(campaigns: dict[str, dict]) -> list[str]:
+    lines = []
+    for split, sides in campaigns.items():
+        for side, name in (("known", "아는 캠페인"), ("new", "새 캠페인")):
+            entry = sides[side]
+            if entry["n"]:
+                cells = [_pct(entry["hit1"]), _pct(entry["hit3"]), f"{entry['mrr']:.3f}"]
+            else:
+                cells = ["—", "—", "—"]
+            lines.append(f"| {split} | {name} | {entry['n']} | " + " | ".join(cells) + " |")
+    return lines
 
 
 def _summary_lines(title: str, summary: dict[str, dict]) -> list[str]:
@@ -292,11 +345,21 @@ def render_report(evaluation: dict, meta: dict) -> str:
         f"- 기준값: {evaluation['threshold']:.4f} (dev hard negative 부착률 {_pct(MAX_HARD_NEGATIVE_RATE)} 이하가 되는 가장 낮은 값)",
         f"- dev hard negative 부착률: {_pct(evaluation['dev']['hard_negative']['attach'])}",
         f"- test 스미싱 hit@3: {_pct(hit3)} ({smishing['hits3']}/{smishing['n']}, 95% 구간 {_pct(low)}~{_pct(high)}) — 잠정 목표 {_pct(TARGET_HIT_AT_3)} {verdict}",
+        f"  - 아는 캠페인: {_hit3_text(evaluation['campaigns']['test']['known'])}",
+        f"  - 새 캠페인: {_hit3_text(evaluation['campaigns']['test']['new'])}",
         "",
         "## 그룹별 지표",
         "",
         *_summary_lines("dev", evaluation["dev"]),
         *_summary_lines("test", evaluation["test"]),
+        "## 스미싱: 아는 캠페인 / 새 캠페인",
+        "",
+        CAMPAIGN_NOTE,
+        "",
+        "| 분할 | 묶음 | 행 | hit@1 | hit@3 | MRR |",
+        "|---|---|---|---|---|---|",
+        *_campaign_lines(evaluation["campaigns"]),
+        "",
         "## 유형별 (test, 건수)",
         "",
         "| 유형 | KB | 스미싱 hit@3 | 정상 부착 | hard negative 부착 |",
