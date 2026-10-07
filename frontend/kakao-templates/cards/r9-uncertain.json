@@ -5,7 +5,7 @@
       {
         "textCard": {
           "title": "🤔 판단하기 어려워요",
-          "description": "문자 속 링크 대신 택배사 공식 앱이나 홈페이지에서 직접 확인하세요.\n이번 확인에서 위험 근거는 찾지 못했지만, 정상이라고 판단할 근거도 부족해요.",
+          "description": "문자 속 링크·번호 대신 관련 기관의 공식 홈페이지에서 연락처를 직접 찾아 확인하세요.\n\n확인한 내용\n{{ message_reason }}\n\n확인 범위\n{{ analysis_limits }}",
           "buttonLayout": "vertical",
           "buttons": [
             {
