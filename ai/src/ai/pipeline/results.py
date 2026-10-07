@@ -133,9 +133,26 @@ def build_message_part(
     doubts = [MessageDoubtItem(value=value, evidence=evidence) for value, evidence in dict.fromkeys(
         (candidate.doubt, candidate.evidence) for candidate in kept)]
     quotes = [candidate.evidence for candidate in sorted(candidates, key=lambda item: item.start)]
+    # ponytail: expand only a single-sentence quote; keep source-local candidates
+    # for longer quotes, add clause parsing if broader request context is needed.
+    for action in extracted.requested_actions:
+        quote = action.evidence
+        if (quote and quote.strip() and quote in text
+                and not re.search(r"[.!?\n。！？]\s*\S", quote.strip())):
+            start = text.index(quote)
+            if any(start <= candidate.start
+                    and candidate.start + len(candidate.evidence) <= start + len(quote)
+                    for candidate in candidates):
+                quotes.append(quote)
     quotes = [quote for quote in quotes if not any(quote != other and quote in other for other in quotes)]
-    reasons = [f"문자에서 '{plain}'라고 안내했습니다." for quote in dict.fromkeys(quotes)
-        if (plain := _plain_quote(quote))]
+    reasons = []
+    if extracted.analysis_status is AnalysisStatus.COMPLETED:
+        for label, field in (("기관", extracted.claimed_sender), ("명분", extracted.claimed_purpose)):
+            quote = field.evidence
+            if quote and quote.strip() and quote in text and (plain := _plain_quote(quote)):
+                reasons.append(f"문자가 내세운 {label}: '{plain}'.")
+    reasons.extend(f"문자에서 '{plain}'라고 안내했습니다." for quote in sorted(dict.fromkeys(quotes), key=text.index)
+        if (plain := _plain_quote(quote)))
     if completed and not candidates:
         reasons.append("제공된 문자에서 명시적인 행동 요구를 확인하지 못했습니다.")
     if extracted.analysis_status is AnalysisStatus.FALLBACK:

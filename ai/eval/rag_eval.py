@@ -35,6 +35,15 @@ FAILURE_LIMIT = 10
 MAX_HARD_NEGATIVE_RATE = 0.05
 TARGET_HIT_AT_3 = 0.50
 SYNTHETIC_WARNING = "정상·hard negative 문자는 합성이다. 이 수치를 실제 오탐률로 인용하지 않는다."
+# 운영에서 AI 는 BE 가 주소를 지운 본문만 받는다. 출처 원문(text)이 아니라 그 형태로 잰다.
+QUERY_NOTE = (
+    "질의: 각 행의 `message` (출처 원문 `text` 에서 주소를 지운 본문). "
+    "처리 규칙은 `eval/datasets/README.md`."
+)
+CAMPAIGN_NOTE = (
+    "아는 캠페인은 KB 에 거의 같은 사례가 있는 스미싱이다(`near_dup_of`, 사람 판정). "
+    "작은 변형을 견디는 정도와 처음 보는 표현을 찾는 정도를 따로 본다. 기준은 `eval/datasets/README.md`."
+)
 
 Searcher = Callable[[str], list[CaseMatch]]
 
@@ -72,11 +81,16 @@ def load_rows(path: Path = TESTSET) -> list[dict]:
     ]
 
 
+def drop_excluded(rows: Sequence[dict]) -> list[dict]:
+    # exclude 가 붙은 행은 판단을 보류한 행이다. 데이터에는 남기고 평가에서만 뺀다.
+    return [row for row in rows if "exclude" not in row]
+
+
 def run_search(rows: Sequence[dict], searcher: Searcher) -> list[RowResult]:
     results = []
     for row in rows:
         start = time.perf_counter()
-        matches = searcher(row["text"])
+        matches = searcher(row["message"])
         results.append(RowResult(row, matches, time.perf_counter() - start))
     return results
 
@@ -116,6 +130,29 @@ def summarize(results: Sequence[RowResult], threshold: float) -> dict[str, dict]
         if positives and negatives:
             summary[group]["auc"] = metrics.auc(positives, negatives)
     return summary
+
+
+def campaign_split(results: Sequence[RowResult], threshold: float) -> dict[str, dict]:
+    # 문자 n-gram 검색은 KB 에 거의 같은 문구가 있으면 찾고 표현이 다르면 놓친다.
+    # 둘을 섞은 평균은 그 차이를 가리므로 near_dup_of(사람 판정)로 나눠 잰다.
+    smishing = _in_group(results, "smishing")
+    split = {}
+    for side, part in (
+        ("known", [result for result in smishing if "near_dup_of" in result.row]),
+        ("new", [result for result in smishing if "near_dup_of" not in result.row]),
+    ):
+        if not part:
+            split[side] = {"n": 0}
+            continue
+        ranks = [_rank(result, threshold) for result in part]
+        split[side] = {
+            "n": len(part),
+            "hit1": metrics.hit_rate(ranks, 1),
+            "hit3": metrics.hit_rate(ranks, 3),
+            "hits3": sum(1 for rank in ranks if rank is not None and rank <= 3),
+            "mrr": metrics.mrr(ranks),
+        }
+    return split
 
 
 def category_table(
@@ -169,9 +206,15 @@ def evaluate(
         max_rate,
         [metrics.top1(result.matches) for result in dev],
     )
-    evaluation = {"threshold": threshold, "kb_counts": dict(kb_counts), "dev": summarize(dev, threshold)}
+    evaluation = {
+        "threshold": threshold,
+        "kb_counts": dict(kb_counts),
+        "dev": summarize(dev, threshold),
+        "campaigns": {"dev": campaign_split(dev, threshold)},
+    }
     if include_test:
         evaluation["test"] = summarize(test, threshold)
+        evaluation["campaigns"]["test"] = campaign_split(test, threshold)
         evaluation["categories"] = category_table(test, threshold, kb_counts)
         evaluation["misses"], evaluation["attached"] = failures(test, threshold)
     return evaluation
@@ -197,6 +240,26 @@ def _cell(text: str) -> str:
 
 def _count(pair: tuple[int, int]) -> str:
     return f"{pair[0]}/{pair[1]}"
+
+
+def _hit3_text(entry: dict) -> str:
+    if not entry["n"]:
+        return "해당 행 없음"
+    low, high = metrics.wilson(entry["hits3"], entry["n"])
+    return f"{_pct(entry['hit3'])} ({entry['hits3']}/{entry['n']}, 95% 구간 {_pct(low)}~{_pct(high)})"
+
+
+def _campaign_lines(campaigns: dict[str, dict]) -> list[str]:
+    lines = []
+    for split, sides in campaigns.items():
+        for side, name in (("known", "아는 캠페인"), ("new", "새 캠페인")):
+            entry = sides[side]
+            if entry["n"]:
+                cells = [_pct(entry["hit1"]), _pct(entry["hit3"]), f"{entry['mrr']:.3f}"]
+            else:
+                cells = ["—", "—", "—"]
+            lines.append(f"| {split} | {name} | {entry['n']} | " + " | ".join(cells) + " |")
+    return lines
 
 
 def _summary_lines(title: str, summary: dict[str, dict]) -> list[str]:
@@ -228,7 +291,7 @@ def _failure_lines(title: str, results: Sequence[RowResult]) -> list[str]:
     lines = [f"### {title}", ""]
     if not results:
         return [*lines, "없음.", ""]
-    lines += ["| id | top-1 | 원문 | 붙은 사례 |", "|---|---|---|---|"]
+    lines += ["| id | top-1 | 질의 | 붙은 사례 |", "|---|---|---|---|"]
     for result in results:
         if result.matches:
             top = result.matches[0]
@@ -237,7 +300,7 @@ def _failure_lines(title: str, results: Sequence[RowResult]) -> list[str]:
         else:
             case = "—"
         lines.append(
-            f"| {result.row['id']} | {metrics.top1(result.matches):.4f} | {_cell(result.row['text'])} | {case} |"
+            f"| {result.row['id']} | {metrics.top1(result.matches):.4f} | {_cell(result.row['message'])} | {case} |"
         )
     return [*lines, ""]
 
@@ -262,6 +325,12 @@ def render_report(evaluation: dict, meta: dict) -> str:
         "",
         f"설정: {meta['settings']}",
         "",
+        QUERY_NOTE,
+        "",
+    ]
+    if meta.get("excluded"):
+        lines += [f"평가 제외: {meta['excluded']}행 (`exclude` 필드. 사유는 각 행에 적었다)", ""]
+    lines += [
         f"> {SYNTHETIC_WARNING}",
         "",
     ]
@@ -276,11 +345,21 @@ def render_report(evaluation: dict, meta: dict) -> str:
         f"- 기준값: {evaluation['threshold']:.4f} (dev hard negative 부착률 {_pct(MAX_HARD_NEGATIVE_RATE)} 이하가 되는 가장 낮은 값)",
         f"- dev hard negative 부착률: {_pct(evaluation['dev']['hard_negative']['attach'])}",
         f"- test 스미싱 hit@3: {_pct(hit3)} ({smishing['hits3']}/{smishing['n']}, 95% 구간 {_pct(low)}~{_pct(high)}) — 잠정 목표 {_pct(TARGET_HIT_AT_3)} {verdict}",
+        f"  - 아는 캠페인: {_hit3_text(evaluation['campaigns']['test']['known'])}",
+        f"  - 새 캠페인: {_hit3_text(evaluation['campaigns']['test']['new'])}",
         "",
         "## 그룹별 지표",
         "",
         *_summary_lines("dev", evaluation["dev"]),
         *_summary_lines("test", evaluation["test"]),
+        "## 스미싱: 아는 캠페인 / 새 캠페인",
+        "",
+        CAMPAIGN_NOTE,
+        "",
+        "| 분할 | 묶음 | 행 | hit@1 | hit@3 | MRR |",
+        "|---|---|---|---|---|---|",
+        *_campaign_lines(evaluation["campaigns"]),
+        "",
         "## 유형별 (test, 건수)",
         "",
         "| 유형 | KB | 스미싱 hit@3 | 정상 부착 | hard negative 부착 |",
@@ -324,7 +403,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     ngram_sizes = args.ngram or search.NGRAM_SIZES
     sublinear_tf = search.SUBLINEAR_TF if args.tf is None else args.tf == "log"
-    rows = load_rows()
+    all_rows = load_rows()
+    rows = drop_excluded(all_rows)
     if args.ngram is None and args.tf is None:
         # 운영 경로다. 첫 검색에 KB 로드와 색인 생성이 들어가도록 load_cases 보다 먼저 돈다.
         results = run_search(rows, default_searcher)
@@ -349,6 +429,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "date": date.today().isoformat(),
         "commit": _commit(),
         "kb_total": len(cases),
+        "excluded": len(all_rows) - len(rows),
         "settings": f"문자 n-gram {ngram_sizes} TF-IDF 코사인, TF {'1+ln(tf)' if sublinear_tf else '원 빈도'}",
         "latency": latency(results),
     }

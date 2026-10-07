@@ -18,10 +18,10 @@ MAX_CAROUSEL_SIGNAL_ITEMS = 8  # + C2 + C3 = 10장 (카카오 캐러셀 상한)
 _EVIDENCE_MAX_LENGTH = 60
 
 
-def _truncate_evidence(evidence: str) -> str:
-    if len(evidence) <= _EVIDENCE_MAX_LENGTH:
+def _truncate_evidence(evidence: str, max_length: int = _EVIDENCE_MAX_LENGTH) -> str:
+    if len(evidence) <= max_length:
         return evidence
-    return evidence[: _EVIDENCE_MAX_LENGTH - 1] + "…"
+    return evidence[: max_length - 1] + "…"
 
 
 def _inject_job_id(card: dict, job_id: str | None) -> dict:
@@ -68,6 +68,15 @@ def _result_card_values(analysis_result: dict, card_name: str) -> dict[str, str]
         if domain:
             values["official_url"] = f"https://{domain}"
 
+    if card_name == "r9-uncertain":
+        env = analysis_result.get("env") or {}
+        limits = []
+        if message.get("answer") not in {"no_risk_found", "risk_found"}:
+            limits.append("문자 분석을 완료하지 못했어요.")
+        limits.append(get_unverified_copy(env.get("answer")))
+        limits.append("실제 발신자와 안내 내용의 사실 여부는 확인하지 못했어요.")
+        values["analysis_limits"] = " ".join(limits)
+
     return values
 
 
@@ -81,6 +90,17 @@ def render_result_card(
     values = _result_card_values(analysis_result, card_name)
 
     card = render_card(card_name, values)
+    if card_name == "r9-uncertain":
+        message = analysis_result.get("message") or {}
+        reason = ((message.get("details") or {}).get("reason") or {}).get("text")
+        reason = (reason or "").strip() or "문자 분석 결과를 전달받지 못했습니다."
+        node = card["template"]["outputs"][0]["textCard"]
+        # Reserve space for verification guidance and limits before shortening facts.
+        fixed = substitute_values(node["description"], {"message_reason": ""})
+        available = 400 - len(fixed)
+        node["description"] = substitute_values(node["description"], {
+            "message_reason": _truncate_evidence(reason, available),
+        })
     return _inject_job_id(card, job_id)
 
 
