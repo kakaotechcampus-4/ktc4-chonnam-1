@@ -14,17 +14,24 @@ from services.result_card_renderer import (
 )
 
 
-def _part(answer: str, brand: str | None = None, signals: list | None = None) -> dict:
+def _part(
+    answer: str, brand: str | None = None, signals: list | None = None,
+    doubts: list | None = None,
+) -> dict:
     return {
         "brand": brand,
         "category": None,
         "answer": answer,
         "details": {
-            "doubts": [],
+            "doubts": doubts or [],
             "signals": signals or [],
             "reason": {"text": "x", "failures": []},
         },
     }
+
+
+def _doubt(value: str, evidence: str = "e") -> dict:
+    return {"value": value, "evidence": evidence}
 
 
 def _signal(code: str = "credential_request", evidence: str = "비밀번호를 입력해주세요") -> dict:
@@ -101,6 +108,158 @@ class TestRenderResultCard:
         card = render_result_card(analysis, job_id="job-123")
 
         assert card["version"] == "2.0"
+
+
+def _r9_description(analysis: dict) -> str:
+    card = render_result_card(analysis)
+    return card["template"]["outputs"][0]["textCard"]["description"]
+
+
+class TestR9BlankValues:
+    """docs/designs/chatbot-copy.md "R9 판단 보류 → 빈칸 채우는 규칙" 표를
+    그대로 검증한다. 멘토 리뷰(PR #39) 반영으로 추가된 빈칸 연동."""
+
+    def test_org_label_uses_brand_when_known(self):
+        analysis = _analysis(
+            "not_registered", _part("no_risk_found", brand="CJ대한통운"), _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자 속 링크 대신 CJ대한통운 공식 앱이나 홈페이지" in description
+
+    def test_org_label_falls_back_when_brand_unknown(self):
+        analysis = _analysis(
+            "unresolved", _part("no_risk_found", brand="unknown"), _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자 속 링크 대신 보낸 기관의 공식 앱이나 홈페이지" in description
+
+    def test_sender_always_goes_to_unchecked_even_when_brand_known(self):
+        analysis = _analysis(
+            "not_registered", _part("no_risk_found", brand="CJ대한통운"), _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "- 문자에 적힌 보낸 곳: CJ대한통운" in description
+        assert "- 실제로 보낸 곳" in description
+
+    def test_sender_unknown_has_no_checked_line_but_still_unchecked(self):
+        analysis = _analysis(
+            "unresolved", _part("no_risk_found", brand=None), _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자에 적힌 보낸 곳" not in description
+        assert "- 실제로 보낸 곳" in description
+
+    def test_requested_actions_exclude_unknown_and_cap_at_three_in_order(self):
+        analysis = _analysis(
+            "not_registered",
+            _part(
+                "no_risk_found", brand="CJ대한통운",
+                doubts=[
+                    _doubt("앱 설치"), _doubt("unknown"), _doubt("정보 입력"),
+                    _doubt("수령·일정 확인"), _doubt("금전 인출"),
+                ],
+            ),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "- 문자에서 요구한 것: 앱 설치, 정보 입력, 수령·일정 확인" in description
+        assert "금전 인출" not in description
+
+    def test_no_requested_actions_omits_the_line(self):
+        analysis = _analysis(
+            "not_registered", _part("no_risk_found", brand="CJ대한통운"), _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자에서 요구한 것" not in description
+
+    def test_address_official_with_known_brand(self):
+        analysis = _analysis(
+            "official", _part("no_risk_found", brand="CJ대한통운"), _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "- 주소가 CJ대한통운 공식 주소와 같아요" in description
+
+    def test_address_official_without_brand(self):
+        analysis = _analysis(
+            "official", _part("no_risk_found", brand=None), _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "- 주소가 공식 주소 목록에 있어요" in description
+
+    def test_address_not_registered_and_brand_mismatch_share_wording(self):
+        not_registered = _analysis(
+            "not_registered", _part("no_risk_found", brand="CJ대한통운"), _part("not_run"),
+        )
+        brand_mismatch = _analysis(
+            "brand_mismatch", _part("no_risk_found", brand="unknown"), _part("not_run"),
+        )
+
+        assert "- 공식 주소 목록에 없는 주소예요" in _r9_description(not_registered)
+        assert "- 공식 주소 목록에 없는 주소예요" in _r9_description(brand_mismatch)
+
+    def test_address_unresolved_goes_to_unchecked(self):
+        analysis = _analysis(
+            "unresolved", _part("no_risk_found", brand=None), _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "- 주소가 공식 주소인지" in description
+
+    def test_message_partial_splits_checked_and_unchecked(self):
+        analysis = _analysis(
+            "not_registered", _part("partial", brand="CJ대한통운"), _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "- 문자 일부에서 위험 신호를 찾지 못했어요" in description
+        assert "- 문자 나머지" in description
+
+    def test_message_failed_and_not_run_both_land_in_unchecked(self):
+        for answer in ("failed", "not_run"):
+            analysis = _analysis(
+                "not_registered", _part(answer, brand="CJ대한통운"), _part("not_run"),
+            )
+
+            assert "- 문자 내용" in _r9_description(analysis)
+
+    def test_env_failed_and_not_run_have_different_wording(self):
+        failed = _analysis(
+            "not_registered", _part("no_risk_found", brand="CJ대한통운"), _part("failed"),
+        )
+        not_run = _analysis(
+            "not_registered", _part("no_risk_found", brand="CJ대한통운"), _part("not_run"),
+        )
+
+        assert "- 페이지 내용 (열지 못했어요)" in _r9_description(failed)
+        assert "- 페이지 내용" in _r9_description(not_run)
+        assert "열지 못했어요" not in _r9_description(not_run)
+
+    def test_no_checked_facts_at_all_falls_back_to_none(self):
+        analysis = _analysis(
+            "unresolved", _part("failed", brand=None), _part("failed"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "확인한 것\n- 없음" in description
 
 
 class TestMergeKakaoResponses:
