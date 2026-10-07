@@ -1,0 +1,25 @@
+services:
+  browser:
+    image: ${ISOLATION_IMAGE:?Set the approved local image ID}
+    platform: linux/amd64
+    container_name: ktc-isolation-browser
+    init: true
+    restart: unless-stopped
+    user: "10001:10001"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp.json
+    mem_limit: 1536m
+    cpus: 1.5
+    pids_limit: 256
+    shm_size: 256m
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
