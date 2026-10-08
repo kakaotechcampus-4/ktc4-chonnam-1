@@ -16,7 +16,7 @@ from services.result_card_renderer import (
 
 def _part(
     answer: str, brand: str | None = None, signals: list | None = None,
-    doubts: list | None = None,
+    doubts: list | None = None, failures: list | None = None,
 ) -> dict:
     return {
         "brand": brand,
@@ -25,7 +25,7 @@ def _part(
         "details": {
             "doubts": doubts or [],
             "signals": signals or [],
-            "reason": {"text": "x", "failures": []},
+            "reason": {"text": "x", "failures": failures or []},
         },
     }
 
@@ -222,6 +222,21 @@ class TestR9BlankValues:
 
         assert "- 주소가 공식 주소인지" in description
 
+    def test_not_registered_without_brand_does_not_claim_checked_the_list(self):
+        """멘토 리뷰(PR #54): brand가 없으면 check_official_domain()은 도메인을
+        보지도 않고 not_registered를 반환한다 — 실제로는 화이트리스트에 있는
+        naver.com이어도 마찬가지다. "목록에 없는 주소"라고 단정하면 안 된다."""
+
+        analysis = _analysis(
+            "not_registered", _part("no_risk_found", brand=None), _part("not_run"),
+            domain="naver.com",
+        )
+
+        description = _r9_description(analysis)
+
+        assert "공식 주소 목록에 없는 주소예요" not in description
+        assert "- 기관을 몰라 주소를 대조하지 못했어요" in description
+
     def test_message_partial_splits_checked_and_unchecked(self):
         analysis = _analysis(
             "not_registered", _part("partial", brand="CJ대한통운"), _part("not_run"),
@@ -232,6 +247,22 @@ class TestR9BlankValues:
         assert "- 문자 일부에서 위험 신호를 찾지 못했어요" in description
         assert "- 문자 나머지" in description
 
+    def test_message_partial_from_timeout_is_treated_as_unchecked(self):
+        """멘토 리뷰(PR #54): 시간 초과는 어디까지 분석했는지 경계가 불확실해
+        "일부에서 위험 신호를 찾지 못했다"고 단정하면 안 된다."""
+
+        analysis = _analysis(
+            "not_registered",
+            _part("partial", brand="CJ대한통운", failures=["timeout"]),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자 일부에서 위험 신호를 찾지 못했어요" not in description
+        assert "문자 나머지" not in description
+        assert "- 문자 내용" in description
+
     def test_message_failed_and_not_run_both_land_in_unchecked(self):
         for answer in ("failed", "not_run"):
             analysis = _analysis(
@@ -239,6 +270,18 @@ class TestR9BlankValues:
             )
 
             assert "- 문자 내용" in _r9_description(analysis)
+
+    def test_env_partial_from_timeout_is_treated_as_unchecked(self):
+        analysis = _analysis(
+            "not_registered",
+            _part("no_risk_found", brand="CJ대한통운"),
+            _part("partial", failures=["timeout"]),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "페이지 일부에서 위험 신호를 찾지 못했어요" not in description
+        assert "- 페이지 내용" in description
 
     def test_env_failed_and_not_run_have_different_wording(self):
         failed = _analysis(

@@ -202,6 +202,25 @@ class TestTlsCertificateVerification:
 
         assert result.failures == ("connection_failed",)
 
+    def test_non_certificate_ssl_errors_are_not_misclassified(self):
+        """멘토 리뷰(PR #54): ssl.SSLError를 넓게 보면 SSLEOFError 같은
+        인증서와 무관한 TLS 오류까지 tls_cert_verify_failed로 잘못 분류돼
+        verify=False 재시도가 과도하게 일어난다. SSLCertVerificationError만
+        좁게 봐야 한다."""
+
+        def make_error(request: httpx.Request) -> Exception:
+            ssl_error = ssl.SSLEOFError("EOF occurred in violation of protocol")
+            try:
+                raise ssl_error
+            except ssl.SSLEOFError as cause:
+                error = httpx.ConnectError("connect failed", request=request)
+                error.__cause__ = cause
+                return error
+
+        result = run_raising("https://protocol-error.example/", make_error)
+
+        assert result.failures == ("connection_failed",)
+
 
 def _cert_verify_error(request: httpx.Request) -> httpx.ConnectError:
     return httpx.ConnectError(
@@ -355,6 +374,55 @@ class TestNonHtmlResponse:
         assert result.html == ""
         assert result.title is None
         assert result.failures == ()
+
+
+class TestCompressedResponse:
+    """멘토 리뷰(PR #54): httpx가 Content-Encoding을 보고 자동으로 압축을
+    풀면 작은 압축 응답이 거대한 평문으로 부풀 수 있다(gzip bomb, 32KB →
+    32MB에서 최대 할당 약 81MB 확인됨). 본문을 아예 읽지 않아야 한다."""
+
+    def test_gzip_response_is_never_decompressed(self):
+        import gzip
+
+        original = ("a" * 2_000_000).encode()  # 2MB — 풀렸으면 바로 드러난다
+        compressed = gzip.compress(original)
+        response = httpx.Response(
+            200,
+            headers={"content-type": "text/html", "content-encoding": "gzip"},
+            content=compressed,
+        )
+
+        result, _ = run("https://bomb.example/", {"https://bomb.example/": response})
+
+        assert result.status_code == 200
+        assert result.html == ""
+        assert result.failures == ("compressed_response_skipped",)
+
+    def test_identity_encoding_is_not_treated_as_compressed(self):
+        response = httpx.Response(
+            200, headers={"content-type": "text/html", "content-encoding": "identity"},
+            text="<p>plain</p>",
+        )
+
+        result, _ = run("https://plain.example/", {"https://plain.example/": response})
+
+        assert "plain" in result.html
+        assert result.failures == ()
+
+    def test_default_headers_ask_servers_not_to_compress(self):
+        seen_headers: dict[str, str] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            seen_headers.update(request.headers)
+            return page("<p>ok</p>")
+
+        async def go() -> CollectResult:
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+                return await collect_url("https://example.test/", client=client, resolve=resolve_stub)
+
+        asyncio.run(go())
+
+        assert seen_headers.get("accept-encoding") == "identity"
 
 
 class TestTooLargeResponse:

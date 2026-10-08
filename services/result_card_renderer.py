@@ -56,10 +56,21 @@ def _r9_requested_actions_line(doubts: list[dict]) -> str | None:
 
 
 def _r9_address_lines(official: str | None, brand: str | None) -> tuple[str | None, str | None]:
+    """멘토 리뷰(PR #54): 기관을 몰라 애초에 대조를 못 한 경우와, 대조했는데
+    주소가 일치하지 않는 경우를 구분한다. `check_official_domain()`은
+    brand가 없으면 도메인을 보지도 않고 `not_registered`를 반환한다
+    (`services/official_domain_service.py`) — 그 도메인이 naver.com처럼
+    실제로는 화이트리스트에 있어도 마찬가지다. 그래서 brand 자체가 없을
+    때 "공식 주소 목록에 없는 주소예요"라고 하면 사실과 다를 수 있다."""
+
+    has_brand = bool(brand) and brand != _UNKNOWN
+
     if official == "official":
-        if brand and brand != _UNKNOWN:
+        if has_brand:
             return f"주소가 {brand} 공식 주소와 같아요", None
         return "주소가 공식 주소 목록에 있어요", None
+    if official == "not_registered" and not has_brand:
+        return None, "기관을 몰라 주소를 대조하지 못했어요"
     if official in ("not_registered", "brand_mismatch"):
         return "공식 주소 목록에 없는 주소예요", None
     if official == "unresolved":
@@ -67,20 +78,29 @@ def _r9_address_lines(official: str | None, brand: str | None) -> tuple[str | No
     return None, None
 
 
-def _r9_message_lines(answer: str | None) -> tuple[str | None, str | None]:
+def _r9_message_lines(answer: str | None, failures: list[str]) -> tuple[str | None, str | None]:
+    """멘토 리뷰(PR #54): "자료가 남아 있는 것"과 "분석을 마친 것"은 다르다.
+    시간 초과(`timeout`)는 어디까지 분석했는지 경계가 불확실해서,
+    `partial_content`/`input_too_large`처럼 "확인한 범위에서는 위험 신호가
+    없었다"고 단정하면 안 된다 — 사실상 분석을 못 끝낸 것과 같이 다룬다."""
+
     if answer == _NO_RISK:
         return "문자에서 위험 신호를 찾지 못했어요", None
     if answer == _PARTIAL:
+        if "timeout" in failures:
+            return None, "문자 내용"
         return "문자 일부에서 위험 신호를 찾지 못했어요", "문자 나머지"
     if answer in ("failed", "not_run"):
         return None, "문자 내용"
     return None, None
 
 
-def _r9_env_lines(answer: str | None) -> tuple[str | None, str | None]:
+def _r9_env_lines(answer: str | None, failures: list[str]) -> tuple[str | None, str | None]:
     if answer == _NO_RISK:
         return "페이지에서 위험 신호를 찾지 못했어요", None
     if answer == _PARTIAL:
+        if "timeout" in failures:
+            return None, "페이지 내용"
         return "페이지 일부에서 위험 신호를 찾지 못했어요", "페이지 나머지"
     if answer == "failed":
         return None, "페이지 내용 (열지 못했어요)"
@@ -106,8 +126,14 @@ def _r9_blank_values(analysis_result: dict) -> dict[str, str]:
         (message.get("details") or {}).get("doubts") or []
     )
     address_checked, address_unchecked = _r9_address_lines(url.get("official"), brand)
-    message_checked, message_unchecked = _r9_message_lines(message.get("answer"))
-    env_checked, env_unchecked = _r9_env_lines(env.get("answer"))
+    message_checked, message_unchecked = _r9_message_lines(
+        message.get("answer"),
+        ((message.get("details") or {}).get("reason") or {}).get("failures") or [],
+    )
+    env_checked, env_unchecked = _r9_env_lines(
+        env.get("answer"),
+        ((env.get("details") or {}).get("reason") or {}).get("failures") or [],
+    )
 
     checked = [
         line for line in (
