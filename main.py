@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 
 import uuid
@@ -6,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 
+from backend.src.server.shadow_tasks import track_shadow_task
 from backend.src.server.urlscan_service import (
     get_http_client,
     submit_url_scan,
@@ -29,6 +31,62 @@ from urllib.parse import urlparse
 
 
 app = FastAPI(lifespan=app_lifespan)
+
+# Collector Shadow Mode는 기본적으로 비활성화한다.
+# 테스트 환경에서만 명시적으로 활성화한다.
+ENABLE_URL_COLLECTOR_SHADOW = (
+    os.getenv("ENABLE_URL_COLLECTOR_SHADOW", "false").lower() == "true"
+    and os.getenv("APP_ENV", "production").lower() in {"local", "test", "staging"}
+)
+
+async def log_collector_shadow(
+    collector_task: asyncio.Task,
+    link: str,
+    parsed_result: dict,
+    urlscan_elapsed: float,
+):
+    try:
+        collector_result = await collector_task
+
+        collector_domain = None
+
+        if collector_result.final_url:
+            collector_domain = urlparse(
+                collector_result.final_url
+            ).hostname
+
+        print("========== URL COLLECTOR SHADOW ==========")
+        print(f"[INPUT URL]             {collector_result.input_url}")
+        print(f"[URLSCAN FINAL URL]     {parsed_result.get('final_url')}")
+        print(f"[COLLECTOR FINAL URL]   {collector_result.final_url}")
+        print(
+            f"[FINAL URL MATCH]       "
+            f"{parsed_result.get('final_url') == collector_result.final_url}"
+        )
+        print(f"[URLSCAN DOMAIN]        {parsed_result.get('domain')}")
+        print(f"[COLLECTOR DOMAIN]      {collector_domain}")
+        print(
+            f"[DOMAIN MATCH]          "
+            f"{parsed_result.get('domain') == collector_domain}"
+        )
+        print(f"[URLSCAN ELAPSED]       {urlscan_elapsed:.2f}s")
+        print(f"[COLLECTOR ELAPSED]     {collector_result.elapsed_ms}ms")
+        print(f"[COLLECTOR STATUS]      {collector_result.status_code}")
+        print(f"[COLLECTOR TITLE]       {collector_result.title}")
+        print(f"[COLLECTOR REDIRECTS]   {collector_result.redirect_chain}")
+        print(f"[COLLECTOR FAILURES]    {collector_result.failures}")
+        print("==========================================")
+
+    except asyncio.CancelledError:
+        print(f"[COLLECTOR SHADOW CANCELLED] url={link}")
+        raise
+
+    except Exception as e:
+        print(
+            f"[COLLECTOR SHADOW ERROR] "
+            f"url={link} "
+            f"{type(e).__name__}: {e}"
+        )
 
 
 # TODO:
@@ -384,9 +442,12 @@ async def run_analysis(
             
             # 자체 URL Collector를 urlscan과 병렬 실행한다.
             # 현재는 Shadow Mode이므로 실제 분석 결과에는 사용하지 않는다.
-            collector_task = asyncio.create_task(
-                collect_url(link)
-            )
+
+            if ENABLE_URL_COLLECTOR_SHADOW:
+                collector_task = asyncio.create_task(
+                    collect_url(link)
+                )
+                track_shadow_task(collector_task)
             urlscan_start = time.monotonic()
 
             # ------------------------------------------------
@@ -409,7 +470,7 @@ async def run_analysis(
                     render_card("r4-unavailable")
                 )
 
-                if not collector_task.done():
+                if collector_task is not None:
                     collector_task.cancel()
 
                 continue
@@ -439,7 +500,7 @@ async def run_analysis(
                 card_responses.append(
                     render_card("r4-unavailable")
                 )
-                if not collector_task.done():
+                if collector_task is not None:
                     collector_task.cancel()
 
                 continue
@@ -470,82 +531,20 @@ async def run_analysis(
             # 2-3-1. 자체 Collector Shadow 비교
             # ------------------------------------------------
 
-            try:
-                collector_result = await collector_task
-
-                collector_domain = None
-
-                if collector_result.final_url:
-                    collector_domain = urlparse(
-                        collector_result.final_url
-                    ).hostname
-
-                print(
-                    "========== URL COLLECTOR SHADOW =========="
+            if collector_task is not None:
+                shadow_log_task = asyncio.create_task(
+                    log_collector_shadow(
+                        collector_task,
+                        link,
+                        parsed_result,
+                        urlscan_elapsed,
+                    )
                 )
-                print(
-                    f"[INPUT URL]             "
-                    f"{collector_result.input_url}"
-                )
-                print(
-                    f"[URLSCAN FINAL URL]     "
-                    f"{parsed_result.get('final_url')}"
-                )
-                print(
-                    f"[COLLECTOR FINAL URL]   "
-                    f"{collector_result.final_url}"
-                )
-                print(
-                    f"[FINAL URL MATCH]       "
-                    f"{parsed_result.get('final_url') == collector_result.final_url}"
-                )
-                print(
-                    f"[URLSCAN DOMAIN]        "
-                    f"{parsed_result.get('domain')}"
-                )
-                print(
-                    f"[COLLECTOR DOMAIN]      "
-                    f"{collector_domain}"
-                )
-                print(
-                    f"[DOMAIN MATCH]          "
-                    f"{parsed_result.get('domain') == collector_domain}"
-                )
-                print(
-                    f"[URLSCAN ELAPSED]       "
-                    f"{urlscan_elapsed:.2f}s"
-                )
-                print(
-                    f"[COLLECTOR ELAPSED]     "
-                    f"{collector_result.elapsed_ms}ms"
-                )
-                print(
-                    f"[COLLECTOR STATUS]      "
-                    f"{collector_result.status_code}"
-                )
-                print(
-                    f"[COLLECTOR TITLE]       "
-                    f"{collector_result.title}"
-                )
-                print(
-                    f"[COLLECTOR REDIRECTS]   "
-                    f"{collector_result.redirect_chain}"
-                )
-                print(
-                    f"[COLLECTOR FAILURES]    "
-                    f"{collector_result.failures}"
-                )
-                print(
-                    "=========================================="
-                )
-
-            except Exception as e:
-                # Shadow Mode이므로 Collector 실패가 기존 분석을 깨면 안 된다.
-                print(
-                    f"[COLLECTOR SHADOW ERROR] "
-                    f"url={link} "
-                    f"{type(e).__name__}: {e}"
-                )
+                # Shadow 로그 작업을 백그라운드 작업 목록에 등록한다.
+                track_shadow_task(shadow_log_task)
+                # Collector의 소유권을 Shadow 로그 작업으로 넘긴다.
+                # 이후 AI 분석에서 예외가 발생해도 Collector를 취소하지 않는다.
+                collector_task = None
 
             # ------------------------------------------------
             # 2-4. print urlscan result
