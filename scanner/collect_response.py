@@ -15,10 +15,13 @@
 from scanner.fetch import HTML_LIMIT_BYTES
 from scanner.models import CollectResult
 
-# failures 에 이 모듈이 추가로 쓰는 값: invalid_response(응답 자체가
-# dict 가 아니거나 핵심 필드를 신뢰할 수 없음), html_truncated(이미
-# scanner/fetch.py 에서도 쓰는 값 — 격리환경이 128 KiB 약속을 안 지켰을
-# 때 여기서도 한 번 더 자른다).
+# failures 에 이 모듈이 추가로 쓰는 값:
+# - invalid_response: data가 dict가 아니거나, 응답에 input_url이 없음
+#   (약속한 계약에 없는 응답이라 핵심 필드조차 못 믿는다)
+# - url_mismatch: 응답의 input_url이 우리가 요청한 URL과 다름 (요청·응답이
+#   서로 안 맞을 수 있다는 신호라 html 등 나머지 내용도 안 믿는다)
+# - html_truncated: scanner/fetch.py 에서도 쓰는 값 — 격리환경이 128 KiB
+#   약속을 안 지켰을 때 여기서도 한 번 더 자른다.
 
 
 def _as_str(value: object) -> str | None:
@@ -39,42 +42,62 @@ def _as_int(value: object) -> int | None:
 
 
 def _truncate_html(html: str, limit: int) -> tuple[str, bool]:
+    """UTF-8 바이트 기준으로 `limit`을 넘지 않게 자른다.
+
+    `errors="replace"`는 쓰지 않는다 — 멀티바이트 문자(한글 등) 경계에서
+    잘리면 대체 문자(U+FFFD, UTF-8로 3바이트)가 끼어들어 최종 바이트 수가
+    `limit`을 다시 넘을 수 있다(예: 3바이트 글자의 마지막 1바이트만 잘려도
+    대체 문자 자체가 3바이트라 순바이트 증가). `errors="ignore"`는 불완전한
+    끝 시퀀스를 그냥 버려서 결과가 `limit`보다 커지는 일이 없다.
+    """
+
     encoded = html.encode("utf-8")
     if len(encoded) <= limit:
         return html, False
-    return encoded[:limit].decode("utf-8", errors="replace"), True
+    return encoded[:limit].decode("utf-8", errors="ignore"), True
 
 
-def parse_collect_response(data: dict) -> CollectResult:
+def _invalid(expected_url: str, failure: str) -> CollectResult:
+    return CollectResult(
+        input_url=expected_url,
+        final_url=None,
+        redirect_chain=(),
+        status_code=None,
+        content_type=None,
+        html="",
+        title=None,
+        elapsed_ms=0,
+        failures=(failure,),
+    )
+
+
+def parse_collect_response(expected_url: str, data: dict) -> CollectResult:
     """`/collect` 응답 본문을 `CollectResult`로 바꾼다.
 
-    `data`가 dict가 아니면(예: 호출부가 JSON 디코딩에 실패해 `None`을
-    넘긴 경우) 빈 값으로 채운 `CollectResult`를 `failures=("invalid_response",)`
-    와 함께 돌려준다. `input_url`이 비어 있거나 문자열이 아니어도 같은
-    취급이다 — 이 값이 없으면 어떤 요청에 대한 응답인지조차 알 수 없다.
+    `expected_url`은 우리가 실제로 요청한 URL이다 — 결과의 `input_url`은
+    항상 이 값을 쓴다. 응답이 자기 `input_url`로 다른 값을 돌려주면
+    요청·응답이 서로 안 맞는다는 뜻이므로(레이스·캐시 버그 등) 신뢰할 수
+    없다고 보고 `url_mismatch`로 처리하며, 이때는 html 등 나머지 내용도
+    쓰지 않는다 — 어떤 요청에 대한 응답인지가 불확실하면 그 안의 내용도
+    믿을 이유가 없다.
+
+    `data`가 dict가 아니거나 `input_url` 필드 자체가 없으면(계약에 없는
+    응답) `invalid_response`로 같은 방식으로 처리한다.
 
     그 밖의 필드는 타입이 다르거나 없으면 개별적으로 안전한 기본값
     (`None`, 빈 튜플, 빈 문자열)으로 채우고 전체를 실패로 보지 않는다.
     """
 
     if not isinstance(data, dict):
-        return CollectResult(
-            input_url="",
-            final_url=None,
-            redirect_chain=(),
-            status_code=None,
-            content_type=None,
-            html="",
-            title=None,
-            elapsed_ms=0,
-            failures=("invalid_response",),
-        )
+        return _invalid(expected_url, "invalid_response")
+
+    reported_url = _as_str(data.get("input_url"))
+    if reported_url is None:
+        return _invalid(expected_url, "invalid_response")
+    if reported_url != expected_url:
+        return _invalid(expected_url, "url_mismatch")
 
     failures = list(_as_str_tuple(data.get("failures")))
-
-    input_url = _as_str(data.get("input_url")) or ""
-    if not input_url and "invalid_response" not in failures:
-        failures.append("invalid_response")
 
     html = _as_str(data.get("html")) or ""
     html, truncated = _truncate_html(html, HTML_LIMIT_BYTES)
@@ -82,7 +105,7 @@ def parse_collect_response(data: dict) -> CollectResult:
         failures.append("html_truncated")
 
     return CollectResult(
-        input_url=input_url,
+        input_url=expected_url,
         final_url=_as_str(data.get("final_url")),
         redirect_chain=_as_str_tuple(data.get("redirect_chain")),
         status_code=_as_int(data.get("status_code")),
