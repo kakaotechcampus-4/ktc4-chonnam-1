@@ -49,8 +49,26 @@ def main():
         second = browser.new_context(accept_downloads=False, service_workers="block")
         assert second.cookies() == [], "cookies survived a new context"
         second.close()
-        print(json.dumps({"result": "passed", "chromium": browser.version, "sandbox": sandbox_status}))
         browser.close()
+        # 수집 API 는 기본 headless shell 을 쓴다. 같은 방식으로 띄워 렌더러가 샌드박스 안인지 본다.
+        shell = playwright.chromium.launch(chromium_sandbox=True, env=browser_env)
+        shell_page = shell.new_page()
+        shell_page.set_content("<title>Shell check</title>", timeout=6000)
+        renderers = [cmd for cmd in _cmdlines() if b"--type=renderer" in cmd]
+        assert renderers, "no renderer process found"
+        assert not any(b"--no-sandbox" in cmd for cmd in renderers), "renderer runs without sandbox"
+        shell_version = shell.version
+        shell.close()
+        print(json.dumps({"result": "passed", "chromium": shell_version, "sandbox": sandbox_status}))
+
+
+def _cmdlines():
+    for proc in Path("/proc").iterdir():
+        if proc.name.isdigit():
+            try:
+                yield (proc / "cmdline").read_bytes()
+            except OSError:
+                continue
 
 
 if __name__ == "__main__":

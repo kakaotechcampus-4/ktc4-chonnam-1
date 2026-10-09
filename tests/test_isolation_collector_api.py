@@ -18,7 +18,7 @@ from collector.app import MAX_RESPONSE_BYTES, create_app  # noqa: E402
 from collector.policy import is_allowed_url, load_allowed_hosts  # noqa: E402
 from scanner.collect_response import parse_collect_response  # noqa: E402
 from scanner.fetch import collect_url  # noqa: E402
-from scanner.models import CollectResult  # noqa: E402
+from scanner.models import BrowserResult, CollectResult  # noqa: E402
 
 TOKEN = "t" * 40
 HOSTS = frozenset({"fake.ktc-test.kr"})
@@ -132,7 +132,7 @@ class TestCollect:
                 await asyncio.sleep(60)
             return ok_result(url)
 
-        async with client_for(collect=hang_once, timeout=0.05) as c:
+        async with client_for(collect=hang_once, fetch_timeout=0.05) as c:
             first = await post(c, {"url": OK_URL})
             second = await post(c, {"url": OK_URL})
         assert first.json()["failures"] == ["timeout"]
@@ -162,6 +162,113 @@ class TestCollect:
             r = await post(c, {"url": OK_URL})
         assert len(r.content) <= MAX_RESPONSE_BYTES
         assert "html_truncated" in r.json()["failures"]
+
+
+def browser_result(**changes) -> BrowserResult:
+    base = BrowserResult(
+        trigger="script_redirect", final_url=OK_URL + "&step=2", navigation_chain=(OK_URL,),
+        html="<title>렌더링</title><form></form>", title="렌더링", downloads=(),
+        blocked_requests=2, elapsed_ms=900, failures=(),
+    )
+    return BrowserResult(**{**base.__dict__, **changes})
+
+
+class FakeRenderer:
+    def __init__(self, result=None, hang=False):
+        self.result = result or browser_result()
+        self.hang = hang
+        self.calls: list[tuple[str, str]] = []
+        self.broken = False
+
+    async def render(self, url, *, trigger, timeout):
+        self.calls.append((url, trigger))
+        if self.hang:
+            await asyncio.sleep(60)
+        return self.result
+
+    async def start(self):
+        pass
+
+    async def close(self):
+        pass
+
+    def mark_broken(self):
+        self.broken = True
+
+
+class TestBrowserStage:
+    async def test_off_by_default(self):
+        async with client_for() as c:
+            r = await post(c, {"url": OK_URL})
+        assert r.json()["browser"] is None
+        assert parse_collect_response(OK_URL, r.json()).browser is None
+
+    async def test_auto_runs_only_when_trigger_fires(self):
+        renderer = FakeRenderer()
+        triggers = iter(["script_redirect", None])
+        async with client_for(browser_mode="auto", renderer=renderer, trigger=lambda _: next(triggers)) as c:
+            first = await post(c, {"url": OK_URL})
+            second = await post(c, {"url": OK_URL})
+        assert renderer.calls == [(OK_URL, "script_redirect")]
+        parsed = parse_collect_response(OK_URL, first.json())
+        assert parsed.browser == browser_result()
+        assert parse_collect_response(OK_URL, second.json()).browser is None
+
+    async def test_always_mode(self):
+        renderer = FakeRenderer()
+        async with client_for(browser_mode="always", renderer=renderer, trigger=lambda _: None) as c:
+            await post(c, {"url": OK_URL})
+        assert renderer.calls == [(OK_URL, "always")]
+
+    async def test_blocked_host_never_reaches_browser(self):
+        renderer = FakeRenderer()
+        async with client_for(browser_mode="always", renderer=renderer, trigger=lambda _: "x") as c:
+            await post(c, {"url": "https://example.com/"})
+        assert renderer.calls == []
+
+    async def test_hung_browser_is_cut_and_marked_broken(self, monkeypatch):
+        import collector.app as app_module
+
+        # 마감 여유는 앱을 만들 때 정해지므로 만들기 전에 줄인다.
+        monkeypatch.setattr(app_module, "BACKSTOP_EXTRA_SECONDS", 0.05)
+        renderer = FakeRenderer(hang=True)
+        async with client_for(
+            browser_mode="always", renderer=renderer, trigger=lambda _: "x",
+            fetch_timeout=0.01, browser_timeout=0.01,
+        ) as c:
+            r = await post(c, {"url": OK_URL})
+        assert r.json()["failures"] == ["timeout"]
+        assert renderer.broken
+
+    async def test_both_htmls_fit_under_limit(self):
+        async def big_collect(url, **_):
+            return ok_result(url, html="\x01" * 131_072)
+
+        renderer = FakeRenderer(browser_result(html='"' * 131_072))
+        async with client_for(collect=big_collect, browser_mode="always", renderer=renderer, trigger=lambda _: "x") as c:
+            r = await post(c, {"url": OK_URL})
+        assert len(r.content) <= MAX_RESPONSE_BYTES
+        parsed = parse_collect_response(OK_URL, r.json())
+        assert "html_truncated" in parsed.failures
+        assert parsed.browser is not None and parsed.browser.html
+
+    def test_browser_mode_needs_renderer(self):
+        with pytest.raises(RuntimeError):
+            create_app(token=TOKEN, allowed_hosts=HOSTS, browser_mode="auto")
+
+
+class TestParseBrowserField:
+    def test_malformed_browser_is_failure_not_missing(self):
+        data = {"input_url": OK_URL, "browser": "oops"}
+        parsed = parse_collect_response(OK_URL, data)
+        assert parsed.browser is not None
+        assert parsed.browser.failures == ("invalid_response",)
+
+    def test_lists_are_capped(self):
+        data = {"input_url": OK_URL, "browser": {"navigation_chain": ["a"] * 50, "downloads": ["d"] * 50}}
+        parsed = parse_collect_response(OK_URL, data)
+        assert len(parsed.browser.navigation_chain) == 10
+        assert len(parsed.browser.downloads) == 5
 
 
 class TestPolicy:

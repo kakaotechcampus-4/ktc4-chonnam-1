@@ -18,7 +18,12 @@ services:
     environment:
       COLLECTOR_ALLOWED_HOSTS: ${TEST_PAGE_HOST}
       COLLECTOR_MAX_CONCURRENCY: "1"
-      COLLECTOR_TIMEOUT_SECONDS: "10"
+      # 2단계 httpx 3.5초 + 3단계 브라우저 6초 + 정리 여유 3초 < 메인 서버 15초
+      COLLECTOR_FETCH_TIMEOUT_SECONDS: "3.5"
+      COLLECTOR_BROWSER_TIMEOUT_SECONDS: "6"
+      # off: httpx 만 / auto: JS 의존 신호가 있을 때만 / always: 가짜 페이지 시험용, 매번
+      COLLECTOR_BROWSER: auto
+      COLLECTOR_BROWSER_RESTART_EVERY: "50"
     # 토큰·인증서는 환경변수가 아니라 파일로 넣는다 (브라우저 env 로 새지 않게).
     secrets: [collect_token, collector_cert, collector_key]
     read_only: true
