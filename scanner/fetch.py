@@ -197,6 +197,7 @@ async def collect_url(
     html_limit: int = HTML_LIMIT_BYTES,
     allow_insecure_retry: bool = True,
     make_insecure_client: Callable[[], httpx.AsyncClient] = _default_insecure_client,
+    url_allowed: Callable[[str], bool] | None = None,
 ) -> CollectResult:
     """URL 하나를 방문해 리다이렉트·응답·HTML 을 수집한다.
 
@@ -213,6 +214,11 @@ async def collect_url(
     scorer 몫). TLS 검증 실패 외의 다른 실패는 재시도하지 않는다 —
     `verify=False`의 영향 범위는 아직 조사 전이라 좁게 유지한다.
     재시도는 남은 시간 예산 안에서만 돈다(전체 상한은 `timeout`과 같다).
+
+    `url_allowed`를 넘기면 첫 요청과 리다이렉트 홉마다 요청을 보내기 전에
+    확인하고, 거부되면 `blocked_address`로 끝낸다. 격리 수집 API가 테스트용
+    허용 목록을 강제할 때 쓴다(docs/isolation-security.md §5.2). 메인 서버의
+    기존 호출은 넘기지 않으므로 동작이 바뀌지 않는다.
     """
 
     start = time.monotonic()
@@ -221,7 +227,9 @@ async def collect_url(
     if owns_client:
         client = httpx.AsyncClient()
     try:
-        result = await _collect(url, client, resolve, max_redirects, timeout, html_limit, start)
+        result = await _collect(
+            url, client, resolve, max_redirects, timeout, html_limit, start, url_allowed
+        )
     finally:
         if owns_client:
             await client.aclose()
@@ -232,7 +240,8 @@ async def collect_url(
     remaining = max(deadline - time.monotonic(), 0.001)
     async with make_insecure_client() as insecure_client:
         retry = await _collect(
-            url, insecure_client, resolve, max_redirects, remaining, html_limit, start
+            url, insecure_client, resolve, max_redirects, remaining, html_limit, start,
+            url_allowed,
         )
 
     return dataclasses.replace(retry, failures=("tls_cert_verify_failed", *retry.failures))
@@ -246,6 +255,7 @@ async def _collect(
     timeout: float,
     html_limit: int,
     start: float,
+    url_allowed: Callable[[str], bool] | None = None,
 ) -> CollectResult:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -269,6 +279,12 @@ async def _collect(
             if deadline <= loop.time():
                 return _result(
                     url, chain, final_url=current, elapsed_start=start, failures=("timeout",)
+                )
+
+            if url_allowed is not None and not url_allowed(current):
+                return _result(
+                    url, chain, final_url=current, elapsed_start=start,
+                    failures=("blocked_address",),
                 )
 
             host = urlsplit(current).hostname

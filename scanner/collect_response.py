@@ -13,7 +13,10 @@
 """
 
 from scanner.fetch import HTML_LIMIT_BYTES
-from scanner.models import CollectResult
+from scanner.models import BrowserResult, CollectResult
+
+MAX_NAVIGATIONS = 10
+MAX_DOWNLOADS = 5
 
 # failures 에 이 모듈이 추가로 쓰는 값:
 # - invalid_response: data가 dict가 아니거나, 응답에 input_url이 없음
@@ -39,6 +42,41 @@ def _as_int(value: object) -> int | None:
     if isinstance(value, bool):
         return None
     return value if isinstance(value, int) else None
+
+
+def _as_str_tuple_capped(value: object, cap: int) -> tuple[str, ...]:
+    return _as_str_tuple(value)[:cap]
+
+
+def _parse_browser(value: object) -> BrowserResult | None:
+    """`browser` 필드를 읽는다. 없거나 null 이면 3단계를 돌리지 않은 것(None)이다.
+
+    객체가 아니면 돌렸는지조차 믿을 수 없으므로 `invalid_response`가 붙은 빈 결과로
+    남긴다 — None 으로 바꾸면 "실패"가 "미실행"으로 둔갑한다.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return BrowserResult(
+            trigger="", final_url=None, navigation_chain=(), html="", title=None,
+            downloads=(), blocked_requests=0, elapsed_ms=0, failures=("invalid_response",),
+        )
+    failures = list(_as_str_tuple(value.get("failures")))
+    html, truncated = _truncate_html(_as_str(value.get("html")) or "", HTML_LIMIT_BYTES)
+    if truncated and "html_truncated" not in failures:
+        failures.append("html_truncated")
+    return BrowserResult(
+        trigger=_as_str(value.get("trigger")) or "",
+        final_url=_as_str(value.get("final_url")),
+        navigation_chain=_as_str_tuple_capped(value.get("navigation_chain"), MAX_NAVIGATIONS),
+        html=html,
+        title=_as_str(value.get("title")),
+        downloads=_as_str_tuple_capped(value.get("downloads"), MAX_DOWNLOADS),
+        blocked_requests=_as_int(value.get("blocked_requests")) or 0,
+        elapsed_ms=_as_int(value.get("elapsed_ms")) or 0,
+        failures=tuple(failures),
+    )
 
 
 def _truncate_html(html: str, limit: int) -> tuple[str, bool]:
@@ -114,4 +152,5 @@ def parse_collect_response(expected_url: str, data: dict) -> CollectResult:
         title=_as_str(data.get("title")),
         elapsed_ms=_as_int(data.get("elapsed_ms")) or 0,
         failures=tuple(failures),
+        browser=_parse_browser(data.get("browser")),
     )
