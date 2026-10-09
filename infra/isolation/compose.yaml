@@ -1,0 +1,63 @@
+services:
+  browser:
+    image: ${ISOLATION_IMAGE:?Set the approved local image ID}
+    platform: linux/amd64
+    container_name: ktc-isolation-browser
+    init: true
+    restart: unless-stopped
+    user: "10001:10001"
+    # 수집 API를 위해 network_mode: none 대신 전용 브리지를 쓴다.
+    # 나가는 연결은 lockdown.sh 가 TEST_PAGE_IP:443 하나만 연다.
+    networks: [collector]
+    ports:
+      - "8443:8443"
+    # DNS 없이 테스트 호스트만 고정 IP로 해석한다. 컨테이너의 53번 질의는 방화벽에서도 막힌다.
+    extra_hosts:
+      - "${TEST_PAGE_HOST:?Set TEST_PAGE_HOST}:${TEST_PAGE_IP:?Set TEST_PAGE_IP}"
+    dns: [127.0.0.1]
+    environment:
+      COLLECTOR_ALLOWED_HOSTS: ${TEST_PAGE_HOST}
+      COLLECTOR_MAX_CONCURRENCY: "1"
+      # 2단계 httpx 3.5초 + 3단계 브라우저 6초 + 정리 여유 3초 < 메인 서버 15초
+      COLLECTOR_FETCH_TIMEOUT_SECONDS: "3.5"
+      COLLECTOR_BROWSER_TIMEOUT_SECONDS: "6"
+      # off: httpx 만 / auto: JS 의존 신호가 있을 때만 / always: 가짜 페이지 시험용, 매번
+      COLLECTOR_BROWSER: auto
+      COLLECTOR_BROWSER_RESTART_EVERY: "50"
+    # 토큰·인증서는 환경변수가 아니라 파일로 넣는다 (브라우저 env 로 새지 않게).
+    secrets: [collect_token, collector_cert, collector_key]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp.json
+    mem_limit: 1536m
+    cpus: 1.5
+    pids_limit: 256
+    shm_size: 256m
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  collector:
+    driver: bridge
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.name: ktc-collector
+    ipam:
+      config:
+        - subnet: 172.30.250.0/29
+
+# make-secrets.sh 가 만든다. 소유 root:10001, 권한 440.
+secrets:
+  collect_token:
+    file: ./secrets/collect_token
+  collector_cert:
+    file: ./secrets/collector.crt
+  collector_key:
+    file: ./secrets/collector.key

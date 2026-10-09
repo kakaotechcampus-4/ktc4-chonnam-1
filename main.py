@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 
 import uuid
@@ -6,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 
+from backend.src.server.shadow_tasks import track_shadow_task
 from backend.src.server.urlscan_service import (
     get_http_client,
     submit_url_scan,
@@ -22,8 +24,69 @@ from services.result_card_renderer import render_result_card, merge_kakao_respon
 from ai.pipeline import analyze_message_part, finalize_analysis
 from ai.types import UrlAnalysis
 
+from scanner.isolation_client import collect_url_isolated
+from scanner.static_checks import check_static
+from scanner.models import UrlEvidence
+from urllib.parse import urlparse
+
 
 app = FastAPI(lifespan=app_lifespan)
+
+# Collector Shadow Mode는 기본적으로 비활성화한다.
+# 테스트 환경에서만 명시적으로 활성화한다.
+ENABLE_URL_COLLECTOR_SHADOW = (
+    os.getenv("ENABLE_URL_COLLECTOR_SHADOW", "false").lower() == "true"
+    and os.getenv("APP_ENV", "production").lower() in {"local", "test", "staging"}
+)
+
+async def log_collector_shadow(
+    collector_task: asyncio.Task,
+    link: str,
+    parsed_result: dict,
+    urlscan_elapsed: float,
+):
+    try:
+        collector_result = await collector_task
+
+        collector_domain = None
+
+        if collector_result.final_url:
+            collector_domain = urlparse(
+                collector_result.final_url
+            ).hostname
+
+        print("========== URL COLLECTOR SHADOW ==========")
+        print(f"[INPUT URL]             {collector_result.input_url}")
+        print(f"[URLSCAN FINAL URL]     {parsed_result.get('final_url')}")
+        print(f"[COLLECTOR FINAL URL]   {collector_result.final_url}")
+        print(
+            f"[FINAL URL MATCH]       "
+            f"{parsed_result.get('final_url') == collector_result.final_url}"
+        )
+        print(f"[URLSCAN DOMAIN]        {parsed_result.get('domain')}")
+        print(f"[COLLECTOR DOMAIN]      {collector_domain}")
+        print(
+            f"[DOMAIN MATCH]          "
+            f"{parsed_result.get('domain') == collector_domain}"
+        )
+        print(f"[URLSCAN ELAPSED]       {urlscan_elapsed:.2f}s")
+        print(f"[COLLECTOR ELAPSED]     {collector_result.elapsed_ms}ms")
+        print(f"[COLLECTOR STATUS]      {collector_result.status_code}")
+        print(f"[COLLECTOR TITLE]       {collector_result.title}")
+        print(f"[COLLECTOR REDIRECTS]   {collector_result.redirect_chain}")
+        print(f"[COLLECTOR FAILURES]    {collector_result.failures}")
+        print("==========================================")
+
+    except asyncio.CancelledError:
+        print(f"[COLLECTOR SHADOW CANCELLED] url={link}")
+        raise
+
+    except Exception as e:
+        print(
+            f"[COLLECTOR SHADOW ERROR] "
+            f"url={link} "
+            f"{type(e).__name__}: {e}"
+        )
 
 
 # TODO:
@@ -354,7 +417,37 @@ async def run_analysis(
     # ========================================================
 
     for link in links:
+        collector_task = None
+        collector_result = None
         try:
+            input_domain = urlparse(link).hostname
+
+            input_static = check_static(
+                domain=input_domain or "",
+                brand=None,
+            )
+
+            print(
+                "[STATIC INPUT]",
+                {
+                    "domain": input_static.domain,
+                    "official_match": input_static.official_match,
+                    "is_punycode": input_static.is_punycode,
+                    "decoded_domain": input_static.decoded_domain,
+                    "kisa_listed": input_static.kisa_listed,
+                    "lookalike_of": input_static.lookalike_of,
+                    "failures": input_static.failures,
+                }
+            )
+            
+            # 자체 URL Collector를 urlscan과 병렬 실행한다.
+            # 현재는 Shadow Mode이므로 실제 분석 결과에는 사용하지 않는다.
+
+            if ENABLE_URL_COLLECTOR_SHADOW:
+                collector_task = asyncio.create_task(
+                    collect_url_isolated(link)
+                )
+                track_shadow_task(collector_task)
             urlscan_start = time.monotonic()
 
             # ------------------------------------------------
@@ -376,6 +469,9 @@ async def run_analysis(
                 card_responses.append(
                     render_card("r4-unavailable")
                 )
+
+                if collector_task is not None:
+                    collector_task.cancel()
 
                 continue
 
@@ -404,6 +500,8 @@ async def run_analysis(
                 card_responses.append(
                     render_card("r4-unavailable")
                 )
+                if collector_task is not None:
+                    collector_task.cancel()
 
                 continue
 
@@ -429,6 +527,24 @@ async def run_analysis(
                 f"[PARSED RESULT] "
                 f"{parsed_result}"
             )
+            # ------------------------------------------------
+            # 2-3-1. 자체 Collector Shadow 비교
+            # ------------------------------------------------
+
+            if collector_task is not None:
+                shadow_log_task = asyncio.create_task(
+                    log_collector_shadow(
+                        collector_task,
+                        link,
+                        parsed_result,
+                        urlscan_elapsed,
+                    )
+                )
+                # Shadow 로그 작업을 백그라운드 작업 목록에 등록한다.
+                track_shadow_task(shadow_log_task)
+                # Collector의 소유권을 Shadow 로그 작업으로 넘긴다.
+                # 이후 AI 분석에서 예외가 발생해도 Collector를 취소하지 않는다.
+                collector_task = None
 
             # ------------------------------------------------
             # 2-4. print urlscan result
@@ -526,6 +642,66 @@ async def run_analysis(
                 if message_result is not None
                 else None
             )
+            # ============================================================
+            # BE URL scanner evidence 조합 (Shadow Mode)
+            # ============================================================
+
+            # 문자 분석이 끝났으므로 brand를 반영해 입력 도메인을 다시 검사한다.
+            input_static = check_static(
+                domain=input_domain or "",
+                brand=brand,
+            )
+
+            final_static = None
+
+            # Collector가 확인한 최종 URL이 있으면 redirect 이후 도메인도 검사한다.
+            if collector_result is not None:
+                final_domain = None
+
+                if collector_result.final_url:
+                    final_domain = urlparse(
+                        collector_result.final_url
+                    ).hostname
+
+                if final_domain:
+                    final_static = check_static(
+                        domain=final_domain,
+                        brand=brand,
+                    )
+
+                url_evidence = UrlEvidence(
+                    input_static=input_static,
+                    final_static=final_static,
+                    collector=collector_result,
+                    urlscan=parsed_result,
+                )
+
+                print(
+                    "[URL EVIDENCE]",
+                    {
+                        "input_domain": url_evidence.input_static.domain,
+                        "input_official": url_evidence.input_static.official_match,
+                        "input_lookalike": url_evidence.input_static.lookalike_of,
+                        "final_domain": (
+                            url_evidence.final_static.domain
+                            if url_evidence.final_static
+                            else None
+                        ),
+                        "final_official": (
+                            url_evidence.final_static.official_match
+                            if url_evidence.final_static
+                            else None
+                        ),
+                        "final_lookalike": (
+                            url_evidence.final_static.lookalike_of
+                            if url_evidence.final_static
+                            else None
+                        ),
+                        "collector_failures": url_evidence.collector.failures,
+                        "urlscan_score": url_evidence.urlscan.get("score"),
+                        "urlscan_malicious": url_evidence.urlscan.get("malicious"),
+                    }
+                )
             
             url_analysis = build_ai_url_analysis(
                 parsed_result,
@@ -586,6 +762,11 @@ async def run_analysis(
             )
 
         except Exception as e:
+            if (
+                collector_task is not None
+                and not collector_task.done()
+            ):
+                collector_task.cancel()
             print(
                 f"[ANALYSIS ERROR] "
                 f"url={link} "
