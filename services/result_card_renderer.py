@@ -9,7 +9,11 @@ be_teammate_card_integration_tasks.md 4~6절 기준.
 
 from typing import Any
 
-from services.chatbot_copy_data import get_signal_copy, get_unverified_copy
+from services.chatbot_copy_data import (
+    get_message_failure_copy,
+    get_signal_copy,
+    get_unverified_copy,
+)
 from services.kakao_card_renderer import render_card, substitute_values
 from services.result_card_selector import select_result_card
 
@@ -83,14 +87,17 @@ def _r9_address_lines(official: str | None, brand: str | None) -> tuple[str | No
 def _r9_message_lines(
     answer: str | None, failures: list[str]
 ) -> tuple[str | None, str | None]:
+    """이슈 #59: `partial`/`failed`는 answer 이름이 아니라 AI가 보존한
+    실제 실패 원인(`failures[0]`)으로 설명한다 — "분석을 끝내지
+    못했어요" 같은 뭉뚱그린 문구 대신 "시간 초과라 못 봤다"처럼
+    구체적으로 말한다. 원인 정보가 없는 기존 응답도 기본 안내로
+    떨어지니 깨지지 않는다(`get_message_failure_copy`)."""
+
     if answer == _NO_RISK:
         return "문자에서 위험 신호를 찾지 못했어요", None
 
-    if answer == _PARTIAL:
-        return None, "문자 내용 (분석을 끝내지 못했어요)"
-
-    if answer == "failed":
-        return None, "문자 내용 (분석하지 못했어요)"
+    if answer in (_PARTIAL, "failed"):
+        return None, f"문자 내용 ({get_message_failure_copy(failures)})"
 
     if answer == "not_run":
         return None, "문자 내용"
@@ -253,6 +260,30 @@ def merge_kakao_responses(responses: list[dict]) -> dict:
     }
 
 
+_COMPLETE_ANSWERS = (_NO_RISK, "risk_found")
+
+
+def _message_unverified_line(message: dict) -> str | None:
+    """message가 완료 상태(no_risk_found/risk_found)가 아니면 그 이유를
+    "문자: ..." 줄로 돌려준다. 완료됐으면 보여줄 "확인 못 한 것"이 없으니
+    None이다 (이슈 #59: 문자 분석 실패와 페이지 분석 실패를 구분하고,
+    정상 완료된 페이지 분석을 문자 분석 실패 때문에 실패로 보이게 하지
+    않는다)."""
+
+    answer = message.get("answer")
+    if answer in _COMPLETE_ANSWERS or answer is None:
+        return None
+    failures = ((message.get("details") or {}).get("reason") or {}).get("failures") or []
+    return f"문자: {get_message_failure_copy(failures)}"
+
+
+def _env_unverified_line(env: dict) -> str | None:
+    answer = env.get("answer")
+    if answer in _COMPLETE_ANSWERS:
+        return None
+    return f"페이지: {get_unverified_copy(answer)}"
+
+
 def render_detail_carousel(analysis_result: dict) -> dict:
     """"자세히 보기"에서 쓸 의심 근거 캐러셀을 만든다.
 
@@ -290,9 +321,13 @@ def render_detail_carousel(analysis_result: dict) -> dict:
             )
         )
 
-    c2_item = substitute_values(
-        c2_template, {"unverified": get_unverified_copy(env.get("answer"))}
-    )
+    unverified_lines = [
+        line for line in (_message_unverified_line(message), _env_unverified_line(env))
+        if line
+    ]
+    unverified_text = "\n".join(unverified_lines) if unverified_lines else "모두 확인했어요."
+
+    c2_item = substitute_values(c2_template, {"unverified": unverified_text})
 
     return {
         "version": "2.0",
