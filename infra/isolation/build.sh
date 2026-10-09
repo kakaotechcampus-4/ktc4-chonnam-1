@@ -7,6 +7,6 @@ docker build --platform linux/amd64 --build-arg "BASE_IMAGE=$base_image" -t ktc-
 image_id=$(docker image inspect ktc-isolation:approved --format '{{.Id}}')
 printf 'ISOLATION_IMAGE=%s\n' "$image_id" > .env
 printf 'base=%s\nimage_id=%s\nplatform=linux/amd64\n' "$base_image" "$image_id" > image-record.txt
-sha256sum seccomp.json Dockerfile verify.py >> image-record.txt
-docker compose up -d --force-recreate
+sha256sum seccomp.json Dockerfile verify.py scanner/*.py collector/*.py >> image-record.txt
+docker compose --env-file .env --env-file collector.env up -d --force-recreate
 timeout 30 docker exec ktc-isolation-browser python /app/verify.py

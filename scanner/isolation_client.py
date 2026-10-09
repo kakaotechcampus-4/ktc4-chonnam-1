@@ -7,6 +7,7 @@
 
 import json
 import os
+import ssl
 from collections.abc import Callable
 
 import httpx
@@ -22,6 +23,21 @@ MAX_RESPONSE_BYTES = 262_144  # 임시 제한: 256 KiB
 
 class IsolationClientError(Exception):
     """격리환경 API 호출 또는 응답 수신 실패."""
+
+
+def _tls_verify() -> ssl.SSLContext | bool:
+    """격리 서버의 자체 서명 인증서를 고정한다 (docs/isolation-security.md §5.5).
+
+    `ISOLATION_API_CA_CERT`(PEM 원문)가 있으면 그 인증서 하나만 믿는다.
+    없으면 기존처럼 시스템 CA로 검증한다. 어느 쪽이든 검증을 끄지 않는다.
+    """
+    pem = os.getenv("ISOLATION_API_CA_CERT", "").strip()
+    if not pem:
+        return True
+    try:
+        return ssl.create_default_context(cadata=pem)
+    except ssl.SSLError as exc:
+        raise IsolationClientError("격리환경 API 인증서 설정이 올바르지 않습니다.") from exc
 
 
 async def collect_url_isolated(
@@ -52,6 +68,7 @@ async def collect_url_isolated(
             timeout=ISOLATION_TIMEOUT_SECONDS,
             follow_redirects=False,
             trust_env=False,
+            verify=_tls_verify(),
         )
 
     try:
