@@ -42,9 +42,10 @@ def select_result_card(analysis_result: dict) -> str:
        result-meaning-cases.md 6절 항목 9가 미해결 상태로 남긴 질문의
        잠정 답이다 ("후보는 S4 결론 줄").
     4. official == "brand_mismatch" → 위험 카드 (사칭 패턴 자체가 근거).
-    5. official == "not_registered"인데 브랜드 자체를 특정 못 했으면
-       → "확인할 정보가 부족해요" (org_name을 채울 수 없는 경우).
-    6. official == "not_registered"면 → "공식 주소 목록에 없어요".
+    5. official == "not_registered"이고 브랜드를 특정하지 못했으면
+    → 판단 보류 카드 (보낸 기관을 몰라 주소 대조 불가).
+    6. official == "not_registered"이고 브랜드를 특정했으면
+    → 판단 보류 카드 (공식 주소 목록에 없는 기관이라 대조 불가).
     7. 그 외(unresolved 등) → "판단하기 어려워요".
     """
 

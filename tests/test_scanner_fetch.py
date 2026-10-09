@@ -1,0 +1,435 @@
+"""scanner.fetch.collect_url 테스트.
+
+외부 네트워크에 의존하지 않도록 httpx.MockTransport 로 응답을 흉내 낸다.
+오늘 작업 계획(담당 B)의 테스트 체크리스트를 그대로 따른다: 정상 페이지,
+redirect, timeout, 잘못된 URL, localhost/private IP, HTML 이 아닌 응답,
+너무 큰 응답.
+"""
+
+import asyncio
+import ssl
+from collections.abc import Callable
+
+import httpx
+
+from scanner.fetch import HTML_LIMIT_BYTES, collect_url
+from scanner.models import CollectResult
+
+PUBLIC_IP = "93.184.216.34"
+
+
+async def resolve_stub(host: str) -> list[str]:
+    return {"internal.test": ["10.0.0.5"]}.get(host, [PUBLIC_IP])
+
+
+def run(url: str, routes: dict[str, httpx.Response], *, slow: frozenset[str] = frozenset(),
+        timeout: float = 10.0) -> tuple[CollectResult, list[str]]:
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if str(request.url) in slow:
+            await asyncio.sleep(1)
+        if str(request.url) not in routes:
+            raise httpx.ConnectError("unreachable", request=request)
+        return routes[str(request.url)]
+
+    async def go() -> CollectResult:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await collect_url(url, client=client, resolve=resolve_stub, timeout=timeout)
+
+    return asyncio.run(go()), seen
+
+
+def run_raising(url: str, make_error: Callable[[httpx.Request], Exception]) -> CollectResult:
+    """handler 가 지정한 예외를 올리게 해서 네트워크 계층 실패를 흉내 낸다.
+
+    예외 분류(_is_cert_verify_failure) 자체를 보는 테스트용이라
+    allow_insecure_retry 는 꺼둔다 — 켜두면 tls_cert_verify_failed 일 때
+    실제 네트워크로 재시도해버린다. 재시도 흐름은
+    TestInsecureRetryOnTlsFailure 가 따로 본다.
+    """
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise make_error(request)
+
+    async def go() -> CollectResult:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await collect_url(
+                url, client=client, resolve=resolve_stub, allow_insecure_retry=False
+            )
+
+    return asyncio.run(go())
+
+
+def redirect(to: str) -> httpx.Response:
+    return httpx.Response(302, headers={"location": to})
+
+
+def page(html: str, status: int = 200, content_type: str = "text/html; charset=utf-8") -> httpx.Response:
+    return httpx.Response(status, headers={"content-type": content_type}, text=html)
+
+
+class TestNormalPage:
+    def test_collects_status_html_and_title(self):
+        result, seen = run("https://example.test/", {
+            "https://example.test/": page("<html><head><title> 배송 조회 </title></head>"
+                                           "<body>hello</body></html>"),
+        })
+
+        assert result.status_code == 200
+        assert result.final_url == "https://example.test/"
+        assert result.content_type.startswith("text/html")
+        assert "hello" in result.html
+        assert result.title == "배송 조회"
+        assert result.failures == ()
+        assert result.elapsed_ms >= 0
+        assert seen == ["https://example.test/"]
+
+
+class TestRedirect:
+    def test_follows_redirect_chain_and_records_it(self):
+        result, _ = run("https://bit.ly/a", {
+            "https://bit.ly/a": redirect("https://hop.example/b"),
+            "https://hop.example/b": redirect("/c"),
+            "https://hop.example/c": page("<p>landing</p>"),
+        })
+
+        assert result.final_url == "https://hop.example/c"
+        assert result.redirect_chain == ("https://hop.example/b", "https://hop.example/c")
+        assert result.status_code == 200
+        assert result.failures == ()
+
+    def test_redirect_limit_is_enforced(self):
+        routes = {
+            f"https://r.example/{i}": redirect(f"https://r.example/{i + 1}") for i in range(7)
+        }
+
+        result, _ = run("https://r.example/0", routes)
+
+        assert result.failures == ("redirect_limit",)
+        assert len(result.redirect_chain) == 6  # max_redirects(5) + 마지막 홉
+
+
+class TestTimeout:
+    def test_slow_response_is_reported_as_timeout_not_raised(self):
+        result, _ = run(
+            "https://slow.example/",
+            {"https://slow.example/": page("<p>late</p>")},
+            slow=frozenset({"https://slow.example/"}),
+            timeout=0.2,
+        )
+
+        assert result.failures == ("timeout",)
+        assert result.html == ""
+
+    def test_timeout_during_redirect_keeps_chain_so_far(self):
+        result, _ = run(
+            "https://bit.ly/a",
+            {
+                "https://bit.ly/a": redirect("https://evil.example/pay"),
+                "https://evil.example/pay": page("<p>late</p>"),
+            },
+            slow=frozenset({"https://evil.example/pay"}),
+            timeout=0.2,
+        )
+
+        assert result.failures == ("timeout",)
+        assert result.redirect_chain == ("https://evil.example/pay",)
+
+
+class TestInvalidUrl:
+    def test_non_http_scheme_is_rejected_without_a_request(self):
+        result, seen = run("ftp://files.example/a", {})
+
+        assert result.failures == ("invalid_scheme",)
+        assert seen == []
+
+    def test_javascript_scheme_is_rejected(self):
+        result, seen = run("javascript:alert(1)", {})
+
+        assert result.failures == ("invalid_scheme",)
+        assert seen == []
+
+    def test_unreachable_host_is_connection_failed(self):
+        result, _ = run("https://down.example/", {})
+
+        assert result.failures == ("connection_failed",)
+
+
+class TestTlsCertificateVerification:
+    """link24.kr/DlMFKmF 실사례: 인증서 검증 실패가 connection_failed 에
+    묻히지 않고 별도로 구분되는지 확인한다 (분류 로직 자체만 본다 —
+    verify=False 재시도는 TestInsecureRetryOnTlsFailure 가 따로 본다)."""
+
+    def test_expired_certificate_is_distinguished_from_connection_failed(self):
+        def make_error(request: httpx.Request) -> Exception:
+            return httpx.ConnectError(
+                "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+                "certificate has expired (_ssl.c:1028)",
+                request=request,
+            )
+
+        result = run_raising("https://expired.example/", make_error)
+
+        assert result.failures == ("tls_cert_verify_failed",)
+
+    def test_wrapped_ssl_cause_is_also_distinguished(self):
+        """실제 httpx/httpcore 는 ssl.SSLError 를 감싼 예외를 __cause__ 로 올린다."""
+
+        def make_error(request: httpx.Request) -> Exception:
+            ssl_error = ssl.SSLCertVerificationError(
+                1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+                "self-signed certificate (_ssl.c:1028)",
+            )
+            wrapped = RuntimeError(ssl_error)  # httpcore.ConnectError 역할
+            try:
+                raise wrapped
+            except RuntimeError as cause:
+                error = httpx.ConnectError("connect failed", request=request)
+                error.__cause__ = cause
+                return error
+
+        result = run_raising("https://self-signed.example/", make_error)
+
+        assert result.failures == ("tls_cert_verify_failed",)
+
+    def test_other_connect_errors_stay_connection_failed(self):
+        def make_error(request: httpx.Request) -> Exception:
+            return httpx.ConnectError("Connection refused", request=request)
+
+        result = run_raising("https://refused.example/", make_error)
+
+        assert result.failures == ("connection_failed",)
+
+    def test_non_certificate_ssl_errors_are_not_misclassified(self):
+        """멘토 리뷰(PR #54): ssl.SSLError를 넓게 보면 SSLEOFError 같은
+        인증서와 무관한 TLS 오류까지 tls_cert_verify_failed로 잘못 분류돼
+        verify=False 재시도가 과도하게 일어난다. SSLCertVerificationError만
+        좁게 봐야 한다."""
+
+        def make_error(request: httpx.Request) -> Exception:
+            ssl_error = ssl.SSLEOFError("EOF occurred in violation of protocol")
+            try:
+                raise ssl_error
+            except ssl.SSLEOFError as cause:
+                error = httpx.ConnectError("connect failed", request=request)
+                error.__cause__ = cause
+                return error
+
+        result = run_raising("https://protocol-error.example/", make_error)
+
+        assert result.failures == ("connection_failed",)
+
+
+def _cert_verify_error(request: httpx.Request) -> httpx.ConnectError:
+    return httpx.ConnectError(
+        "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+        "unable to get local issuer certificate",
+        request=request,
+    )
+
+
+class TestInsecureRetryOnTlsFailure:
+    """팀장님 요청(link24.kr → getbarrel.com 사례): verify=True 가
+    인증서 검증에서 실패하면 verify=False 로 전체를 한 번 더 시도하고,
+    성공해도 검증에 실패했었다는 사실은 failures 에 남긴다."""
+
+    def _run(
+        self, url: str, *, secure_handler, insecure_handler=None, allow_insecure_retry=True,
+    ) -> CollectResult:
+        async def go() -> CollectResult:
+            kwargs = {}
+            if insecure_handler is not None:
+                kwargs["make_insecure_client"] = lambda: httpx.AsyncClient(
+                    transport=httpx.MockTransport(insecure_handler)
+                )
+            async with httpx.AsyncClient(transport=httpx.MockTransport(secure_handler)) as client:
+                return await collect_url(
+                    url, client=client, resolve=resolve_stub,
+                    allow_insecure_retry=allow_insecure_retry, **kwargs,
+                )
+
+        return asyncio.run(go())
+
+    def test_retry_recovers_redirect_target_and_keeps_the_tls_fact(self):
+        async def secure_handler(request: httpx.Request) -> httpx.Response:
+            raise _cert_verify_error(request)
+
+        async def insecure_handler(request: httpx.Request) -> httpx.Response:
+            if str(request.url) == "https://link24.kr/x":
+                return redirect("https://getbarrel.com/landing")
+            return page("<p>getbarrel</p>")
+
+        result = self._run("https://link24.kr/x", secure_handler=secure_handler,
+                            insecure_handler=insecure_handler)
+
+        assert result.failures == ("tls_cert_verify_failed",)
+        assert result.final_url == "https://getbarrel.com/landing"
+        assert result.status_code == 200
+        assert "getbarrel" in result.html
+
+    def test_retry_failure_is_combined_with_the_tls_fact(self):
+        async def secure_handler(request: httpx.Request) -> httpx.Response:
+            raise _cert_verify_error(request)
+
+        async def insecure_handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("Connection refused", request=request)
+
+        result = self._run("https://link24.kr/x", secure_handler=secure_handler,
+                            insecure_handler=insecure_handler)
+
+        assert result.failures == ("tls_cert_verify_failed", "connection_failed")
+
+    def test_retry_truncation_is_combined_with_the_tls_fact(self):
+        async def secure_handler(request: httpx.Request) -> httpx.Response:
+            raise _cert_verify_error(request)
+
+        async def insecure_handler(request: httpx.Request) -> httpx.Response:
+            return page("a" * (HTML_LIMIT_BYTES + 10))
+
+        result = self._run("https://link24.kr/x", secure_handler=secure_handler,
+                            insecure_handler=insecure_handler)
+
+        assert result.failures == ("tls_cert_verify_failed", "html_truncated")
+
+    def test_allow_insecure_retry_false_skips_the_retry(self):
+        called = False
+
+        async def secure_handler(request: httpx.Request) -> httpx.Response:
+            raise _cert_verify_error(request)
+
+        async def insecure_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal called
+            called = True
+            return page("<p>should not be reached</p>")
+
+        result = self._run("https://link24.kr/x", secure_handler=secure_handler,
+                            insecure_handler=insecure_handler, allow_insecure_retry=False)
+
+        assert result.failures == ("tls_cert_verify_failed",)
+        assert result.html == ""
+        assert called is False
+
+    def test_non_tls_failures_do_not_trigger_retry(self):
+        called = False
+
+        async def secure_handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("Connection refused", request=request)
+
+        async def insecure_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal called
+            called = True
+            return page("<p>should not be reached</p>")
+
+        result = self._run("https://down.example/", secure_handler=secure_handler,
+                            insecure_handler=insecure_handler)
+
+        assert result.failures == ("connection_failed",)
+        assert called is False
+
+
+class TestBlockedAddress:
+    def test_localhost_literal_is_blocked_without_a_request(self):
+        result, seen = run("http://127.0.0.1/admin", {})
+
+        assert result.failures == ("blocked_address",)
+        assert seen == []
+
+    def test_link_local_metadata_ip_is_blocked(self):
+        result, seen = run("http://169.254.169.254/latest/meta-data/", {})
+
+        assert result.failures == ("blocked_address",)
+        assert seen == []
+
+    def test_hostname_resolving_to_private_ip_is_blocked(self):
+        result, seen = run(
+            "https://internal.test/admin", {"https://internal.test/admin": page("<p>x</p>")}
+        )
+
+        assert result.failures == ("blocked_address",)
+        assert seen == []
+
+    def test_redirect_target_resolving_to_private_ip_is_blocked(self):
+        result, seen = run(
+            "https://a.example/", {"https://a.example/": redirect("http://internal.test/admin")}
+        )
+
+        assert result.failures == ("blocked_address",)
+        assert result.final_url == "http://internal.test/admin"
+        assert seen == ["https://a.example/"]
+
+
+class TestNonHtmlResponse:
+    def test_binary_response_is_not_decoded(self):
+        binary = httpx.Response(
+            200, headers={"content-type": "application/vnd.android.package-archive"},
+            content=b"PK\x03\x04",
+        )
+
+        result, _ = run("https://evil.example/app.apk", {"https://evil.example/app.apk": binary})
+
+        assert result.status_code == 200
+        assert result.content_type == "application/vnd.android.package-archive"
+        assert result.html == ""
+        assert result.title is None
+        assert result.failures == ()
+
+
+class TestCompressedResponse:
+    """멘토 리뷰(PR #54): httpx가 Content-Encoding을 보고 자동으로 압축을
+    풀면 작은 압축 응답이 거대한 평문으로 부풀 수 있다(gzip bomb, 32KB →
+    32MB에서 최대 할당 약 81MB 확인됨). 본문을 아예 읽지 않아야 한다."""
+
+    def test_gzip_response_is_never_decompressed(self):
+        import gzip
+
+        original = ("a" * 2_000_000).encode()  # 2MB — 풀렸으면 바로 드러난다
+        compressed = gzip.compress(original)
+        response = httpx.Response(
+            200,
+            headers={"content-type": "text/html", "content-encoding": "gzip"},
+            content=compressed,
+        )
+
+        result, _ = run("https://bomb.example/", {"https://bomb.example/": response})
+
+        assert result.status_code == 200
+        assert result.html == ""
+        assert result.failures == ("compressed_response_skipped",)
+
+    def test_identity_encoding_is_not_treated_as_compressed(self):
+        response = httpx.Response(
+            200, headers={"content-type": "text/html", "content-encoding": "identity"},
+            text="<p>plain</p>",
+        )
+
+        result, _ = run("https://plain.example/", {"https://plain.example/": response})
+
+        assert "plain" in result.html
+        assert result.failures == ()
+
+    def test_default_headers_ask_servers_not_to_compress(self):
+        seen_headers: dict[str, str] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            seen_headers.update(request.headers)
+            return page("<p>ok</p>")
+
+        async def go() -> CollectResult:
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+                return await collect_url("https://example.test/", client=client, resolve=resolve_stub)
+
+        asyncio.run(go())
+
+        assert seen_headers.get("accept-encoding") == "identity"
+
+
+class TestTooLargeResponse:
+    def test_html_over_limit_is_truncated_and_noted(self):
+        result, _ = run(
+            "https://big.example/", {"https://big.example/": page("a" * (HTML_LIMIT_BYTES + 10))}
+        )
+
+        assert result.failures == ("html_truncated",)
+        assert len(result.html) == HTML_LIMIT_BYTES
