@@ -78,14 +78,14 @@ _FALLBACK_MESSAGE_FAILURE = "문자 분석을 완료하지 못했어요"
 
 
 def get_message_failure_copy(failures: list[str] | None) -> str:
-    """실패 원인 중 우선순위가 가장 높은 원인의 안내 문구를 반환한다."""
+    """복수 실패 원인이 있으면 첫 번째 원인의 안내 문구를 반환한다.
+
+    원인이 없거나 알 수 없는 코드면 기본 안내 문구를 사용한다.
+    """
     if not failures:
         return _FALLBACK_MESSAGE_FAILURE
 
-    priority = ("timeout", "refused", "invalid_output", "llm_error")
-
-    for code in priority:
-        if code in failures:
-            return MESSAGE_FAILURE_COPY[code]
-
-    return _FALLBACK_MESSAGE_FAILURE
+    return MESSAGE_FAILURE_COPY.get(
+        failures[0],
+        _FALLBACK_MESSAGE_FAILURE,
+    )

@@ -348,13 +348,16 @@ class TestR9BlankValues:
 
             assert f"- 문자 내용 ({phrase})" in _r9_description(analysis)
 
-    def test_message_failure_uses_priority(self):
-        """이슈 #59: 복수 실패 원인은 정의된 우선순위에 따라
-        대표 원인 하나를 선택한다."""
+    def test_message_failure_uses_only_the_first_reason(self):
+        """이슈 #59: 복수 실패 원인이 있으면 첫 번째 원인만 표시한다."""
 
         analysis = _analysis(
             "not_registered",
-            _part("partial", brand="CJ대한통운", failures=["timeout", "llm_error"]),
+            _part(
+                "partial",
+                brand="CJ대한통운",
+                failures=["timeout", "llm_error"],
+            ),
             _part("not_run"),
         )
 
@@ -363,23 +366,12 @@ class TestR9BlankValues:
         assert "- 문자 내용 (분석 시간이 초과되어 끝까지 확인하지 못했어요)" in description
         assert "분석 중 오류가 발생해 확인하지 못했어요" not in description
 
-    def test_multiple_failures_use_priority(self):
-        assert get_message_failure_copy(
-            ["llm_error", "timeout"]
-        ) == MESSAGE_FAILURE_COPY["timeout"]
-
-
-    def test_unknown_code_does_not_hide_known_failure(self):
-        assert get_message_failure_copy(
-            ["unknown_code", "refused"]
-        ) == MESSAGE_FAILURE_COPY["refused"]
-
-
-    def test_failure_order_does_not_change_result(self):
+    def test_message_failure_preserves_first_reason_order(self):
         first = get_message_failure_copy(["timeout", "llm_error"])
         second = get_message_failure_copy(["llm_error", "timeout"])
 
-        assert first == second
+        assert first == MESSAGE_FAILURE_COPY["timeout"]
+        assert second == MESSAGE_FAILURE_COPY["llm_error"]
 
     def test_unknown_message_failure_code_falls_back_safely(self):
         """이슈 #59: 원인 정보가 부족하거나 모르는 코드여도 렌더링이
