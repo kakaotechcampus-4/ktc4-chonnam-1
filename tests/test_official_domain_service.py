@@ -114,6 +114,72 @@ class TestIsSameOrSubdomain:
         assert is_same_or_subdomain(" WWW.NAVER.COM. ", "naver.com") is True
 
 
+class TestCheckOfficialDomainWithInjectedWhitelist:
+    """운영 화이트리스트(services/official_domains.py) 데이터와 분리해서,
+    판정 로직 자체가 DomainMatch 네 상태를 안정적으로 반환하는지만 본다.
+
+    실제 택배사 허용 host 범위가 나중에 늘거나 줄어도 이 테스트들은
+    영향을 받지 않는다 — 데이터는 OFFICIAL_DOMAINS에서, 로직 검증은
+    여기 주입한 작은 화이트리스트로 분리했다.
+    """
+
+    WHITELIST = {
+        "테스트택배": {"test-parcel.example"},
+    }
+
+    def test_exact_host_match_is_official(self):
+        assert (
+            check_official_domain(
+                "테스트택배", "test-parcel.example", whitelist=self.WHITELIST
+            )
+            == "official"
+        )
+
+    def test_subdomain_of_registered_host_is_official(self):
+        assert (
+            check_official_domain(
+                "테스트택배", "tracking.test-parcel.example", whitelist=self.WHITELIST
+            )
+            == "official"
+        )
+
+    def test_unregistered_brand_is_not_registered(self):
+        assert (
+            check_official_domain(
+                "등록안된브랜드", "example.com", whitelist=self.WHITELIST
+            )
+            == "not_registered"
+        )
+
+    def test_empty_whitelist_makes_every_brand_not_registered(self):
+        assert (
+            check_official_domain("테스트택배", "test-parcel.example", whitelist={})
+            == "not_registered"
+        )
+
+    def test_registered_brand_wrong_host_is_brand_mismatch(self):
+        assert (
+            check_official_domain(
+                "테스트택배", "test-parcel-fake.example", whitelist=self.WHITELIST
+            )
+            == "brand_mismatch"
+        )
+
+    def test_domain_unresolvable_is_unresolved_regardless_of_whitelist(self):
+        assert (
+            check_official_domain("테스트택배", None, whitelist=self.WHITELIST)
+            == "unresolved"
+        )
+        assert (
+            check_official_domain("테스트택배", "   ", whitelist=self.WHITELIST)
+            == "unresolved"
+        )
+
+    def test_default_whitelist_is_production_data_when_not_injected(self):
+        """whitelist 인자를 생략하면 실제 운영 데이터(OFFICIAL_DOMAINS)를 쓴다."""
+        assert check_official_domain("CJ대한통운", "cjlogistics.com") == "official"
+
+
 @pytest.mark.parametrize(
     ("brand", "domain", "expected"),
     [

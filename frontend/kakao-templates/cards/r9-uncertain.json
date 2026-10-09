@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "🤔 판단하기 어려워요",
+          "description": "문자 속 링크 대신 {{ org_label }} 공식 앱이나 홈페이지에서 직접 확인하세요.\n\n확인한 것\n{{ checked }}\n\n확인하지 못한 것\n{{ unchecked }}\n\n기한이 적혀 있다면 그 전에 공식 경로로 확인하세요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "다른 문자 확인하기",
+              "action": "block",
+              "blockId": "6aa6a4436d537a3eabb81ad5"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

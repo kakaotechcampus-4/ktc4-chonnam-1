@@ -11,12 +11,12 @@
             {
               "label": "문자만 받았어요",
               "action": "block",
-              "blockId": "{{ block_b2a }}"
+              "blockId": "6ab78d64322b97a3a1cc9567"
             },
             {
               "label": "링크를 눌렀어요",
               "action": "block",
-              "blockId": "{{ block_b2b }}"
+              "blockId": "6ab78d883dd52f826f111e49"
             }
           ]
         }

@@ -5,7 +5,7 @@
       {
         "textCard": {
           "title": "📵 링크는 누르지 마세요",
-          "description": "링크를 누르지 않았다면 문자를 지우고 보낸 번호를 차단하세요.\n신고하고 싶다면 118에 전화하세요. 24시간 무료예요.",
+          "description": "링크를 누르지 않았다면 문자를 지우고 보낸 번호를 차단하세요.\n신고하고 싶다면 118에 전화하세요. 무료예요.",
           "buttonLayout": "vertical",
           "buttons": [
             {
@@ -14,9 +14,9 @@
               "phoneNumber": "118"
             },
             {
-              "label": "문자 확인하기",
+              "label": "스미싱 확인하기",
               "action": "block",
-              "blockId": "{{ block_b1 }}"
+              "blockId": "6aa6a4436d537a3eabb81ad5"
             }
           ]
         }
