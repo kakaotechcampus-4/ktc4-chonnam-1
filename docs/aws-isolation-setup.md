@@ -12,7 +12,7 @@
 관리자 PC ── SSH ──▶ 격리 서버
 ```
 
-격리 EC2는 `i-0ddf82de2ba56da70`(서울, `t3.medium`)이며 현재 공인 IP는 `54.180.151.132`다. `ssh ktc-server`는 노트북 전용 키를 사용하는 직접 SSH로 변경했다. 와이파이가 바뀌면 저장소 루트에서 `powershell -NoProfile -File .\infra\isolation\connect.ps1`을 실행한다. 현재 공인 IPv4 `/32`로 SSH 규칙 하나를 교체하고 접속한다. IAM 역할을 제거하고 IMDS·SSM을 비활성화했다. Render의 수집 API 호출 경로는 추후 별도로 구성한다.
+격리 EC2는 `i-0ddf82de2ba56da70`(서울, `t3.medium`)이며 현재 공인 IP는 `54.180.151.132`다. `ssh ktc-server`는 노트북 전용 키를 사용하는 직접 SSH로 변경했다. 와이파이가 바뀌면 저장소 루트에서 `powershell -NoProfile -File .\infra\isolation\connect.ps1`을 실행한다. 현재 공인 IPv4 `/32`로 기기별 SSH 규칙(`-Device`, 기본값 `notebook`) 하나를 교체하고 접속한다. IAM 역할을 제거하고 IMDS·SSM을 비활성화했다. Render의 수집 API 호출 경로는 추후 별도로 구성한다.
 
 ## 1. 구축 전에 정할 값
 
