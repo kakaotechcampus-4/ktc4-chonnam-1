@@ -69,43 +69,50 @@ def _r9_address_lines(official: str | None, brand: str | None) -> tuple[str | No
         if has_brand:
             return f"주소가 {brand} 공식 주소와 같아요", None
         return "주소가 공식 주소 목록에 있어요", None
-    if official == "not_registered" and not has_brand:
-        return None, "기관을 몰라 주소를 대조하지 못했어요"
-    if official in ("not_registered", "brand_mismatch"):
+    if official == "not_registered":
+        if not has_brand:
+            return None, "주소가 공식 주소인지 (보낸 기관을 몰라 대조하지 못했어요)"
+        return None, "주소가 공식 주소인지 (공식 주소 목록에 없는 기관이라 대조하지 못했어요)"
+    if official == "brand_mismatch":
         return "공식 주소 목록에 없는 주소예요", None
     if official == "unresolved":
         return None, "주소가 공식 주소인지"
     return None, None
 
 
-def _r9_message_lines(answer: str | None, failures: list[str]) -> tuple[str | None, str | None]:
-    """멘토 리뷰(PR #54): "자료가 남아 있는 것"과 "분석을 마친 것"은 다르다.
-    시간 초과(`timeout`)는 어디까지 분석했는지 경계가 불확실해서,
-    `partial_content`/`input_too_large`처럼 "확인한 범위에서는 위험 신호가
-    없었다"고 단정하면 안 된다 — 사실상 분석을 못 끝낸 것과 같이 다룬다."""
-
+def _r9_message_lines(
+    answer: str | None, failures: list[str]
+) -> tuple[str | None, str | None]:
     if answer == _NO_RISK:
         return "문자에서 위험 신호를 찾지 못했어요", None
+
     if answer == _PARTIAL:
-        if "timeout" in failures:
-            return None, "문자 내용"
-        return "문자 일부에서 위험 신호를 찾지 못했어요", "문자 나머지"
-    if answer in ("failed", "not_run"):
+        return None, "문자 내용 (분석을 끝내지 못했어요)"
+
+    if answer == "failed":
+        return None, "문자 내용 (분석하지 못했어요)"
+
+    if answer == "not_run":
         return None, "문자 내용"
+
     return None, None
 
 
-def _r9_env_lines(answer: str | None, failures: list[str]) -> tuple[str | None, str | None]:
+def _r9_env_lines(
+    answer: str | None, failures: list[str]
+) -> tuple[str | None, str | None]:
     if answer == _NO_RISK:
         return "페이지에서 위험 신호를 찾지 못했어요", None
+
     if answer == _PARTIAL:
-        if "timeout" in failures:
-            return None, "페이지 내용"
-        return "페이지 일부에서 위험 신호를 찾지 못했어요", "페이지 나머지"
+        return None, "페이지 내용 (끝까지 확인하지 못했어요)"
+
     if answer == "failed":
         return None, "페이지 내용 (열지 못했어요)"
+
     if answer == "not_run":
         return None, "페이지 내용"
+
     return None, None
 
 
