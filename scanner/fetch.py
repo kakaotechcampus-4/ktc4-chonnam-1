@@ -30,7 +30,8 @@ from scanner.models import CollectResult
 
 # failures 에 들어가는 값: invalid_scheme, invalid_url, blocked_address,
 # redirect_limit, timeout, tls_cert_verify_failed, connection_failed,
-# html_truncated(성공 응답에 덧붙는 경고성 값, 위 값들과 성격이 다르다).
+# html_truncated·compressed_response_skipped(성공 응답에 덧붙는 경고성
+# 값, 위 값들과 성격이 다르다).
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT_SECONDS = 10.0
 HTML_LIMIT_BYTES = 131_072  # 128 KiB. 초과분은 버리고 failures 에 html_truncated 를 남긴다.
@@ -42,6 +43,10 @@ DEFAULT_HEADERS = {
         "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
     ),
     "Accept-Language": "ko-KR,ko;q=0.9",
+    # 압축 해제 폭탄 방지(멘토 리뷰, PR #54): 서버가 그래도 압축해서 보내면
+    # Content-Encoding 을 보고 본문을 아예 읽지 않는다 — 요청 헤더만으로는
+    # 악성 서버가 무시할 수 있어 강제하지 않는다.
+    "Accept-Encoding": "identity",
 }
 
 Resolver = Callable[[str], Awaitable[list[str]]]
@@ -127,21 +132,28 @@ def _decode(body: bytes, encoding: str | None) -> str:
 
 
 def _is_cert_verify_failure(exc: BaseException) -> bool:
-    """만료·자체서명·호스트명 불일치 등 TLS 인증서 검증 실패인지 판별한다.
+    """만료·자체서명·호스트명 불일치 등 TLS **인증서 검증** 실패인지 판별한다.
 
-    httpx 는 이 오류를 httpcore.ConnectError 로 감싸고, 실제 ssl.SSLError 는
-    그 예외의 `args[0]`에 들어간다 — httpx/httpcore 의 공개 API가 아니라
-    버전에 따라 감싸는 깊이가 달라질 수 있어 `__cause__`/`__context__` 체인을
-    몇 단계 따라가며 확인한다. 못 찾아도 메시지 문자열(`CERTIFICATE_VERIFY_FAILED`)
-    로 한 번 더 확인한다.
+    `ssl.SSLError`가 아니라 더 좁은 `ssl.SSLCertVerificationError`만 본다 —
+    `SSLEOFError`/`SSLSyscallError`/`SSLZeroReturnError` 같은 형제 클래스는
+    인증서와 무관한 TLS 오류인데, `ssl.SSLError`로 넓게 보면 이들도 인증서
+    검증 실패로 잘못 분류되어 verify=False 재시도가 과도하게 일어난다
+    (멘토 리뷰, PR #54).
+
+    httpx 는 이 오류를 httpcore.ConnectError 로 감싸고, 실제
+    ssl.SSLCertVerificationError 는 그 예외의 `args[0]`에 들어간다 —
+    httpx/httpcore 의 공개 API가 아니라 버전에 따라 감싸는 깊이가 달라질 수
+    있어 `__cause__`/`__context__` 체인을 몇 단계 따라가며 확인한다. 못
+    찾아도 메시지 문자열(`CERTIFICATE_VERIFY_FAILED`)로 한 번 더 확인한다 —
+    이 문자열 자체가 인증서 검증 실패에만 붙으므로 범위가 넓어지지 않는다.
     """
     node: BaseException | None = exc
     for _ in range(4):
         if node is None:
             break
-        if isinstance(node, ssl.SSLError):
+        if isinstance(node, ssl.SSLCertVerificationError):
             return True
-        if node.args and isinstance(node.args[0], ssl.SSLError):
+        if node.args and isinstance(node.args[0], ssl.SSLCertVerificationError):
             return True
         node = node.__cause__ or node.__context__
     return "CERTIFICATE_VERIFY_FAILED" in str(exc)
@@ -185,6 +197,7 @@ async def collect_url(
     html_limit: int = HTML_LIMIT_BYTES,
     allow_insecure_retry: bool = True,
     make_insecure_client: Callable[[], httpx.AsyncClient] = _default_insecure_client,
+    url_allowed: Callable[[str], bool] | None = None,
 ) -> CollectResult:
     """URL 하나를 방문해 리다이렉트·응답·HTML 을 수집한다.
 
@@ -201,6 +214,11 @@ async def collect_url(
     scorer 몫). TLS 검증 실패 외의 다른 실패는 재시도하지 않는다 —
     `verify=False`의 영향 범위는 아직 조사 전이라 좁게 유지한다.
     재시도는 남은 시간 예산 안에서만 돈다(전체 상한은 `timeout`과 같다).
+
+    `url_allowed`를 넘기면 첫 요청과 리다이렉트 홉마다 요청을 보내기 전에
+    확인하고, 거부되면 `blocked_address`로 끝낸다. 격리 수집 API가 테스트용
+    허용 목록을 강제할 때 쓴다(docs/isolation-security.md §5.2). 메인 서버의
+    기존 호출은 넘기지 않으므로 동작이 바뀌지 않는다.
     """
 
     start = time.monotonic()
@@ -209,7 +227,9 @@ async def collect_url(
     if owns_client:
         client = httpx.AsyncClient()
     try:
-        result = await _collect(url, client, resolve, max_redirects, timeout, html_limit, start)
+        result = await _collect(
+            url, client, resolve, max_redirects, timeout, html_limit, start, url_allowed
+        )
     finally:
         if owns_client:
             await client.aclose()
@@ -220,7 +240,8 @@ async def collect_url(
     remaining = max(deadline - time.monotonic(), 0.001)
     async with make_insecure_client() as insecure_client:
         retry = await _collect(
-            url, insecure_client, resolve, max_redirects, remaining, html_limit, start
+            url, insecure_client, resolve, max_redirects, remaining, html_limit, start,
+            url_allowed,
         )
 
     return dataclasses.replace(retry, failures=("tls_cert_verify_failed", *retry.failures))
@@ -234,6 +255,7 @@ async def _collect(
     timeout: float,
     html_limit: int,
     start: float,
+    url_allowed: Callable[[str], bool] | None = None,
 ) -> CollectResult:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -259,6 +281,12 @@ async def _collect(
                     url, chain, final_url=current, elapsed_start=start, failures=("timeout",)
                 )
 
+            if url_allowed is not None and not url_allowed(current):
+                return _result(
+                    url, chain, final_url=current, elapsed_start=start,
+                    failures=("blocked_address",),
+                )
+
             host = urlsplit(current).hostname
             if await asyncio.wait_for(address_blocked(host, resolve), remaining()):
                 return _result(
@@ -280,9 +308,17 @@ async def _collect(
                     continue
 
                 content_type = response.headers.get("content-type")
+                content_encoding = response.headers.get("content-encoding")
                 status_code = response.status_code
 
-                if _is_text_like(content_type):
+                compressed = bool(content_encoding) and content_encoding.lower() != "identity"
+                if compressed:
+                    # httpx의 aiter_bytes()는 자동으로 압축을 푸는데, 작은
+                    # 압축 응답이 거대한 평문으로 부풀 수 있다(gzip bomb) —
+                    # 32KB → 32MB에서 최대 할당 약 81MB 확인(멘토 리뷰,
+                    # PR #54). 본문을 아예 읽지 않고 사실만 남긴다.
+                    html, truncated = "", False
+                elif _is_text_like(content_type):
                     body, truncated = await asyncio.wait_for(
                         _read_limited(response, html_limit), remaining()
                     )
@@ -292,7 +328,11 @@ async def _collect(
             finally:
                 await response.aclose()
 
-            failures = ("html_truncated",) if truncated else ()
+            failures: tuple[str, ...] = ()
+            if compressed:
+                failures = ("compressed_response_skipped",)
+            elif truncated:
+                failures = ("html_truncated",)
             return _result(
                 url, chain, final_url=current, status_code=status_code,
                 content_type=content_type, html=html, elapsed_start=start, failures=failures,
