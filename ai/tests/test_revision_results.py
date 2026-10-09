@@ -262,6 +262,40 @@ def test_no_candidates_on_failure_is_unknown_and_does_not_quote_whole_input():
     assert part.details.reason.failures == [FailureCode.MISSING_RESULT]
 
 
+@pytest.mark.parametrize("upstream, expected", [
+    (None, [FailureCode.TIMEOUT]),
+    (FailureCode.TIMEOUT, [FailureCode.TIMEOUT]),
+    (FailureCode.LLM_ERROR, [FailureCode.LLM_ERROR, FailureCode.TIMEOUT]),
+])
+def test_extraction_cause_combines_with_upstream_without_fake_signal_error(upstream, expected):
+    part = build_message_part(
+        "CJ택배 주소를 수정하세요",
+        MessageAnalysis(analysis_status=AnalysisStatus.FALLBACK, failure=FailureCode.TIMEOUT),
+        CaseSearchResult(status=AnalysisStatus.COMPLETED if upstream is None else AnalysisStatus.FALLBACK),
+        None, failure=upstream)
+    assert part.answer is _Answer.PARTIAL
+    assert part.details.reason.failures == expected
+    assert part.brand is Brand.CJ_PARCEL
+    assert first_doubt(part) is MessageDoubt.ADDRESS_EDIT
+    assert "주소를 수정하세요" in part.details.reason.text
+
+
+def test_unknown_extraction_failure_keeps_missing_result_compatibility():
+    part = build_message_part(
+        "평범한 알림입니다", MessageAnalysis(analysis_status=AnalysisStatus.FALLBACK),
+        CaseSearchResult(status=AnalysisStatus.COMPLETED), None)
+    assert part.details.reason.failures == [FailureCode.MISSING_RESULT]
+
+
+def test_real_signal_failure_and_extraction_cause_are_both_preserved():
+    part = build_message_part(
+        "평범한 알림입니다",
+        MessageAnalysis(analysis_status=AnalysisStatus.FALLBACK, failure=FailureCode.REFUSED),
+        CaseSearchResult(status=AnalysisStatus.COMPLETED),
+        SignalAnalysis(status=AnalysisStatus.FALLBACK, failure=FailureCode.TIMEOUT))
+    assert part.details.reason.failures == [FailureCode.REFUSED, FailureCode.TIMEOUT]
+
+
 def test_grounded_unclassified_request_survives_extraction_failure():
     text = "상담 예약을 진행하세요"
     part = message_part(text, extracted=MessageAnalysis(

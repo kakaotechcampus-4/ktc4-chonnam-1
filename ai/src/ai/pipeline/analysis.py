@@ -57,7 +57,7 @@ async def analyze_message_part(
     """Analyze a body whose URLs were already removed by the caller."""
     extracted = fallback_analysis()
     cases = CaseSearchResult(status=AnalysisStatus.FALLBACK)
-    signals = SignalAnalysis(status=AnalysisStatus.FALLBACK, failure=FailureCode.INVALID_OUTPUT)
+    signals: SignalAnalysis | None = None
     failure = None
     if not text.strip():
         failure = FailureCode.EMPTY_INPUT
@@ -94,8 +94,7 @@ async def analyze_message_part(
             else:
                 cases = search_result
             if isinstance(extraction_result, Exception):
-                signals = SignalAnalysis(status=AnalysisStatus.FALLBACK,
-                    failure=_failure_code(extraction_result))
+                extracted = fallback_analysis(_failure_code(extraction_result))
             else:
                 extracted = extraction_result
             if extracted.analysis_status is AnalysisStatus.COMPLETED:
