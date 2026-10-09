@@ -30,7 +30,8 @@ from scanner.models import CollectResult
 
 # failures 에 들어가는 값: invalid_scheme, invalid_url, blocked_address,
 # redirect_limit, timeout, tls_cert_verify_failed, connection_failed,
-# html_truncated(성공 응답에 덧붙는 경고성 값, 위 값들과 성격이 다르다).
+# html_truncated·compressed_response_skipped(성공 응답에 덧붙는 경고성
+# 값, 위 값들과 성격이 다르다).
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT_SECONDS = 10.0
 HTML_LIMIT_BYTES = 131_072  # 128 KiB. 초과분은 버리고 failures 에 html_truncated 를 남긴다.
@@ -42,6 +43,10 @@ DEFAULT_HEADERS = {
         "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
     ),
     "Accept-Language": "ko-KR,ko;q=0.9",
+    # 압축 해제 폭탄 방지(멘토 리뷰, PR #54): 서버가 그래도 압축해서 보내면
+    # Content-Encoding 을 보고 본문을 아예 읽지 않는다 — 요청 헤더만으로는
+    # 악성 서버가 무시할 수 있어 강제하지 않는다.
+    "Accept-Encoding": "identity",
 }
 
 Resolver = Callable[[str], Awaitable[list[str]]]
@@ -127,21 +132,28 @@ def _decode(body: bytes, encoding: str | None) -> str:
 
 
 def _is_cert_verify_failure(exc: BaseException) -> bool:
-    """만료·자체서명·호스트명 불일치 등 TLS 인증서 검증 실패인지 판별한다.
+    """만료·자체서명·호스트명 불일치 등 TLS **인증서 검증** 실패인지 판별한다.
 
-    httpx 는 이 오류를 httpcore.ConnectError 로 감싸고, 실제 ssl.SSLError 는
-    그 예외의 `args[0]`에 들어간다 — httpx/httpcore 의 공개 API가 아니라
-    버전에 따라 감싸는 깊이가 달라질 수 있어 `__cause__`/`__context__` 체인을
-    몇 단계 따라가며 확인한다. 못 찾아도 메시지 문자열(`CERTIFICATE_VERIFY_FAILED`)
-    로 한 번 더 확인한다.
+    `ssl.SSLError`가 아니라 더 좁은 `ssl.SSLCertVerificationError`만 본다 —
+    `SSLEOFError`/`SSLSyscallError`/`SSLZeroReturnError` 같은 형제 클래스는
+    인증서와 무관한 TLS 오류인데, `ssl.SSLError`로 넓게 보면 이들도 인증서
+    검증 실패로 잘못 분류되어 verify=False 재시도가 과도하게 일어난다
+    (멘토 리뷰, PR #54).
+
+    httpx 는 이 오류를 httpcore.ConnectError 로 감싸고, 실제
+    ssl.SSLCertVerificationError 는 그 예외의 `args[0]`에 들어간다 —
+    httpx/httpcore 의 공개 API가 아니라 버전에 따라 감싸는 깊이가 달라질 수
+    있어 `__cause__`/`__context__` 체인을 몇 단계 따라가며 확인한다. 못
+    찾아도 메시지 문자열(`CERTIFICATE_VERIFY_FAILED`)로 한 번 더 확인한다 —
+    이 문자열 자체가 인증서 검증 실패에만 붙으므로 범위가 넓어지지 않는다.
     """
     node: BaseException | None = exc
     for _ in range(4):
         if node is None:
             break
-        if isinstance(node, ssl.SSLError):
+        if isinstance(node, ssl.SSLCertVerificationError):
             return True
-        if node.args and isinstance(node.args[0], ssl.SSLError):
+        if node.args and isinstance(node.args[0], ssl.SSLCertVerificationError):
             return True
         node = node.__cause__ or node.__context__
     return "CERTIFICATE_VERIFY_FAILED" in str(exc)
@@ -280,9 +292,17 @@ async def _collect(
                     continue
 
                 content_type = response.headers.get("content-type")
+                content_encoding = response.headers.get("content-encoding")
                 status_code = response.status_code
 
-                if _is_text_like(content_type):
+                compressed = bool(content_encoding) and content_encoding.lower() != "identity"
+                if compressed:
+                    # httpx의 aiter_bytes()는 자동으로 압축을 푸는데, 작은
+                    # 압축 응답이 거대한 평문으로 부풀 수 있다(gzip bomb) —
+                    # 32KB → 32MB에서 최대 할당 약 81MB 확인(멘토 리뷰,
+                    # PR #54). 본문을 아예 읽지 않고 사실만 남긴다.
+                    html, truncated = "", False
+                elif _is_text_like(content_type):
                     body, truncated = await asyncio.wait_for(
                         _read_limited(response, html_limit), remaining()
                     )
@@ -292,7 +312,11 @@ async def _collect(
             finally:
                 await response.aclose()
 
-            failures = ("html_truncated",) if truncated else ()
+            failures: tuple[str, ...] = ()
+            if compressed:
+                failures = ("compressed_response_skipped",)
+            elif truncated:
+                failures = ("html_truncated",)
             return _result(
                 url, chain, final_url=current, status_code=status_code,
                 content_type=content_type, html=html, elapsed_start=start, failures=failures,
