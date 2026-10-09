@@ -11,12 +11,17 @@ from services.result_card_renderer import (
     merge_kakao_responses,
     render_detail_carousel,
     render_result_card,
+    _r9_blank_values,
 )
 
+from services.chatbot_copy_data import (
+    get_message_failure_copy,
+    MESSAGE_FAILURE_COPY,
+)
 
 def _part(
     answer: str, brand: str | None = None, signals: list | None = None,
-    doubts: list | None = None,
+    doubts: list | None = None, failures: list | None = None,
 ) -> dict:
     return {
         "brand": brand,
@@ -25,7 +30,7 @@ def _part(
         "details": {
             "doubts": doubts or [],
             "signals": signals or [],
-            "reason": {"text": "x", "failures": []},
+            "reason": {"text": "x", "failures": failures or []},
         },
     }
 
@@ -115,6 +120,12 @@ def _r9_description(analysis: dict) -> str:
     return card["template"]["outputs"][0]["textCard"]["description"]
 
 
+def _c2_text(analysis: dict) -> str:
+    carousel = render_detail_carousel(analysis)
+    items = carousel["template"]["outputs"][0]["carousel"]["items"]
+    return str(items[-2])  # C2는 끝에서 두 번째(마지막은 C3 행동 안내)
+
+
 class TestR9BlankValues:
     """docs/designs/chatbot-copy.md "R9 판단 보류 → 빈칸 채우는 규칙" 표를
     그대로 검증한다. 멘토 리뷰(PR #39) 반영으로 추가된 빈칸 연동."""
@@ -202,16 +213,30 @@ class TestR9BlankValues:
 
         assert "- 주소가 공식 주소 목록에 있어요" in description
 
-    def test_address_not_registered_and_brand_mismatch_share_wording(self):
+    def test_address_not_registered_and_brand_mismatch_have_distinct_wording(self):
         not_registered = _analysis(
-            "not_registered", _part("no_risk_found", brand="CJ대한통운"), _part("not_run"),
+            "not_registered",
+            _part("no_risk_found", brand="CJ대한통운"),
+            _part("not_run"),
         )
         brand_mismatch = _analysis(
-            "brand_mismatch", _part("no_risk_found", brand="unknown"), _part("not_run"),
+            "brand_mismatch",
+            _part("no_risk_found", brand="unknown"),
+            _part("not_run"),
         )
 
-        assert "- 공식 주소 목록에 없는 주소예요" in _r9_description(not_registered)
-        assert "- 공식 주소 목록에 없는 주소예요" in _r9_description(brand_mismatch)
+        not_registered_description = _r9_description(not_registered)
+        brand_mismatch_description = _r9_description(brand_mismatch)
+
+        assert (
+            "- 주소가 공식 주소인지 "
+            "(공식 주소 목록에 없는 기관이라 대조하지 못했어요)"
+            in not_registered_description
+        )
+        assert (
+            "- 공식 주소 목록에 없는 주소예요"
+            in brand_mismatch_description
+        )
 
     def test_address_unresolved_goes_to_unchecked(self):
         analysis = _analysis(
@@ -222,23 +247,169 @@ class TestR9BlankValues:
 
         assert "- 주소가 공식 주소인지" in description
 
-    def test_message_partial_splits_checked_and_unchecked(self):
+    def test_not_registered_without_brand_does_not_claim_checked_the_list(self):
+        """멘토 리뷰(PR #54): brand가 없으면 check_official_domain()은 도메인을
+        보지도 않고 not_registered를 반환한다 — 실제로는 화이트리스트에 있는
+        naver.com이어도 마찬가지다. "목록에 없는 주소"라고 단정하면 안 된다."""
+
         analysis = _analysis(
-            "not_registered", _part("partial", brand="CJ대한통운"), _part("not_run"),
+            "not_registered", _part("no_risk_found", brand=None), _part("not_run"),
+            domain="naver.com",
         )
 
         description = _r9_description(analysis)
 
-        assert "- 문자 일부에서 위험 신호를 찾지 못했어요" in description
-        assert "- 문자 나머지" in description
+        assert "공식 주소 목록에 없는 주소예요" not in description
+        assert (
+            "- 주소가 공식 주소인지 (보낸 기관을 몰라 대조하지 못했어요)"
+            in description
+        )
 
-    def test_message_failed_and_not_run_both_land_in_unchecked(self):
-        for answer in ("failed", "not_run"):
+    def test_message_partial_is_unchecked(self):
+        analysis = _analysis(
+            "not_registered",
+            _part("partial", brand="CJ대한통운"),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자 일부에서 위험 신호를 찾지 못했어요" not in description
+        assert "- 문자 내용 (문자 분석을 완료하지 못했어요)" in description
+
+    def test_message_partial_is_only_unchecked(self):
+        analysis = _analysis(
+            "not_registered",
+            _part("partial", brand="CJ대한통운"),
+            _part("not_run"),
+        )
+
+        values = _r9_blank_values(analysis)
+
+        assert "- 문자 내용 (문자 분석을 완료하지 못했어요)" in values["unchecked"]
+        assert "문자 내용 (문자 분석을 완료하지 못했어요)" not in values["checked"]
+
+    def test_message_partial_from_timeout_is_treated_as_unchecked(self):
+        """멘토 리뷰(PR #54)·이슈 #59: 시간 초과는 어디까지 분석했는지
+        경계가 불확실해 "일부에서 위험 신호를 찾지 못했다"고 단정하면
+        안 되고, 실제 실패 원인(timeout)을 구체적으로 안내한다."""
+
+        analysis = _analysis(
+            "not_registered",
+            _part("partial", brand="CJ대한통운", failures=["timeout"]),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자 일부에서 위험 신호를 찾지 못했어요" not in description
+        assert "문자 나머지" not in description
+        assert "- 문자 내용 (분석 시간이 초과되어 끝까지 확인하지 못했어요)" in description
+
+    def test_message_failed_and_not_run_have_different_wording(self):
+        failed = _analysis(
+            "not_registered",
+            _part("failed", brand="CJ대한통운"),
+            _part("not_run"),
+        )
+        not_run = _analysis(
+            "not_registered",
+            _part("not_run", brand="CJ대한통운"),
+            _part("not_run"),
+        )
+
+        assert (
+            "- 문자 내용 (문자 분석을 완료하지 못했어요)"
+            in _r9_description(failed)
+        )
+        assert "- 문자 내용" in _r9_description(not_run)
+        assert (
+            "문자 내용 (문자 분석을 완료하지 못했어요)"
+            not in _r9_description(not_run)
+        )
+
+    def test_message_failure_reason_is_shown_for_each_known_code(self):
+        """이슈 #59: timeout/refused/invalid_output/llm_error 각각 다른
+        설명이 나와야 한다."""
+
+        expected = {
+            "timeout": "분석 시간이 초과되어 끝까지 확인하지 못했어요",
+            "refused": "분석 요청이 거절되어 확인하지 못했어요",
+            "invalid_output": "분석 결과를 올바르게 받지 못했어요",
+            "llm_error": "분석 중 오류가 발생해 확인하지 못했어요",
+        }
+
+        for code, phrase in expected.items():
             analysis = _analysis(
-                "not_registered", _part(answer, brand="CJ대한통운"), _part("not_run"),
+                "not_registered",
+                _part("partial", brand="CJ대한통운", failures=[code]),
+                _part("not_run"),
             )
 
-            assert "- 문자 내용" in _r9_description(analysis)
+            assert f"- 문자 내용 ({phrase})" in _r9_description(analysis)
+
+    def test_message_failure_uses_only_the_first_reason(self):
+        """이슈 #59: 복수 실패 원인이 있으면 첫 번째 원인만 표시한다."""
+
+        analysis = _analysis(
+            "not_registered",
+            _part(
+                "partial",
+                brand="CJ대한통운",
+                failures=["timeout", "llm_error"],
+            ),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "- 문자 내용 (분석 시간이 초과되어 끝까지 확인하지 못했어요)" in description
+        assert "분석 중 오류가 발생해 확인하지 못했어요" not in description
+
+    def test_message_failure_preserves_first_reason_order(self):
+        first = get_message_failure_copy(["timeout", "llm_error"])
+        second = get_message_failure_copy(["llm_error", "timeout"])
+
+        assert first == MESSAGE_FAILURE_COPY["timeout"]
+        assert second == MESSAGE_FAILURE_COPY["llm_error"]
+
+    def test_unknown_message_failure_code_falls_back_safely(self):
+        """이슈 #59: 원인 정보가 부족하거나 모르는 코드여도 렌더링이
+        깨지지 않는다."""
+
+        analysis = _analysis(
+            "not_registered",
+            _part("partial", brand="CJ대한통운", failures=["some_future_code"]),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "- 문자 내용 (문자 분석을 완료하지 못했어요)" in description
+
+    def test_env_partial_from_timeout_is_treated_as_unchecked(self):
+        analysis = _analysis(
+            "not_registered",
+            _part("no_risk_found", brand="CJ대한통운"),
+            _part("partial", failures=["timeout"]),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "페이지 일부에서 위험 신호를 찾지 못했어요" not in description
+        assert "- 페이지 내용 (끝까지 확인하지 못했어요)" in description
+
+    def test_env_partial_without_timeout_is_unchecked(self):
+        analysis = _analysis(
+            "not_registered",
+            _part("no_risk_found", brand="CJ대한통운"),
+            _part("partial"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "페이지 일부에서 위험 신호를 찾지 못했어요" not in description
+        assert "- 페이지 내용 (끝까지 확인하지 못했어요)" in description
 
     def test_env_failed_and_not_run_have_different_wording(self):
         failed = _analysis(
@@ -342,3 +513,75 @@ class TestRenderDetailCarousel:
 
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
         assert len(items) == 2
+
+    def test_c2_shows_message_failure_reason_when_env_is_complete(self):
+        """이슈 #59: 문자 분석 실패 + 페이지 분석 정상 완료 — 정상 완료된
+        페이지 분석을 문자 분석 실패 때문에 실패로 보이게 하면 안 된다."""
+
+        analysis = _analysis(
+            "brand_mismatch",
+            _part("partial", brand="CJ대한통운", failures=["timeout"]),
+            _part("no_risk_found"),
+        )
+
+        c2 = _c2_text(analysis)
+
+        assert "문자: 분석 시간이 초과되어 끝까지 확인하지 못했어요" in c2
+        assert "페이지:" not in c2
+
+    def test_c2_shows_env_reason_when_message_is_complete(self):
+        analysis = _analysis(
+            "brand_mismatch",
+            _part("no_risk_found", brand="CJ대한통운"),
+            _part("failed"),
+        )
+
+        c2 = _c2_text(analysis)
+
+        assert "문자:" not in c2
+        assert "페이지: 페이지를 열어보려 했지만 열지 못했어요." in c2
+
+    def test_c2_shows_both_reasons_distinguished_when_both_incomplete(self):
+        analysis = _analysis(
+            "brand_mismatch",
+            _part("failed", brand="CJ대한통운", failures=["llm_error"]),
+            _part("not_run"),
+        )
+
+        c2 = _c2_text(analysis)
+
+        assert "문자: 분석 중 오류가 발생해 확인하지 못했어요" in c2
+        assert "페이지: 페이지 내용은 확인하지 않았어요." in c2
+
+    def test_c2_falls_back_when_both_complete(self):
+        analysis = _analysis(
+            "brand_mismatch",
+            _part("risk_found", brand="CJ대한통운", signals=[_signal()]),
+            _part("no_risk_found"),
+        )
+
+        c2 = _c2_text(analysis)
+
+        assert "모두 확인했어요." in c2
+        assert "문자:" not in c2
+        assert "페이지:" not in c2
+
+    def test_c2_shows_message_incomplete_even_with_confirmed_signal(self):
+        """이슈 #59 권장 검증: 검증된 위험 신호가 있어도(partial + signals)
+        문자 분석 자체는 못 끝났으면 C2에 그 사실을 보여준다."""
+
+        analysis = _analysis(
+            "brand_mismatch",
+            _part(
+                "partial", brand="CJ대한통운",
+                signals=[_signal()], failures=["timeout"],
+            ),
+            _part("not_run"),
+        )
+
+        carousel = render_detail_carousel(analysis)
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
+
+        assert len(items) == 1 + 1 + 1  # 신호 1장 + C2 + C3
+        c2 = _c2_text(analysis)
+        assert "문자: 분석 시간이 초과되어 끝까지 확인하지 못했어요" in c2

@@ -29,7 +29,10 @@ def main():
             pass
         else:
             raise AssertionError(f"network unexpectedly reachable: {address}")
-    assert set(os.listdir("/sys/class/net")) == {"lo"}, "external network interface present"
+    # 수집 API용 브리지 하나만 있어야 한다. 바깥으로 나가는 길은 lockdown.sh 가 TEST_PAGE_IP:443 만 연다.
+    assert set(os.listdir("/sys/class/net")) <= {"lo", "eth0"}, "unexpected network interface present"
+    token = Path("/run/secrets/collect_token").read_text().strip()
+    assert token not in "".join(os.environ.values()), "collect token leaked into environment"
     browser_env = {name: value for name, value in os.environ.items() if name in {"PATH", "HOME", "LANG", "PLAYWRIGHT_BROWSERS_PATH"}}
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(channel="chromium", chromium_sandbox=True, env=browser_env)
@@ -46,8 +49,26 @@ def main():
         second = browser.new_context(accept_downloads=False, service_workers="block")
         assert second.cookies() == [], "cookies survived a new context"
         second.close()
-        print(json.dumps({"result": "passed", "chromium": browser.version, "sandbox": sandbox_status}))
         browser.close()
+        # 수집 API 는 기본 headless shell 을 쓴다. 같은 방식으로 띄워 렌더러가 샌드박스 안인지 본다.
+        shell = playwright.chromium.launch(chromium_sandbox=True, env=browser_env)
+        shell_page = shell.new_page()
+        shell_page.set_content("<title>Shell check</title>", timeout=6000)
+        renderers = [cmd for cmd in _cmdlines() if b"--type=renderer" in cmd]
+        assert renderers, "no renderer process found"
+        assert not any(b"--no-sandbox" in cmd for cmd in renderers), "renderer runs without sandbox"
+        shell_version = shell.version
+        shell.close()
+        print(json.dumps({"result": "passed", "chromium": shell_version, "sandbox": sandbox_status}))
+
+
+def _cmdlines():
+    for proc in Path("/proc").iterdir():
+        if proc.name.isdigit():
+            try:
+                yield (proc / "cmdline").read_bytes()
+            except OSError:
+                continue
 
 
 if __name__ == "__main__":

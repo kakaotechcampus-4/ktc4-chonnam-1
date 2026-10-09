@@ -9,7 +9,11 @@ be_teammate_card_integration_tasks.md 4~6절 기준.
 
 from typing import Any
 
-from services.chatbot_copy_data import get_signal_copy, get_unverified_copy
+from services.chatbot_copy_data import (
+    get_message_failure_copy,
+    get_signal_copy,
+    get_unverified_copy,
+)
 from services.kakao_card_renderer import render_card, substitute_values
 from services.result_card_selector import select_result_card
 
@@ -56,36 +60,66 @@ def _r9_requested_actions_line(doubts: list[dict]) -> str | None:
 
 
 def _r9_address_lines(official: str | None, brand: str | None) -> tuple[str | None, str | None]:
+    """멘토 리뷰(PR #54): 기관을 몰라 애초에 대조를 못 한 경우와, 대조했는데
+    주소가 일치하지 않는 경우를 구분한다. `check_official_domain()`은
+    brand가 없으면 도메인을 보지도 않고 `not_registered`를 반환한다
+    (`services/official_domain_service.py`) — 그 도메인이 naver.com처럼
+    실제로는 화이트리스트에 있어도 마찬가지다. 그래서 brand 자체가 없을
+    때 "공식 주소 목록에 없는 주소예요"라고 하면 사실과 다를 수 있다."""
+
+    has_brand = bool(brand) and brand != _UNKNOWN
+
     if official == "official":
-        if brand and brand != _UNKNOWN:
+        if has_brand:
             return f"주소가 {brand} 공식 주소와 같아요", None
         return "주소가 공식 주소 목록에 있어요", None
-    if official in ("not_registered", "brand_mismatch"):
+    if official == "not_registered":
+        if not has_brand:
+            return None, "주소가 공식 주소인지 (보낸 기관을 몰라 대조하지 못했어요)"
+        return None, "주소가 공식 주소인지 (공식 주소 목록에 없는 기관이라 대조하지 못했어요)"
+    if official == "brand_mismatch":
         return "공식 주소 목록에 없는 주소예요", None
     if official == "unresolved":
         return None, "주소가 공식 주소인지"
     return None, None
 
 
-def _r9_message_lines(answer: str | None) -> tuple[str | None, str | None]:
+def _r9_message_lines(
+    answer: str | None, failures: list[str]
+) -> tuple[str | None, str | None]:
+    """이슈 #59: `partial`/`failed`는 answer 이름이 아니라 AI가 보존한
+    실제 실패 원인(`failures[0]`)으로 설명한다 — "분석을 끝내지
+    못했어요" 같은 뭉뚱그린 문구 대신 "시간 초과라 못 봤다"처럼
+    구체적으로 말한다. 원인 정보가 없는 기존 응답도 기본 안내로
+    떨어지니 깨지지 않는다(`get_message_failure_copy`)."""
+
     if answer == _NO_RISK:
         return "문자에서 위험 신호를 찾지 못했어요", None
-    if answer == _PARTIAL:
-        return "문자 일부에서 위험 신호를 찾지 못했어요", "문자 나머지"
-    if answer in ("failed", "not_run"):
+
+    if answer in (_PARTIAL, "failed"):
+        return None, f"문자 내용 ({get_message_failure_copy(failures)})"
+
+    if answer == "not_run":
         return None, "문자 내용"
+
     return None, None
 
 
-def _r9_env_lines(answer: str | None) -> tuple[str | None, str | None]:
+def _r9_env_lines(
+    answer: str | None, failures: list[str]
+) -> tuple[str | None, str | None]:
     if answer == _NO_RISK:
         return "페이지에서 위험 신호를 찾지 못했어요", None
+
     if answer == _PARTIAL:
-        return "페이지 일부에서 위험 신호를 찾지 못했어요", "페이지 나머지"
+        return None, "페이지 내용 (끝까지 확인하지 못했어요)"
+
     if answer == "failed":
         return None, "페이지 내용 (열지 못했어요)"
+
     if answer == "not_run":
         return None, "페이지 내용"
+
     return None, None
 
 
@@ -106,8 +140,14 @@ def _r9_blank_values(analysis_result: dict) -> dict[str, str]:
         (message.get("details") or {}).get("doubts") or []
     )
     address_checked, address_unchecked = _r9_address_lines(url.get("official"), brand)
-    message_checked, message_unchecked = _r9_message_lines(message.get("answer"))
-    env_checked, env_unchecked = _r9_env_lines(env.get("answer"))
+    message_checked, message_unchecked = _r9_message_lines(
+        message.get("answer"),
+        ((message.get("details") or {}).get("reason") or {}).get("failures") or [],
+    )
+    env_checked, env_unchecked = _r9_env_lines(
+        env.get("answer"),
+        ((env.get("details") or {}).get("reason") or {}).get("failures") or [],
+    )
 
     checked = [
         line for line in (
@@ -220,6 +260,30 @@ def merge_kakao_responses(responses: list[dict]) -> dict:
     }
 
 
+_COMPLETE_ANSWERS = (_NO_RISK, "risk_found")
+
+
+def _message_unverified_line(message: dict) -> str | None:
+    """message가 완료 상태(no_risk_found/risk_found)가 아니면 그 이유를
+    "문자: ..." 줄로 돌려준다. 완료됐으면 보여줄 "확인 못 한 것"이 없으니
+    None이다 (이슈 #59: 문자 분석 실패와 페이지 분석 실패를 구분하고,
+    정상 완료된 페이지 분석을 문자 분석 실패 때문에 실패로 보이게 하지
+    않는다)."""
+
+    answer = message.get("answer")
+    if answer in _COMPLETE_ANSWERS or answer is None:
+        return None
+    failures = ((message.get("details") or {}).get("reason") or {}).get("failures") or []
+    return f"문자: {get_message_failure_copy(failures)}"
+
+
+def _env_unverified_line(env: dict) -> str | None:
+    answer = env.get("answer")
+    if answer in _COMPLETE_ANSWERS:
+        return None
+    return f"페이지: {get_unverified_copy(answer)}"
+
+
 def render_detail_carousel(analysis_result: dict) -> dict:
     """"자세히 보기"에서 쓸 의심 근거 캐러셀을 만든다.
 
@@ -257,9 +321,13 @@ def render_detail_carousel(analysis_result: dict) -> dict:
             )
         )
 
-    c2_item = substitute_values(
-        c2_template, {"unverified": get_unverified_copy(env.get("answer"))}
-    )
+    unverified_lines = [
+        line for line in (_message_unverified_line(message), _env_unverified_line(env))
+        if line
+    ]
+    unverified_text = "\n".join(unverified_lines) if unverified_lines else "모두 확인했어요."
+
+    c2_item = substitute_values(c2_template, {"unverified": unverified_text})
 
     return {
         "version": "2.0",
