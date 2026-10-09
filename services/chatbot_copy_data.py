@@ -58,3 +58,31 @@ def get_unverified_copy(env_answer: str | None) -> str:
     if env_answer is None:
         return UNVERIFIED_COPY["not_run"]
     return UNVERIFIED_COPY.get(env_answer, UNVERIFIED_COPY["not_run"])
+
+
+# message.details.reason.failures[0] -> 문자 분석이 끝나지 못한 이유 설명.
+# 이슈 #59: AI가 문자 분석 실패 원인을 보존하도록 수정했다(refactor/edit-card-ai,
+# 9296458: timeout/refused/invalid_output/llm_error). timeout 문구는 이슈
+# 본문에 적힌 예시 그대로다. 내부 코드(FailureCode 값)를 그대로 보여주지
+# 않고 여기서 사람이 읽을 설명으로만 바꾼다(CLAUDE.md 절대 원칙 2).
+MESSAGE_FAILURE_COPY: dict[str, str] = {
+    "timeout": "분석 시간이 초과되어 끝까지 확인하지 못했어요",
+    "refused": "분석 요청이 거절되어 확인하지 못했어요",
+    "invalid_output": "분석 결과를 올바르게 받지 못했어요",
+    "llm_error": "분석 중 오류가 발생해 확인하지 못했어요",
+}
+
+# 원인 정보가 없거나(이슈 #59: "원인 정보가 부족한 기존 응답") 모르는
+# 코드일 때 쓰는 기본 안내. 이슈 본문의 예시 문구 그대로다.
+_FALLBACK_MESSAGE_FAILURE = "문자 분석을 완료하지 못했어요"
+
+
+def get_message_failure_copy(failures: list[str] | None) -> str:
+    """message.details.reason.failures 의 **첫 번째** 원인에 대응하는
+    설명을 돌려준다. 원인이 여러 개여도 첫 번째만 쓰고 나머지로 덮어쓰지
+    않는다(이슈 #59). 비어 있거나 모르는 코드면 기본 안내를 돌려준다.
+    """
+
+    if not failures:
+        return _FALLBACK_MESSAGE_FAILURE
+    return MESSAGE_FAILURE_COPY.get(failures[0], _FALLBACK_MESSAGE_FAILURE)
