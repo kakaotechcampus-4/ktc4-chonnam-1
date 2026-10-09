@@ -7,6 +7,11 @@ iptables -F KTC-INPUT
 iptables -A KTC-INPUT -i lo -j ACCEPT
 iptables -A KTC-INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A KTC-INPUT -p tcp --dport 22 -j ACCEPT
+# 연결 시험용 스텁(stub_api.py)만 호스트에서 8443을 직접 받는다. 수집기(collector.env)가
+# 설정되면 KTC-FORWARD 가 Render 대역만 허용하므로, 우회로가 되지 않게 이 규칙을 넣지 않는다.
+if [ ! -f /opt/ktc-isolation/collector.env ]; then
+    iptables -A KTC-INPUT -p tcp --dport 8443 -j ACCEPT
+fi
 iptables -A KTC-INPUT -p udp --sport 67 --dport 68 -j ACCEPT
 iptables -A KTC-INPUT -j DROP
 iptables -C INPUT -j KTC-INPUT 2>/dev/null || iptables -I INPUT 1 -j KTC-INPUT

@@ -1,0 +1,32 @@
+[Unit]
+Description=KTC isolation /collect connection-test stub
+After=network-online.target ktc-isolation-firewall.service
+Requires=ktc-isolation-firewall.service
+
+[Service]
+ExecStart=/usr/bin/python3 -I /opt/ktc-isolation/stub_api.py
+LoadCredential=cert:/etc/ktc-isolation/tls/fullchain.pem
+LoadCredential=key:/etc/ktc-isolation/tls/privkey.pem
+LoadCredential=token:/etc/ktc-isolation/private/api_token
+DynamicUser=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+MemoryMax=128M
+TasksMax=64
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
