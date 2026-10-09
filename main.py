@@ -24,7 +24,7 @@ from services.result_card_renderer import render_result_card, merge_kakao_respon
 from ai.pipeline import analyze_message_part, finalize_analysis
 from ai.types import UrlAnalysis
 
-from scanner.fetch import collect_url
+from scanner.isolation_client import collect_url_isolated
 from scanner.static_checks import check_static
 from scanner.models import UrlEvidence
 from urllib.parse import urlparse
@@ -445,7 +445,7 @@ async def run_analysis(
 
             if ENABLE_URL_COLLECTOR_SHADOW:
                 collector_task = asyncio.create_task(
-                    collect_url(link)
+                    collect_url_isolated(link)
                 )
                 track_shadow_task(collector_task)
             urlscan_start = time.monotonic()
