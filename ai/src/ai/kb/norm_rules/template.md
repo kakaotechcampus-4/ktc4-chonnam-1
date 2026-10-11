@@ -8,7 +8,7 @@ applies_to:
   region: ""                 # 전국이 아니면 출처가 말한 지역만
   period: ""                 # 출처 게시·시행 시점
 statement: ""
-match: []                    # procedure·verification 만. 예: - {category: 택배} / - {brand: 우체국택배}
+# match:                     # procedure·verification 만. 예: - {category: 택배} / - {brand: 우체국택배}
 pattern:                     # kind: impersonation 일 때만
   claimed_org: ""
   pretext: ""

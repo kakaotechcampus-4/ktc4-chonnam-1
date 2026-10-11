@@ -65,7 +65,10 @@ def _parse_rule(path: Path) -> _Rule | None:
     for condition in conditions:
         if not isinstance(condition, dict) or not condition or not set(condition) <= MATCH_KEYS:
             return None
-        parsed.append({str(key): str(value) for key, value in condition.items()})
+        # yes·null·숫자 같은 YAML 값은 str() 하면 죽은 문자열("True" 등)이 되므로 거른다.
+        if not all(isinstance(value, str) for value in condition.values()):
+            return None
+        parsed.append(dict(condition))
     first = sources[0]
     return _Rule(
         guidance=Guidance(
