@@ -15,8 +15,9 @@ from backend.src.server.urlscan_service import (
 )
 from backend.src.server.lifespan import app_lifespan
 from backend.src.server.url_utils import split_message
+from backend.src.server.callback_guard import callback_host, is_allowed_callback_url
 from backend.src.server.templates.renderer import render_r1_lookalike
-from services.official_domain_service import check_official_domain
+from services.official_domain_service import check_link_official
 from services.kakao_card_renderer import render_card
 from services.result_card_renderer import render_result_card, merge_kakao_responses
 
@@ -304,6 +305,13 @@ async def kakao_skill(
         f"[CALLBACK EXISTS] "
         f"{bool(callback_url)}"
     )
+    # 경로에는 1회용 콜백 토큰이 있어 호스트만 남긴다. 허용 목록을 좁힐 때 쓴다.
+    print(f"[CALLBACK HOST] {callback_host(callback_url)}")
+
+    # 내부 주소로 결과를 POST 하게 만드는 요청을 막는다 (멘토 리뷰, isolation-security §5.5).
+    if callback_url is not None and not is_allowed_callback_url(callback_url):
+        print("[CALLBACK REJECTED] 허용되지 않은 callbackUrl")
+        return render_card("r4-unavailable")
     
     intent_name = (
         body.get("intent", {}).get("name", "")
@@ -705,7 +713,8 @@ async def run_analysis(
             
             url_analysis = build_ai_url_analysis(
                 parsed_result,
-                brand
+                brand,
+                link,
             )
             
             print(
@@ -815,14 +824,17 @@ async def run_analysis(
 
 def build_ai_url_analysis(
     parsed_result: dict,
-    brand: str | None
+    brand: str | None,
+    input_url: str,
 ) -> UrlAnalysis:
     """
     URL 분석 결과를 AI UrlAnalysis 계약으로 변환한다.
 
     official은 urlscan score로 추론하지 않고,
-    문자 분석에서 확인한 brand와 최종 domain을
-    BE 화이트리스트로 대조하여 결정한다.
+    문자 분석에서 확인한 brand와 **문자 속 링크(input_url)의 도메인**을
+    BE 화이트리스트로 대조하여 결정한다. urlscan 이 따라간 최종 도메인은
+    공식 판정을 깎는 데만 쓴다 (check_link_official 참고).
+    리다이렉트로 최종 페이지만 공식 사이트인 링크를 공식으로 안내하지 않기 위해서다.
 
     urlscan score는 판정과 분리된 기록용 값이다.
     """
@@ -841,14 +853,18 @@ def build_ai_url_analysis(
             "urlscan 결과에 domain이 없습니다."
         )
 
-    official = check_official_domain(
-        brand=brand,
-        domain=domain
+    input_domain = urlparse(input_url).hostname
+
+    official = check_link_official(
+        brand,
+        input_domain,
+        domain,
     )
 
     raw_url_result = {
         "final_url": final_url,
-        "domain": domain,
+        # 카드가 말하는 "문자 속 주소"와 맞춘다. 입력 주소를 해석하지 못하면 최종 도메인.
+        "domain": input_domain or domain,
         "official": official,
         "scan": {
             "score": score,
@@ -977,10 +993,15 @@ async def run_analysis_and_callback(
             "[CALLBACK] 결과 전송 시작"
         )
 
+        # 입구에서 이미 걸렀지만, 다른 경로로 들어와도 내부 주소로 보내지 않게 한 번 더 본다.
+        if not is_allowed_callback_url(callback_url):
+            raise ValueError("허용되지 않은 callbackUrl")
+
         response = await get_http_client().post(
             callback_url,
             json=result,
-            timeout=10.0
+            timeout=10.0,
+            follow_redirects=False,
         )
 
         print(

@@ -76,7 +76,7 @@ async def test_run_analysis_survives_collector_failure(monkeypatch, capsys):
     monkeypatch.setattr(
         main,
         "build_ai_url_analysis",
-        lambda parsed_result, brand: SimpleNamespace(
+        lambda parsed_result, brand, input_url: SimpleNamespace(
             domain="example.com",
             official=False,
         ),
@@ -206,7 +206,7 @@ async def test_run_analysis_does_not_wait_for_collector(monkeypatch):
     monkeypatch.setattr(
         main,
         "build_ai_url_analysis",
-        lambda parsed_result, brand: SimpleNamespace(
+        lambda parsed_result, brand, input_url: SimpleNamespace(
             domain="example.com",
             official=False,
         ),
