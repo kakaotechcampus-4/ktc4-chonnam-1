@@ -139,3 +139,36 @@ def test_undecodable_or_bad_date_file_is_skipped(tmp_path):
     (tmp_path / "NR-0102.md").write_text(text.replace("NR-0101", "NR-0102"), encoding="utf-8")
     _write_rule(tmp_path, "NR-0103")
     assert [g.rule_id for g in find_guidance(_result(category="택배"), tmp_path)] == ["NR-0101", "NR-0103"]
+
+
+from ai.kb.guidance import NORM_DIR
+
+
+def _curated_copy(tmp_path: Path) -> Path:
+    # 검토 전(draft)이라도 match 가 의도대로 작동하는지 보려고 상태만 바꾼 사본을 쓴다.
+    for path in NORM_DIR.glob("NR-*.md"):
+        text = path.read_text(encoding="utf-8").replace("status: draft", "status: curated", 1)
+        (tmp_path / path.name).write_text(text, encoding="utf-8")
+    return tmp_path
+
+
+@pytest.mark.parametrize(("result", "expected"), [
+    (_result(category="택배"), ["NR-0015"]),
+    (_result(brand="우체국택배", category="택배"), ["NR-0015", "NR-0011"]),
+    (_result(brand="한진택배", category="택배"), ["NR-0015", "NR-0012"]),
+    (_result(brand="롯데택배", category="택배"), ["NR-0015", "NR-0013"]),
+    (_result(brand="로젠택배", category="택배"), ["NR-0015", "NR-0014"]),
+    (_result(category="금융", doubts=["전화 응대"]), ["NR-0019"]),
+    (_result(category="금융"), []),
+    (_result(category="공공기관"), []),
+])
+def test_real_rules_match_as_designed(tmp_path, result, expected):
+    assert [g.rule_id for g in find_guidance(result, _curated_copy(tmp_path))] == expected
+
+
+def test_real_rules_return_nothing_until_reviewed():
+    # 지금 자료는 모두 draft 다. 사용자 검토 후 curated 로 바뀌기 전에는 아무것도 나가지 않는다.
+    drafts = all("status: draft" in p.read_text(encoding="utf-8") for p in NORM_DIR.glob("NR-*.md"))
+    if not drafts:
+        pytest.skip("검토를 마친 자료가 생겼다")
+    assert find_guidance(_result(brand="우체국택배", category="택배")) == []

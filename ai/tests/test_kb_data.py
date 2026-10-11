@@ -295,3 +295,31 @@ def test_impersonation_norms_name_claim_pretext_action_and_cases():
             assert str(pattern[key]).strip(), (path.name, key)
         assert meta["related_cases"], path.name
         assert set(meta["related_cases"]) <= kb_ids, path.name
+
+
+def test_norm_match_uses_known_keys_and_enum_values():
+    # match 는 find_guidance 가 정해진 값과 대조하는 조건이다. enum 이름(EPOST)이나
+    # unknown 을 적으면 조용히 아무것도 안 맞으므로 여기서 잡는다.
+    from ai.kb.guidance import MATCH_KEYS
+    from ai.types import Brand, DomainMatch, MessageDoubt, Topic
+
+    allowed = {
+        "category": {item.value for item in Topic} - {"unknown"},
+        "brand": {item.value for item in Brand} - {"unknown"},
+        "doubts": {item.value for item in MessageDoubt} - {"unknown"},
+        "official": {item.value for item in DomainMatch},
+    }
+    assert set(allowed) == MATCH_KEYS
+    matched = set()
+    for path, meta in _norm_records():
+        if "match" not in meta:
+            continue
+        matched.add(meta["id"])
+        assert meta["kind"] in {"verification", "procedure"}, path.name
+        assert isinstance(meta["match"], list) and meta["match"], path.name
+        for condition in meta["match"]:
+            assert isinstance(condition, dict) and condition, path.name
+            for key, value in condition.items():
+                assert key in MATCH_KEYS, (path.name, key)
+                assert value in allowed[key], (path.name, key, value)
+    assert matched == {"NR-0011", "NR-0012", "NR-0013", "NR-0014", "NR-0015", "NR-0019"}
