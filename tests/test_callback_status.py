@@ -108,7 +108,7 @@ async def test_callback_success(monkeypatch):
     await main.run_analysis_and_callback(
         links=["https://example.com"],
         message="테스트 문자",
-        callback_url="https://callback.example.com",
+        callback_url="https://bot-api.kakao.com/callback/test",
         user_id="test-user",
         job_id=job_id,
     )
@@ -124,9 +124,10 @@ async def test_callback_success(monkeypatch):
 
     # callback HTTP 요청이 실제로 한 번만 시도됐는지 확인
     client.post.assert_awaited_once_with(
-        "https://callback.example.com",
+        "https://bot-api.kakao.com/callback/test",
         json=analysis_result,
         timeout=10.0,
+        follow_redirects=False,
     )
 
     # 작업이 끝났으므로 실행 중 사용자에서도 제거되어야 한다.
@@ -170,7 +171,7 @@ async def test_callback_failure_status(monkeypatch):
     await main.run_analysis_and_callback(
         links=["https://example.com"],
         message="테스트 문자",
-        callback_url="https://callback.example.com",
+        callback_url="https://bot-api.kakao.com/callback/test",
         user_id="test-user",
         job_id=job_id,
     )
@@ -231,7 +232,7 @@ async def test_callback_invalid_json_response(
     await main.run_analysis_and_callback(
         links=["https://example.com"],
         message="테스트 문자",
-        callback_url="https://callback.example.com",
+        callback_url="https://bot-api.kakao.com/callback/test",
         user_id="test-user",
         job_id=job_id,
     )
@@ -290,7 +291,7 @@ async def test_callback_request_exception(
     await main.run_analysis_and_callback(
         links=["https://example.com"],
         message="테스트 문자",
-        callback_url="https://callback.example.com",
+        callback_url="https://bot-api.kakao.com/callback/test",
         user_id="test-user",
         job_id=job_id,
     )

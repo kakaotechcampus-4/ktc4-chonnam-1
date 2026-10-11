@@ -14,6 +14,7 @@ from services.chatbot_copy_data import (
     get_signal_copy,
     get_unverified_copy,
 )
+from services.official_domain_service import official_homepage
 from services.kakao_card_renderer import render_card, substitute_values
 from services.result_card_selector import select_result_card
 
@@ -239,9 +240,10 @@ def _result_card_values(analysis_result: dict, card_name: str) -> dict[str, str]
         values["org_name"] = brand
 
     if card_name == "r2-official":
-        domain = url.get("domain")
-        if domain:
-            values["official_url"] = f"https://{domain}"
+        # 버튼 주소는 화이트리스트에서 만든다. 문자 속 링크를 그대로 쓰지 않는다.
+        homepage = official_homepage(brand, url.get("domain"))
+        if homepage:
+            values["official_url"] = homepage
 
     if card_name == "r9-uncertain":
         values.update(_r9_blank_values(analysis_result))
