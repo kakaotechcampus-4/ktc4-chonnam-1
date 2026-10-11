@@ -67,11 +67,11 @@ class TestRenderCard:
 
     def test_mutating_returned_dict_does_not_affect_next_render(self):
         rendered = render_card("r6-input-required")
-        rendered["template"]["outputs"][0]["simpleText"]["text"] = "망가뜨려봄"
+        rendered["template"]["outputs"][0]["textCard"]["description"] = "망가뜨려봄"
 
         fresh = render_card("r6-input-required")
 
-        assert fresh["template"]["outputs"][0]["simpleText"]["text"] != "망가뜨려봄"
+        assert fresh["template"]["outputs"][0]["textCard"]["description"] != "망가뜨려봄"
 
 
 class TestLoadCardTemplate:
