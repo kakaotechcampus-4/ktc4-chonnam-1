@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ai.kb.normalize import normalize
 from ai.kb.search import CASES_DIR, load_cases, search_cases
-from ai.types import CategoryCode
+from ai.types import CategoryCode, MessageDoubt
 
 DATASETS = Path(__file__).resolve().parents[1] / "eval" / "datasets"
 # AI 는 BE 가 주소를 지운 본문만 받는다. 스킴(가린 hxxps:// 포함)·가린 점 [.]·www.·
@@ -147,11 +147,14 @@ def test_rag_testset_is_labelled():
     for row in rows:
         assert row["group"] in {"smishing", "benign", "hard_negative"}, row["id"]
         assert row["category"] in categories, row["id"]
-        # 실물은 출처 URL 필수, 합성은 템플릿 ID 필수 — 실물 교체 추적용
-        if row["origin"] == "web_public":
+        # 실물·공식 예시는 출처 URL 필수, 템플릿 합성은 템플릿 ID 필수 — 실물 교체 추적용
+        assert row["origin"] in {"web_public", "synthetic_template", "official_example", "synthetic"}, row["id"]
+        if row["origin"] in {"web_public", "official_example"}:
             assert row["source"], row["id"]
+        elif row["origin"] == "synthetic_template":
+            assert row["template"], row["id"]
         else:
-            assert row["origin"] == "synthetic_template" and row["template"], row["id"]
+            assert row["source"] is None and row["template"] is None, row["id"]
 
 
 def test_benign_messages_do_not_match_kb_strongly():
@@ -323,3 +326,29 @@ def test_norm_match_uses_known_keys_and_enum_values():
                 assert key in MATCH_KEYS, (path.name, key)
                 assert value in allowed[key], (path.name, key, value)
     assert matched == {"NR-0011", "NR-0012", "NR-0013", "NR-0014", "NR-0015", "NR-0019"}
+
+
+EXPECTED_BUSINESSES = {"delivery", "penalty", "overseas_payment", "none"}
+KINDS = {"official_notice", "same_pretext", "unclear_org"}
+_CATEGORY_BUSINESS = {"delivery": "delivery", "address_correction": "delivery", "penalty": "penalty"}
+
+
+def test_rag_testset_rows_carry_expected_labels():
+    # 안내 평가(guidance_eval.py)의 정답. payment 만 해외결제 여부를 사람이 정한다.
+    doubts = {item.value for item in MessageDoubt} - {"unknown"}
+    for row in _load_jsonl("rag_testset.jsonl"):
+        business = row["expected_business"]
+        assert business in EXPECTED_BUSINESSES, row["id"]
+        if row["category"] in _CATEGORY_BUSINESS:
+            assert business == _CATEGORY_BUSINESS[row["category"]], row["id"]
+        elif row["category"] == "payment":
+            assert business in {"overseas_payment", "none"}, row["id"]
+        else:
+            assert business == "none", row["id"]
+        if "kind" in row:
+            assert row["kind"] in KINDS, row["id"]
+            assert row["id"].startswith(f"K-{row['kind']}-{business}-"), row["id"]
+            assert isinstance(row["expected_actions"], list), row["id"]
+            assert set(row["expected_actions"]) <= doubts, row["id"]
+        else:
+            assert "expected_actions" not in row, row["id"]

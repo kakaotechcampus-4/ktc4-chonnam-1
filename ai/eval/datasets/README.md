@@ -24,8 +24,11 @@ KB(`ai/src/ai/kb/case_examples/`)와 겹치지 않게 유지한다. 겹치면 �
 ```json
 {"id": "S-penalty-01", "group": "smishing" | "benign" | "hard_negative",
  "category": "<CategoryCode>", "text": "...", "message": "...",
- "origin": "web_public" | "synthetic_template", "source": "<출처 URL>" | null,
+ "origin": "web_public" | "synthetic_template" | "official_example" | "synthetic", "source": "<출처 URL>" | null,
  "template": null | "<템플릿 ID>", "split": "dev" | "test",
+ "expected_business": "delivery" | "penalty" | "overseas_payment" | "none",
+ "kind": "official_notice" | "same_pretext" | "unclear_org",   // 새 행에만
+ "expected_actions": ["<MessageDoubt 값>", ...],                // 새 행에만
  "near_dup_of": "<CE-번호>",       // 아는 캠페인인 스미싱 행에만 있다
  "exclude": "<평가에서 뺀 사유>"}   // exclude 는 판단을 보류한 행에만 있다
 ```
@@ -46,6 +49,12 @@ KB(`ai/src/ai/kb/case_examples/`)와 겹치지 않게 유지한다. 겹치면 �
   오탐률을 실제 성능으로 인용하지 않는다. 팀 실물로 교체할 때는 같은 `id` 를 유지하고
   `origin`·`source` 를 바꾼다. 같은 `template` 에서 나온 행은 서로 거의 중복이다.
 - KB 와 겹치는 원문 38건은 제외했다(`test_eval_dataset_is_disjoint_from_kb`).
+
+### 정답 업무 (`expected_business`)
+
+안내 평가(`eval/guidance_eval.py`)의 정답이다. `category` 가 `delivery`·`address_correction` 이면 `delivery`,
+`penalty` 면 `penalty`, `payment` 는 해외결제·해외 카드 승인 문자면 `overseas_payment` 아니면 `none`,
+그 밖은 `none`. `payment` 는 단어 규칙으로 1차 분류한 뒤 사람이 한 건씩 확인했다(2026-10-11).
 
 ### KB·평가 분할 (2026-10-03)
 
