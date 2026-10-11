@@ -19,6 +19,7 @@ from backend.src.server.url_utils import split_message
 from backend.src.server.callback_guard import callback_host, is_allowed_callback_url
 from backend.src.server.templates.renderer import render_r1_lookalike
 from services.official_domain_service import check_link_official
+from services.link_resolution import is_shortener, resolve_real_host
 from services.kakao_card_renderer import render_card
 from services.result_card_renderer import (
     render_result_card,
@@ -517,8 +518,16 @@ async def run_analysis(
             collector_task = None
             collector_handed_off = False
             collector_result = None
+            shortener_task = None
             try:
                 input_domain = urlparse(link).hostname
+
+                # 단축 주소면 격리 서버로 첫 실제 주소를 찾는다 (urlscan 과 병렬).
+                # 메인 서버는 사용자 링크에 직접 접속하지 않는다.
+                if is_shortener(input_domain):
+                    shortener_task = asyncio.create_task(
+                        resolve_real_host(link)
+                    )
 
                 input_static = check_static(
                     domain=input_domain or "",
@@ -796,10 +805,19 @@ async def run_analysis(
                         }
                     )
 
+                judged_domain = input_domain
+                if shortener_task is not None:
+                    judged_domain = await shortener_task
+                    print(
+                        "[SHORTENER]",
+                        {"input": input_domain, "real_host": judged_domain},
+                    )
+
                 url_analysis = build_ai_url_analysis(
                     parsed_result,
                     brand,
                     link,
+                    judged_domain=judged_domain,
                 )
 
                 print(
@@ -879,6 +897,12 @@ async def run_analysis(
                     if not collector_task.done() and not collector_task.cancelling():
                         collector_task.cancel()
                     await asyncio.gather(collector_task, return_exceptions=True)
+                # shortener_task는 인계하지 않는다 — try 안에서 끝까지 await하거나,
+                # 그 전에 끝나면(continue·예외) 여기서 회수한다.
+                if shortener_task is not None and not shortener_task.done():
+                    if not shortener_task.cancelling():
+                        shortener_task.cancel()
+                    await asyncio.gather(shortener_task, return_exceptions=True)
 
     finally:
         # 문자 작업은 인계하지 않는다. 취소를 삼키지 않으면서 모든 종료
@@ -910,10 +934,15 @@ async def run_analysis(
 # URLSCAN → AI Adapter
 # ============================================================
 
+_FROM_INPUT_URL = object()
+
+
 def build_ai_url_analysis(
     parsed_result: dict,
     brand: str | None,
     input_url: str,
+    *,
+    judged_domain=_FROM_INPUT_URL,
 ) -> UrlAnalysis:
     """
     URL 분석 결과를 AI UrlAnalysis 계약으로 변환한다.
@@ -923,6 +952,10 @@ def build_ai_url_analysis(
     BE 화이트리스트로 대조하여 결정한다. urlscan 이 따라간 최종 도메인은
     공식 판정을 깎는 데만 쓴다 (check_link_official 참고).
     리다이렉트로 최종 페이지만 공식 사이트인 링크를 공식으로 안내하지 않기 위해서다.
+
+    judged_domain: 문자 속 링크가 단축 주소일 때 격리 서버로 찾은 첫 실제 호스트.
+    찾지 못했으면 None을 넘기고, 그러면 판단 보류(unresolved)가 된다.
+    넘기지 않으면 문자 속 링크의 호스트를 쓴다.
 
     urlscan score는 판정과 분리된 기록용 값이다.
     """
@@ -941,7 +974,10 @@ def build_ai_url_analysis(
             "urlscan 결과에 domain이 없습니다."
         )
 
-    input_domain = urlparse(input_url).hostname
+    if judged_domain is _FROM_INPUT_URL:
+        input_domain = urlparse(input_url).hostname
+    else:
+        input_domain = judged_domain
 
     official = check_link_official(
         brand,

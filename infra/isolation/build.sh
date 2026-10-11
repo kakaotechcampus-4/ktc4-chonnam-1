@@ -8,5 +8,10 @@ image_id=$(docker image inspect ktc-isolation:approved --format '{{.Id}}')
 printf 'ISOLATION_IMAGE=%s\n' "$image_id" > .env
 printf 'base=%s\nimage_id=%s\nplatform=linux/amd64\n' "$base_image" "$image_id" > image-record.txt
 sha256sum seccomp.json Dockerfile verify.py scanner/*.py collector/*.py >> image-record.txt
-docker compose --env-file .env --env-file collector.env up -d --force-recreate
+# egress-hosts 를 검증해 compose.egress.yaml 과 egress-ips.txt 를 만들고, 방화벽에 새 IP 를 반영한다.
+python3 render-egress.py /opt/ktc-isolation
+sha256sum egress-hosts compose.egress.yaml egress-ips.txt >> image-record.txt
+systemctl restart ktc-isolation-firewall
+docker compose -f compose.yaml -f compose.egress.yaml --env-file .env --env-file collector.env \
+    up -d --force-recreate
 timeout 30 docker exec ktc-isolation-browser python /app/verify.py
