@@ -342,7 +342,8 @@ def test_rag_testset_rows_carry_expected_labels():
         if row["category"] in _CATEGORY_BUSINESS:
             assert business == _CATEGORY_BUSINESS[row["category"]], row["id"]
         elif row["category"] == "payment":
-            assert business in {"overseas_payment", "none"}, row["id"]
+            # 결제 명분이지만 실제 주제가 택배(해외배송 등)면 delivery
+            assert business in {"overseas_payment", "delivery", "none"}, row["id"]
         else:
             assert business == "none", row["id"]
         if "kind" in row:

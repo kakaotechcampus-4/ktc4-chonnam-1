@@ -53,8 +53,9 @@ KB(`ai/src/ai/kb/case_examples/`)와 겹치지 않게 유지한다. 겹치면 �
 ### 정답 업무 (`expected_business`)
 
 안내 평가(`eval/guidance_eval.py`)의 정답이다. `category` 가 `delivery`·`address_correction` 이면 `delivery`,
-`penalty` 면 `penalty`, `payment` 는 해외결제·해외 카드 승인 문자면 `overseas_payment` 아니면 `none`,
-그 밖은 `none`. `payment` 는 단어 규칙으로 1차 분류한 뒤 사람이 한 건씩 확인했다(2026-10-11).
+`penalty` 면 `penalty`, `payment` 는 해외결제·해외 카드 승인 문자면 `overseas_payment`, 결제는 국내인데
+배송이 주제면(예: `[해외배송] … 결제완료`) `delivery`, 아니면 `none`. 그 밖은 `none`.
+`payment` 는 단어 규칙으로 1차 분류한 뒤 사람이 한 건씩 확인했다(2026-10-11, 애매한 4건은 사용자가 확정).
 
 ### KB·평가 분할 (2026-10-03)
 
