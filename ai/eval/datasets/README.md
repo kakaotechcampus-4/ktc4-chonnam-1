@@ -94,6 +94,8 @@ KB(`ai/src/ai/kb/case_examples/`)와 겹치지 않게 유지한다. 겹치면 �
   이름이다(`[SSG.COM] 주문하신…`). BE 가 지울지 정해지지 않아 `message` 에 남겨 두고, 그 5행에
   `"exclude": "<사유>"` 를 붙여 평가에서 뺐다. BE 주소 인식 범위가 정해지면 규칙에 맞춰
   `message` 를 고치고 `exclude` 를 지운다.
+- 공식 출처 예시(`official_example`)·합성(`synthetic`) 행의 사기 링크는 `text` 에도 주소를 남기지 않고 `<링크>` 로 적는다.
+  `message` 에서는 `<링크>` 와 그 앞 구분 기호(`:`)를 지운다.
 - `L.POINT` 는 주소가 아니다. `.point` 는 최상위 도메인 목록(Public Suffix List)에 없다.
 - 주소를 지운 자리의 빈 괄호 `()` 와 겹친 공백만 정리했다. 그 밖의 글자는 바꾸지 않았다.
   주소가 없던 행은 `message == text` 다.

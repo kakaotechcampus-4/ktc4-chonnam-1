@@ -183,6 +183,9 @@ def test_kb_records_have_no_address():
             assert not _addresses(variant), (case.case_id, variant[:40])
 
 
+LINK_PLACEHOLDER = "<링크>"
+
+
 def test_search_datasets_carry_address_free_message():
     # 평가는 text(출처 원문)가 아니라 message(AI 가 받는 형태)로 검색한다.
     for name in ("rag_testset.jsonl", "benign.jsonl"):
@@ -193,8 +196,10 @@ def test_search_datasets_carry_address_free_message():
                 assert row["exclude"].strip(), label
                 continue
             assert not _addresses(row["message"]), label
+            # 사기 링크는 text 에 <링크> 로만 남기고, BE 가 지운 형태인 message 에는 두지 않는다.
+            assert LINK_PLACEHOLDER not in row["message"], label
             assert row["message"].strip(), label
-            if not _addresses(row["text"]):
+            if not _addresses(row["text"]) and LINK_PLACEHOLDER not in row["text"]:
                 # 주소가 없던 행은 손대지 않는다.
                 assert row["message"] == row["text"], label
 
