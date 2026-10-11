@@ -48,7 +48,7 @@ def _parse_rule(path: Path) -> _Rule | None:
     try:
         match = _FRONTMATTER_RE.match(path.read_text(encoding="utf-8"))
         meta = yaml.safe_load(match.group(1)) if match else None
-    except (OSError, yaml.YAMLError) as exc:
+    except (OSError, ValueError, yaml.YAMLError) as exc:
         LOGGER.warning("norm rule skipped: %s", type(exc).__name__)
         return None
     if not isinstance(meta, dict) or meta.get("status") != "curated":

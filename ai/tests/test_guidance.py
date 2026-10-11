@@ -129,3 +129,13 @@ def test_accepts_pydantic_model(tmp_path):
     model = AnalysisResponse.model_validate(raw)
     assert find_guidance(model, tmp_path) == find_guidance(raw, tmp_path)
     assert [g.rule_id for g in find_guidance(model, tmp_path)] == ["NR-0101"]
+
+
+def test_undecodable_or_bad_date_file_is_skipped(tmp_path):
+    (tmp_path / "NR-0100.md").write_bytes("---\nid: NR-0100\n---\n".encode("utf-8") + b"\xff\xfe")
+    (tmp_path / "NR-0100.md").write_bytes(b"---\nid: NR-0100\nstatus: curated\n\xff\n---\n")
+    _write_rule(tmp_path, "NR-0101")
+    text = (tmp_path / "NR-0101.md").read_text(encoding="utf-8").replace("2024-03-06", "2024-13-45")
+    (tmp_path / "NR-0102.md").write_text(text.replace("NR-0101", "NR-0102"), encoding="utf-8")
+    _write_rule(tmp_path, "NR-0103")
+    assert [g.rule_id for g in find_guidance(_result(category="택배"), tmp_path)] == ["NR-0101", "NR-0103"]
