@@ -1,8 +1,11 @@
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+from openai import APIResponseValidationError, APITimeoutError, LengthFinishReasonError
 from pydantic import ValidationError
 
 import ai.llm.analyze as analyze_module
@@ -13,6 +16,7 @@ from ai.types import (
     CategoryEvidence,
     EvidenceField,
     ExtractedMessage,
+    FailureCode,
     PersuasionCode,
     PersuasionEvidence,
 )
@@ -65,6 +69,7 @@ async def test_analyze_message_returns_completed_structured_result():
     result = await analyze_message(text, client=client, model="test-model")
 
     assert result.analysis_status is AnalysisStatus.COMPLETED
+    assert result.failure is None
     assert result.categories[0].code is CategoryCode.DELIVERY
     assert result.claimed_sender.value == "Courier"
     parse.assert_awaited_once()
@@ -77,6 +82,7 @@ async def test_blank_message_skips_api_and_returns_fallback():
     result = await analyze_message("   ", client=client, model="test-model")
 
     assert result.analysis_status is AnalysisStatus.FALLBACK
+    assert result.failure is FailureCode.EMPTY_INPUT
     assert result.categories == []
     assert result.claimed_sender == EvidenceField()
     parse.assert_not_awaited()
@@ -268,6 +274,7 @@ async def test_delayed_response_times_out_and_returns_fallback(monkeypatch):
     )
 
     assert result.analysis_status is AnalysisStatus.FALLBACK
+    assert result.failure is FailureCode.TIMEOUT
     parse.assert_awaited_once()
     assert cancelled.is_set()
     assert_fixed_analysis_keys(result)
@@ -297,6 +304,49 @@ async def test_malformed_or_schema_response_returns_fallback(error):
 
     assert result.analysis_status is AnalysisStatus.FALLBACK
     assert_fixed_analysis_keys(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error, expected", [
+    (TimeoutError(), FailureCode.TIMEOUT),
+    (APITimeoutError(request=httpx.Request("POST", "https://example.invalid")), FailureCode.TIMEOUT),
+    (RuntimeError("upstream failed"), FailureCode.LLM_ERROR),
+    (json.JSONDecodeError("invalid JSON", "{", 0), FailureCode.INVALID_OUTPUT),
+    (ValidationError.from_exception_data("ExtractedMessage", [
+        {"type": "extra_forbidden", "loc": ("risk_verdict",), "input": "malicious"}
+    ]), FailureCode.INVALID_OUTPUT),
+    (APIResponseValidationError(
+        response=httpx.Response(200, request=httpx.Request("POST", "https://example.invalid")),
+        body={}), FailureCode.INVALID_OUTPUT),
+    (LengthFinishReasonError(completion=SimpleNamespace(usage=None)), FailureCode.INVALID_OUTPUT),
+])
+async def test_extraction_failure_preserves_cause(error, expected):
+    client, _ = fake_client(side_effect=error)
+    result = await analyze_message("Confirm now.", client=client, model="test-model")
+    assert result.analysis_status is AnalysisStatus.FALLBACK
+    assert result.failure is expected
+    assert_fixed_analysis_keys(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parsed, refusal, expected", [
+    (None, "cannot process", FailureCode.REFUSED),
+    (ExtractedMessage(), "cannot process", FailureCode.REFUSED),
+    (None, None, FailureCode.INVALID_OUTPUT),
+    (object(), None, FailureCode.INVALID_OUTPUT),
+])
+async def test_extraction_output_failure_preserves_cause(parsed, refusal, expected):
+    client, _ = fake_client(parsed=parsed, refusal=refusal)
+    result = await analyze_message("Confirm now.", client=client, model="test-model")
+    assert result.failure is expected
+    assert_fixed_analysis_keys(result)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_extraction_is_not_fallback():
+    client, _ = fake_client(side_effect=asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await analyze_message("Confirm now.", client=client, model="test-model")
 
 
 @pytest.mark.asyncio

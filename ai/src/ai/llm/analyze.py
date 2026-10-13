@@ -1,11 +1,13 @@
 import asyncio
+import json
 import logging
 from pathlib import Path
 
-from openai import AsyncOpenAI
+from openai import APIResponseValidationError, APITimeoutError, AsyncOpenAI, LengthFinishReasonError
+from pydantic import ValidationError
 
 from ai.llm._client import create_client, required_env
-from ai.types import AnalysisStatus, EvidenceField, ExtractedMessage, MessageAnalysis
+from ai.types import AnalysisStatus, EvidenceField, ExtractedMessage, FailureCode, MessageAnalysis
 
 
 LOGGER = logging.getLogger(__name__)
@@ -13,9 +15,10 @@ TIMEOUT_SECONDS = 30.0
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "v1" / "parse_classify.md"
 
 
-def fallback_analysis() -> MessageAnalysis:
+def fallback_analysis(failure: FailureCode | None = None) -> MessageAnalysis:
     return MessageAnalysis(
         analysis_status=AnalysisStatus.FALLBACK,
+        failure=failure,
         categories=[],
         claimed_sender=EvidenceField(),
         claimed_purpose=EvidenceField(),
@@ -66,7 +69,7 @@ async def analyze_message(
     model: str | None = None,
 ) -> MessageAnalysis:
     if not masked_text.strip():
-        return fallback_analysis()
+        return fallback_analysis(FailureCode.EMPTY_INPUT)
 
     try:
         llm = client or create_client(TIMEOUT_SECONDS)
@@ -84,14 +87,26 @@ async def analyze_message(
             timeout=TIMEOUT_SECONDS,
         )
         message = response.choices[0].message
-        if message.refusal or message.parsed is None:
-            return fallback_analysis()
+        if message.refusal:
+            return fallback_analysis(FailureCode.REFUSED)
+        if message.parsed is None:
+            return fallback_analysis(FailureCode.INVALID_OUTPUT)
 
-        extracted = _sanitize_extracted(masked_text, message.parsed)
+        extracted = _sanitize_extracted(
+            masked_text, ExtractedMessage.model_validate(message.parsed))
         return MessageAnalysis(
             analysis_status=AnalysisStatus.COMPLETED,
             **extracted.model_dump(),
         )
+    except asyncio.CancelledError:
+        raise
+    except (TimeoutError, APITimeoutError) as exc:
+        LOGGER.warning("message analysis failed: %s", type(exc).__name__)
+        return fallback_analysis(FailureCode.TIMEOUT)
+    except (ValidationError, APIResponseValidationError,
+            LengthFinishReasonError, json.JSONDecodeError) as exc:
+        LOGGER.warning("message analysis failed: %s", type(exc).__name__)
+        return fallback_analysis(FailureCode.INVALID_OUTPUT)
     except Exception as exc:
         LOGGER.warning("message analysis failed: %s", type(exc).__name__)
-        return fallback_analysis()
+        return fallback_analysis(FailureCode.LLM_ERROR)
