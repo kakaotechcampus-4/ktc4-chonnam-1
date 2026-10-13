@@ -3,9 +3,14 @@
   "template": {
     "outputs": [
       {
-        "textCard": {
+        "basicCard": {
           "title": "🙏 지금은 확인을 못 마쳤어요",
-          "description": "문자를 잘못 보내신 게 아니에요.\n잠시 뒤에 문자를 그대로 다시 보내주세요."
+          "description": "문자를 잘못 보내신 게 아니에요.\n잠시 뒤에 문자를 그대로 다시 보내주세요.",
+          "thumbnail": {
+            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/r4-unavailable.png",
+            "altText": "사진, 문서, 끊어진 링크 화면과 물음표 옆에서 난처해하는 기니피그",
+            "fixedRatio": false
+          }
         }
       }
     ]

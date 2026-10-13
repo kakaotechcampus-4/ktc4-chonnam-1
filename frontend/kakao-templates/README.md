@@ -50,8 +50,15 @@
 | `block_r1a` | 신고 행동 안내 ("지금 이렇게 하세요") | `6abba220c841065f2fe49628` |
 | `block_detail` | 자세히 보기 (스킬 블록) | `6aad3abfe745d3358bd90c8d` |
 
-- 이미지 주소가 아직 없으므로 모든 카드를 썸네일 없는 `textCard`로 두었다(`chatbot-flow.md` 9절 (3)).
+- 이미지가 없는 카드는 썸네일 없는 `textCard`로 둔다(`chatbot-flow.md` 9절 (3)).
   이미지가 준비되면 해당 카드를 `basicCard` + `thumbnail`로 바꾼다.
+- 확정 카드 이미지는 `assets/cards/`에 둔다. `imageUrl`은 `develop` 브랜치의
+  `raw.githubusercontent.com` 주소라 **develop에 머지된 뒤에야 보인다.**
+  지금 적용한 카드: W1, B1a, B2, B2a, B2b, R1~R4, 자세히 보기 캐러셀(C1~C3).
+  이미지 파일 이름은 카드 파일 이름을 따른다(R1만 `r1-danger.png`, 캐러셀은 `c1-signal` `c2-scope` `c3-action`).
+  B1은 W1 이미지(`w1-welcome.png`)를, R1a는 B2 이미지(`b2-report.png`)를 같이 쓴다.
+- R5는 `template`이 없어 이미지를 붙일 수 없으므로 그대로 둔다. R5용으로 받은 "분석 중"
+  이미지는 K1(`k1-still-running.png`)에 쓴다.
 - R5(`r5-analyzing.json`)는 콜백 대기 응답이라 `template` 없이 `useCallback`과 `data.text`만 있다.
   버튼을 달 수 없다.
 - K2(시각 + 저장한 결과 카드)와 K3(R4 재사용)는 BE가 조립하는 응답이라 파일로 두지 않는다.
