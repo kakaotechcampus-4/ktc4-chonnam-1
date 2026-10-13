@@ -41,8 +41,8 @@
 - 페이지 수집기(격리 환경)가 없어 페이지 분석은 늘 `not_run`이다. 그래서 2번은 지금 나오지 않는다.
   격리 환경 전까지 공식 주소도 R9로 두기로 했다(2026-10-02, [`result-meaning-cases.md`](./result-meaning-cases.md) 6절 9).
 - 목록에 없다는 이유만으로 위험 카드를 보내지 않는다(PR #39 멘토 리뷰). `brand_mismatch`는 R1이 아니라 R8이다.
-- **2026-10-02 기준 BE PR #40은 이 표와 다르다.** `brand_mismatch` → R1, `not_registered` → R8로 한 칸씩
-  밀려 있고, `message.brand`가 `"unknown"`이어도 R8을 보내 "택배사(unknown)"가 표시됐다. PR #40 코멘트로 수정 요청함.
+- 2026-10-02 BE PR #40에서 카드가 한 칸씩 밀려 있던 문제(`brand_mismatch` → R1 등)는 고쳐졌다.
+  지금 코드(`services/result_card_selector.py`)는 이 표와 같다(2026-10-13 확인).
 - 스캐너 점수(`url.scan.score`)는 판정에 쓰지 않는다. 위험 쪽으로만 반영할지(멘토 B안)는 AI·BE 미결정 안건이다.
 
 ## 3. 빈칸과 버튼
@@ -51,8 +51,9 @@
   [`chatbot-copy.md`](./chatbot-copy.md) 4절 "빈칸 채우는 규칙"을 따른다.
 - `org_name`은 `message.brand`다. `unknown`이면 넣지 않는다(R8 대신 R9).
 - 버튼 `blockId`는 관리자센터 블록 ID로 채워 두었다(2026-10-01). 블록을 다시 만들면 ID가 바뀌므로 README 표와 카드를 같이 고친다.
-- 결과 카드의 `자세히 보기` 버튼에는 BE가 `extra.job_id`를 넣는다. 버튼을 누르면 `action.clientExtra.job_id`로 온다.
-  **이 요청을 받아 `c-detail-carousel`을 보내는 경로는 아직 없다.**
+- 결과 카드에는 지금 `자세히 보기` 버튼이 없다(2026-10-02 삭제). 되살리는 일은 #69에서 한다.
+  그때 버튼에 BE가 `extra.job_id`를 넣고, 누르면 `action.clientExtra.job_id`로 받는다(`_inject_job_id`).
+  이 요청을 받아 `c-detail-carousel`을 보내는 경로는 아직 없다.
 - 입력된 의심 URL을 버튼 링크·미리보기로 만들지 않는다.
 - 공식 도메인 즉답은 지금 없다. 모든 링크가 urlscan을 거친다.
 
