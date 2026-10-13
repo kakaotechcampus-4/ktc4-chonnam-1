@@ -6,8 +6,12 @@ job_id가 "자세히 보기" 버튼에 꽂히는지, 캐러셀이 10장 상한�
 test_result_card_selector.py의 몫이라 여기서는 다시 다루지 않는다.
 """
 
+from types import SimpleNamespace
+
+from services import result_card_renderer
 from services.result_card_renderer import (
     MAX_CAROUSEL_SIGNAL_ITEMS,
+    MAX_CAROUSEL_TOTAL_ITEMS,
     merge_kakao_responses,
     render_detail_carousel,
     render_result_card,
@@ -18,6 +22,10 @@ from services.chatbot_copy_data import (
     get_message_failure_copy,
     MESSAGE_FAILURE_COPY,
 )
+
+
+def _guidance(kind="verification", text="본인 명의 계좌인지 우체국 공식 앱에서 확인하세요.", source="인터넷우체국 공지", published_at="2024-03-06", rule_id="NR-0015"):
+    return SimpleNamespace(kind=kind, text=text, source=source, published_at=published_at, rule_id=rule_id)
 
 def _part(
     answer: str, brand: str | None = None, signals: list | None = None,
@@ -606,6 +614,109 @@ class TestRenderDetailCarousel:
 
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
         assert len(items) == 2
+
+
+class TestRenderDetailCarouselGuidance:
+    """이슈 #69: find_guidance() 결과를 캐러셀 끝에 공식 확인 방법
+    카드로 붙인다. ai.kb.guidance가 아직 merge되지 않아 실제 함수
+    대신 services.result_card_renderer.find_guidance를 monkeypatch한다."""
+
+    def _analysis(self):
+        return _analysis(
+            "not_registered",
+            _part("no_risk_found", brand=None),
+            _part("not_run"),
+        )
+
+    def test_no_guidance_adds_no_cards(self, monkeypatch):
+        monkeypatch.setattr(result_card_renderer, "find_guidance", lambda payload: [])
+
+        carousel = render_detail_carousel(self._analysis())
+
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
+        assert len(items) == 2  # C2 + C3만
+
+    def test_verification_kind_uses_text_as_is(self, monkeypatch):
+        monkeypatch.setattr(
+            result_card_renderer, "find_guidance",
+            lambda payload: [_guidance(kind="verification", text="인터넷우체국에서 본인 확인 후 조회하세요.")],
+        )
+
+        carousel = render_detail_carousel(self._analysis())
+
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
+        assert len(items) == 3
+        assert "인터넷우체국에서 본인 확인 후 조회하세요." in str(items[-1])
+
+    def test_procedure_kind_formats_source_and_year(self, monkeypatch):
+        monkeypatch.setattr(
+            result_card_renderer, "find_guidance",
+            lambda payload: [_guidance(
+                kind="procedure", text="문자 대신 공식 앱으로 확인하라",
+                source="우정사업본부", published_at="2024-03-06",
+            )],
+        )
+
+        carousel = render_detail_carousel(self._analysis())
+
+        description = str(carousel["template"]["outputs"][0]["carousel"]["items"][-1])
+        assert "우정사업본부는 문자 대신 공식 앱으로 확인하라라고 안내했어요(2024)." in description
+        # 결론을 덧붙이지 않는다 (이슈: "그래서 이 문자는 가짜" 금지)
+        assert "가짜" not in description
+        assert "진짜" not in description
+
+    def test_more_than_three_guidance_items_are_capped(self, monkeypatch):
+        monkeypatch.setattr(
+            result_card_renderer, "find_guidance",
+            lambda payload: [_guidance(text=f"안내{i}") for i in range(5)],
+        )
+
+        carousel = render_detail_carousel(self._analysis())
+
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
+        assert len(items) == 2 + 3  # C2 + C3 + 안내 최대 3장
+
+    def test_long_guidance_text_is_truncated_to_128_chars(self, monkeypatch):
+        long_text = "고객센터 " + "0" * 200
+        monkeypatch.setattr(
+            result_card_renderer, "find_guidance",
+            lambda payload: [_guidance(kind="verification", text=long_text)],
+        )
+
+        carousel = render_detail_carousel(self._analysis())
+
+        guidance_card = carousel["template"]["outputs"][0]["carousel"]["items"][-1]
+        rendered = guidance_card["description"]
+        assert len(rendered) <= 128
+        assert rendered.endswith("…")
+
+    def test_guidance_items_shrink_the_signal_budget_to_stay_within_ten(self, monkeypatch):
+        monkeypatch.setattr(
+            result_card_renderer, "find_guidance",
+            lambda payload: [_guidance(text=f"안내{i}") for i in range(3)],
+        )
+        signals = [_signal(evidence=f"증거{i}") for i in range(20)]
+        analysis = _analysis(
+            "brand_mismatch",
+            _part("risk_found", brand="CJ대한통운", signals=signals),
+            _part("not_run"),
+        )
+
+        carousel = render_detail_carousel(analysis)
+
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
+        assert len(items) == MAX_CAROUSEL_TOTAL_ITEMS
+
+    def test_find_guidance_raising_does_not_break_the_carousel(self, monkeypatch):
+        def _boom(payload):
+            raise RuntimeError("kb unavailable")
+
+        monkeypatch.setattr(result_card_renderer, "find_guidance", _boom)
+
+        carousel = render_detail_carousel(self._analysis())
+
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
+        assert len(items) == 2  # C2 + C3는 그대로 나간다
 
     def test_c2_shows_message_failure_reason_when_env_is_complete(self):
         """이슈 #59: 문자 분석 실패 + 페이지 분석 정상 완료 — 정상 완료된
