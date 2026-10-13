@@ -170,7 +170,9 @@ def _curated_copy(tmp_path: Path) -> Path:
     (_result(brand="한진택배", category="택배"), ["NR-0015", "NR-0012"]),
     (_result(brand="롯데택배", category="택배"), ["NR-0015", "NR-0013"]),
     (_result(brand="로젠택배", category="택배"), ["NR-0015", "NR-0014"]),
-    (_result(category="금융", doubts=["전화 응대"]), ["NR-0019"]),
+    (_result(category="결제·승인"), ["NR-0019"]),
+    (_result(category="과태료"), ["NR-0020"]),
+    (_result(category="금융", doubts=["전화 응대"]), []),
     (_result(category="금융"), []),
     (_result(category="공공기관"), []),
 ])

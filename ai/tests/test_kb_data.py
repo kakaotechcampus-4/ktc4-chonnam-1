@@ -330,7 +330,7 @@ def test_norm_match_uses_known_keys_and_enum_values():
             for key, value in condition.items():
                 assert key in MATCH_KEYS, (path.name, key)
                 assert value in allowed[key], (path.name, key, value)
-    assert matched == {"NR-0011", "NR-0012", "NR-0013", "NR-0014", "NR-0015", "NR-0019"}
+    assert matched == {"NR-0011", "NR-0012", "NR-0013", "NR-0014", "NR-0015", "NR-0019", "NR-0020"}
 
 
 EXPECTED_BUSINESSES = {"delivery", "penalty", "overseas_payment", "none"}
