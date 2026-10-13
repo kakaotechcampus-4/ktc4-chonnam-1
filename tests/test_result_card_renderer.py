@@ -68,7 +68,7 @@ class TestRenderResultCard:
 
         card = render_result_card(analysis)
 
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = card["template"]["outputs"][0]["basicCard"]
         assert "CJ대한통운" in text_card["title"]
         buttons = {b["label"]: b for b in text_card["buttons"]}
         assert buttons["공식 홈페이지 열기"]["webLinkUrl"] == "https://cjlogistics.com"
@@ -94,7 +94,7 @@ class TestRenderResultCard:
 
         card = render_result_card(analysis)
 
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = card["template"]["outputs"][0]["basicCard"]
         detail_button = next(
             (b for b in text_card["buttons"] if b["label"] == "자세히 보기"), None
         )
