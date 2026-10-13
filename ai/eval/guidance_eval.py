@@ -2,13 +2,15 @@
 
 ai/ 에서 실행한다.
 
-    python eval/guidance_eval.py
+    python eval/guidance_eval.py                  # eval/reports/<날짜>-guidance.md
+    python eval/guidance_eval.py --label <이름>   # eval/reports/<날짜>-guidance-<이름>.md
 
 각 행의 message 를 고정 규칙(주제·택배사·요구 행동 규칙)으로 분석해 find_guidance() 에 넣고,
 정답 업무(expected_business)와 비교한다. LLM 은 쓰지 않는다.
 설계: docs/superpowers/specs/2026-10-11-eval-expansion-design.md
 """
 
+import argparse
 import json
 import re
 import subprocess
@@ -225,14 +227,18 @@ def _commit() -> str:
     return git("rev-parse", "--short", "HEAD") + ("+dirty" if git("status", "--porcelain") else "")
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="확인 방법 안내 평가")
+    parser.add_argument("--label", help="같은 날 다시 잴 때 리포트 파일 이름에 붙일 이름")
+    args = parser.parse_args(argv)
     rows = [json.loads(line) for line in TESTSET.read_text(encoding="utf-8").splitlines() if line.strip()]
     now = evaluate_rows(rows, NORM_DIR)
     with tempfile.TemporaryDirectory() as tmp:
         every = evaluate_rows(rows, curated_copy(NORM_DIR, Path(tmp) / "norm"))
     meta = {"date": date.today().isoformat(), "commit": _commit(), "rows": len(now)}
     REPORTS.mkdir(exist_ok=True)
-    path = REPORTS / f"{meta['date']}-guidance.md"
+    suffix = f"-{args.label}" if args.label else ""
+    path = REPORTS / f"{meta['date']}-guidance{suffix}.md"
     path.write_text(render_report(now, every, meta), encoding="utf-8")
     print(path)
     return 0

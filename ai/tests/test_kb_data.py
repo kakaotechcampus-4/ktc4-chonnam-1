@@ -346,8 +346,9 @@ def test_rag_testset_rows_carry_expected_labels():
         assert business in EXPECTED_BUSINESSES, row["id"]
         if row["category"] in _CATEGORY_BUSINESS:
             assert business == _CATEGORY_BUSINESS[row["category"]], row["id"]
-        elif row["category"] == "payment":
-            # 결제 명분이지만 실제 주제가 택배(해외배송 등)면 delivery
+        elif row["category"] in {"payment", "card_or_account"}:
+            # 결제 명분이지만 실제 주제가 택배(해외배송 등)면 delivery.
+            # 카드 승인 알림은 국내 결제여도 overseas_payment 다(2026-10-14 사용자 결정).
             assert business in {"overseas_payment", "delivery", "none"}, row["id"]
         else:
             assert business == "none", row["id"]
