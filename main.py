@@ -1,11 +1,12 @@
 import asyncio
+import hmac
 import os
 import time
 
 import uuid
 from datetime import datetime, timezone, timedelta
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 
 from backend.src.server.shadow_tasks import track_shadow_task
 from backend.src.server.urlscan_service import (
@@ -31,6 +32,45 @@ from urllib.parse import urlparse
 
 
 app = FastAPI(lifespan=app_lifespan)
+
+
+# ============================================================
+# Skill Request Auth (이슈 #66 BE 할 일 2)
+# ============================================================
+
+def verify_skill_secret(request: Request) -> None:
+    """카카오 스킬 서버로 위장한 요청을 막는다.
+
+    local/test 환경에서는 매번 비밀값을 셋업하기 번거로우므로 검사를
+    생략한다 — staging/production은 카카오 관리자센터가 실제로 호출하는
+    환경이라 생략하지 않는다 (ENABLE_URL_COLLECTOR_SHADOW의 local/test/
+    staging 구분과는 다른 기준).
+
+    KAKAO_SKILL_SECRET이 비어 있으면(운영 배포에 값을 안 넣은 실수까지
+    포함) 모든 요청을 거부한다 — 빈 값끼리 비교해 우연히 통과하는 것을
+    막기 위함이다. KAKAO_SKILL_SECRET_PREVIOUS는 키 교체 기간에만 쓰며,
+    비어 있으면 비교 대상에서 제외한다.
+    """
+
+    app_env = os.getenv("APP_ENV", "production").lower()
+    if app_env in {"local", "test"}:
+        return
+
+    secret = os.getenv("KAKAO_SKILL_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=401, detail="Skill secret not configured")
+
+    provided = request.headers.get("X-Skill-Secret", "")
+
+    if hmac.compare_digest(provided, secret):
+        return
+
+    previous_secret = os.getenv("KAKAO_SKILL_SECRET_PREVIOUS", "")
+    if previous_secret and hmac.compare_digest(provided, previous_secret):
+        return
+
+    raise HTTPException(status_code=401, detail="Invalid skill secret")
+
 
 # Collector Shadow Mode는 기본적으로 비활성화한다.
 # 테스트 환경에서만 명시적으로 활성화한다.
@@ -173,7 +213,7 @@ def find_latest_job_by_user(
 # Analysis Job API
 # ============================================================
 
-@app.get("/api/analyses/{job_id}")
+@app.get("/api/analyses/{job_id}", dependencies=[Depends(verify_skill_secret)])
 async def get_analysis_job(job_id: str):
     """
     인메모리에 저장된 분석 작업 상태와 결과를 조회한다.
@@ -281,7 +321,7 @@ def handle_check_result(
 # Kakao Skill
 # ============================================================
 
-@app.post("/kakao/skill")
+@app.post("/kakao/skill", dependencies=[Depends(verify_skill_secret)])
 async def kakao_skill(
     request: Request,
     background_tasks: BackgroundTasks
@@ -1194,7 +1234,7 @@ def parse_urlscan_result(
 # FE-BE R1 Card Test
 # ============================================================
 
-@app.post("/test/kakao/r1-lookalike")
+@app.post("/test/kakao/r1-lookalike", dependencies=[Depends(verify_skill_secret)])
 async def test_r1_lookalike():
     """
     FE-BE Kakao 카드 연동 테스트용.
