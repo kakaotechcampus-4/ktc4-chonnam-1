@@ -26,12 +26,16 @@ _MAX_REQUESTED_ACTIONS = 3
 _NO_RISK = "no_risk_found"
 _PARTIAL = "partial"
 _R9_NO_LINES = "- 없음"
+_R9_CARD_MAX_LENGTH = 400
+_R9_DEFAULT_MESSAGE_REASON = "문자 분석 결과를 전달받지 못했습니다."
 
 
-def _truncate_evidence(evidence: str) -> str:
-    if len(evidence) <= _EVIDENCE_MAX_LENGTH:
+def _truncate_evidence(evidence: str, max_length: int = _EVIDENCE_MAX_LENGTH) -> str:
+    if len(evidence) <= max_length:
         return evidence
-    return evidence[: _EVIDENCE_MAX_LENGTH - 1] + "…"
+    if max_length <= 0:
+        return ""
+    return evidence[: max_length - 1] + "…"
 
 
 def _r9_org_label(brand: str | None) -> str:
@@ -170,6 +174,17 @@ def _r9_blank_values(analysis_result: dict) -> dict[str, str]:
     }
 
 
+def _r9_message_reason(message: dict) -> str:
+    """이슈 #68: `message.brand`는 택배사만 알아보므로, 청소행정과처럼
+    택배사가 아닌 기관이 내세운 명분·요구는 이 칸으로만 전달된다.
+    확인한 사실이 아니라 "문자가 주장한 내용"이라 기본값도 '확인'이
+    아니라 '전달받지 못했습니다'로 둔다."""
+
+    reason = ((message.get("details") or {}).get("reason") or {}).get("text")
+    reason = (reason or "").strip()
+    return reason or _R9_DEFAULT_MESSAGE_REASON
+
+
 def _inject_job_id(card: dict, job_id: str | None) -> dict:
     """"자세히 보기" 버튼에 `extra.job_id`를 넣는다.
 
@@ -230,6 +245,19 @@ def render_result_card(
     values = _result_card_values(analysis_result, card_name)
 
     card = render_card(card_name, values)
+
+    if card_name == "r9-uncertain":
+        message = analysis_result.get("message") or {}
+        reason = _r9_message_reason(message)
+        node = card["template"]["outputs"][0]["textCard"]
+        # 다른 빈칸을 먼저 채운 뒤 400자에서 남는 만큼만 message_reason에 쓴다.
+        fixed = substitute_values(node["description"], {"message_reason": ""})
+        available = _R9_CARD_MAX_LENGTH - len(fixed)
+        node["description"] = substitute_values(
+            node["description"],
+            {"message_reason": _truncate_evidence(reason, available)},
+        )
+
     return _inject_job_id(card, job_id)
 
 

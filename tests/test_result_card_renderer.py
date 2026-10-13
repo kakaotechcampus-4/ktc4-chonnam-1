@@ -433,6 +433,99 @@ class TestR9BlankValues:
         assert "확인한 것\n- 없음" in description
 
 
+def _part_with_reason(
+    answer: str, reason_text: str | None, brand: str | None = None,
+) -> dict:
+    return {
+        "brand": brand,
+        "category": None,
+        "answer": answer,
+        "details": {
+            "doubts": [],
+            "signals": [],
+            "reason": {"text": reason_text, "failures": []},
+        },
+    }
+
+
+class TestR9MessageReason:
+    """이슈 #68: `문자에 적힌 내용`(message_reason)이 message.brand가
+    모르는 기관(택배사 아닌 발신처)의 명분·요구까지 전달하는지 검증한다."""
+
+    def test_reason_text_appears_under_the_new_section(self):
+        analysis = _analysis(
+            "unresolved",
+            _part_with_reason(
+                "no_risk_found",
+                "문자가 내세운 기관: '청소행정과'. 문자가 내세운 명분: '쓰레기 무단투기 신고가 접수되었습니다.'.",
+            ),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자에 적힌 내용\n문자가 내세운 기관: '청소행정과'." in description
+
+    def test_missing_reason_text_falls_back_to_default_copy(self):
+        analysis = _analysis(
+            "unresolved",
+            _part_with_reason("no_risk_found", None),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자에 적힌 내용\n문자 분석 결과를 전달받지 못했습니다." in description
+
+    def test_blank_reason_text_falls_back_to_default_copy(self):
+        analysis = _analysis(
+            "unresolved",
+            _part_with_reason("no_risk_found", "   "),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자에 적힌 내용\n문자 분석 결과를 전달받지 못했습니다." in description
+
+    def test_card_stays_within_400_chars_and_truncates_reason(self):
+        long_reason = "문자가 내세운 명분: '" + "가" * 500 + "'."
+        analysis = _analysis(
+            "not_registered",
+            _part_with_reason(
+                "partial", long_reason, brand="CJ대한통운",
+            ),
+            _part("partial"),
+        )
+        analysis["message"]["details"]["doubts"] = [
+            _doubt("상세 내용 확인"), _doubt("개인정보 입력"), _doubt("입금"),
+        ]
+        analysis["message"]["details"]["reason"]["failures"] = ["timeout"]
+        analysis["env"]["details"]["reason"]["failures"] = []
+
+        description = _r9_description(analysis)
+
+        assert len(description) <= 400
+        assert description.endswith("기한이 적혀 있다면 그 전에 공식 경로로 확인하세요.")
+        # 잘렸으면 원문 전체가 다 들어갈 리 없다.
+        assert long_reason not in description
+
+    def test_other_blank_values_are_not_affected_by_message_reason(self):
+        """message_reason 치환이 이미 채워진 {{ checked }}/{{ unchecked }}
+        등 다른 빈칸을 건드리면 안 된다."""
+        analysis = _analysis(
+            "not_registered",
+            _part_with_reason("no_risk_found", "문자가 내세운 명분: 테스트", brand="CJ대한통운"),
+            _part("no_risk_found"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자 속 링크 대신 CJ대한통운 공식 앱이나" in description
+        assert "- 문자에서 위험 신호를 찾지 못했어요" in description
+        assert "{{ message_reason }}" not in description
+
+
 class TestMergeKakaoResponses:
     def test_empty_list_falls_back_to_unavailable_card(self):
         merged = merge_kakao_responses([])
