@@ -544,6 +544,18 @@ async def run_analysis(
                 track_shadow_task(shadow_log_task)
                 # Collector의 소유권을 Shadow 로그 작업으로 넘긴다.
                 # 이후 AI 분석에서 예외가 발생해도 Collector를 취소하지 않는다.
+                #
+                # 이슈 #60 참고: Collector 결과를 finalize_analysis()의
+                # page에 연결하는 to_isolated_page()(scanner/isolation_page.py)는
+                # 준비해 뒀지만 여기서는 쓰지 않는다 — 쓰려면 이 Task를
+                # await해야 하는데, Collector가 urlscan보다 늦게 끝나면
+                # 응답이 그만큼 늦어져 PR #54 멘토 리뷰로 막 고친 "Shadow는
+                # 응답을 지연시키지 않는다"는 보장이 깨진다
+                # (test_run_analysis_does_not_wait_for_collector가 이걸
+                # 검증한다 — 실제로 여기서 await를 추가했더니 그 테스트가
+                # 깨지는 것을 확인했다). 응답 경로에 실제로 연결하려면
+                # Collector/EC2 응답 시간이 먼저 검증돼야 하고, 이는 팀
+                # 논의가 필요하다.
                 collector_task = None
 
             # ------------------------------------------------
@@ -730,7 +742,13 @@ async def run_analysis(
                 f"domain_match={url_analysis.official} → "
                 "message + environment not_run"
             )
-            
+
+            # 이슈 #60: Collector 결과(collector_result)를 to_isolated_page()로
+            # 바꿔 page=에 연결하는 코드는 scanner/isolation_page.py에 준비해
+            # 뒀다. 여기서 바로 쓰지 않는 이유는 위 "2-3-1" 블록 주석 참고 —
+            # Collector를 기다리면 PR #54에서 막 고친 "Shadow는 응답을
+            # 지연시키지 않는다" 보장이 깨진다. Collector/EC2 응답 시간이
+            # 검증되기 전까지는 page=None(not_run)을 유지한다.
             final_result = await finalize_analysis(
                 url=url_analysis,
                 message=message_result,
