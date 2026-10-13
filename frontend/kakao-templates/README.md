@@ -29,7 +29,7 @@
 | `org_name` `official_url` | R2 · R8(`org_name`만) | `org_name`은 `message.brand`. `official_url`은 결과에 없다. 브랜드별 공식 홈페이지 주소를 BE 목록(`services/official_domains.py`, 지금은 도메인만 있음)에 더해야 한다. 문자 속 URL은 쓰지 않는다 |
 | `signal_title` `observed` `reason` `unverified` | 자세히 보기 캐러셀 | 결과의 `details.signals`(검증된 근거)만. 채우는 규칙과 신호별 문구는 `docs/designs/chatbot-copy.md` 4절 "빈칸 채우는 규칙". 128자 안 |
 | `org_label` `checked` `unchecked` | R9 | BE가 분석 결과로 채운다. 규칙은 `docs/designs/chatbot-copy.md` 3절 R9 "빈칸 채우는 규칙". 채우기 전에 배포하면 빈칸이 글자 그대로 보인다 |
-| `used_info` `sent_info` `retention` `sent_items` `external_service` | W2a·W3 | 개인정보 정책 확인 후. 확정 전 배포 금지 |
+| `sent_items` `external_service` | W3 | 개인정보 정책 확인 후. 확정 전 배포 금지 (W2a는 2026-10-14부터 빈칸 없는 시험 운영 문구) |
 
 ### 블록 ID
 
