@@ -8,7 +8,7 @@
 | `docs/isolation-security.md` | 위협 모델과 방어 원칙. 이 문서는 그 원칙을 수집 API 코드로 옮긴 결과다 |
 | `docs/aws-isolation-setup.md` | AWS 리소스 설정. 이 문서의 배포 순서가 그 위에서 진행된다 |
 | `docs/experiments/2026-10-07-aws-isolation-setup.md` | 현재 EC2 상태와 접속 방법 |
-| `docs/superpowers/specs/2026-10-01-smishing-pipeline-design.md` | 2·3단계 페이지 방문 설계. 시간 예산과 3단계 조건의 출처 |
+| `docs/archive/superpowers/specs/2026-10-01-smishing-pipeline-design.md` | 2·3단계 페이지 방문 설계. 시간 예산과 3단계 조건의 출처 |
 
 ## 1. 요약
 

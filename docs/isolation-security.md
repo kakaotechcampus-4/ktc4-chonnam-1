@@ -10,8 +10,8 @@
 | --- | --- |
 | `docs/adr/0002-isolation-server.md` | 상위 결정 (격리 서버는 별도 서버). 별도 EC2 원칙은 따른다. 격리 서버 자체 LLM 판정은 §10에서 정한다 |
 | `docs/security-checklist.md` | 체크 항목. 이 문서가 항목마다 구현 기술과 확인 방법을 붙인다 |
-| `docs/superpowers/specs/2026-10-01-smishing-pipeline-design.md` §5 | 보안 항목 7개. 위협 모델이 없어 빠진 항목을 이 문서가 채운다 |
-| `docs/ai/html-collection-handoff.md` | 수집 항목과 AWS 검증 목록. 데이터 경로(§5.6)에서 이어받는다 |
+| `docs/archive/superpowers/specs/2026-10-01-smishing-pipeline-design.md` §5 | 보안 항목 7개. 위협 모델이 없어 빠진 항목을 이 문서가 채운다 |
+| `docs/archive/ai/html-collection-handoff.md` | 수집 항목과 AWS 검증 목록. 데이터 경로(§5.6)에서 이어받는다 |
 
 ## 0. 요약
 

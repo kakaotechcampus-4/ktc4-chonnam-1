@@ -45,7 +45,7 @@ class CollectResult:
 
 @dataclass(frozen=True)
 class StaticCheckResult:
-    """1단계 정적 검사 결과 (docs/scanner-static-checks-proposal.md).
+    """1단계 정적 검사 결과 (docs/archive/scanner-static-checks-proposal.md).
 
     기존 공식 도메인 비교에 KISA 목록 대조·Punycode/Unicode 사칭 분석을
     더한다. 여기서도 위험 "판정"은 안 한다 — kisa_listed/lookalike_of는

@@ -36,3 +36,4 @@
 
 - PRD: `docs/PRD.md`
 - 카카오 payload 스키마: `contracts/schemas/`
+- `docs/archive/` 는 구현 완료·대체된 문서 보관소다. 참고·검색하지 않는다.

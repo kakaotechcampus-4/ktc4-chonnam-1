@@ -27,5 +27,5 @@ PYTHONUTF8=1 PYTHONPATH="src;.venv/Lib/site-packages" python eval/rag_eval.py --
 ```
 
 지표 정의, dev/test 분할, 운영 지점, 잠정 목표와 변경 규칙은
-[설계 문서](../../docs/superpowers/specs/2026-10-02-rag-eval-improvement-design.md)를 따른다.
+[설계 문서](../../docs/archive/superpowers/specs/2026-10-02-rag-eval-improvement-design.md)를 따른다.
 설정값은 dev 에서만 조정하고 test 는 설정을 정한 뒤 한 번만 본다.

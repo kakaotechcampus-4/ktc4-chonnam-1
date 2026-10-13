@@ -5,7 +5,7 @@ ai/ 에서 실행한다.
     python eval/rag_eval.py --label <방식>             # test 까지 재고 리포트를 쓴다
     python eval/rag_eval.py --label <방식> --dev-only  # 설정 조정용. dev 지표만 출력한다
 
-지표 정의와 규칙은 docs/superpowers/specs/2026-10-02-rag-eval-improvement-design.md 를 따른다.
+지표 정의와 규칙은 docs/archive/superpowers/specs/2026-10-02-rag-eval-improvement-design.md 를 따른다.
 """
 
 import argparse

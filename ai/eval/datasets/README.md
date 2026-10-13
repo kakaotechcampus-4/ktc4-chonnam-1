@@ -47,7 +47,7 @@ KB(`ai/src/ai/kb/case_examples/`)와 겹치지 않게 유지한다. 겹치면 �
 ### KB·평가 분할 (2026-10-03)
 
 스미싱 215건을 유형별로 KB : dev : test = 5 : 1 : 1 로 나눴다
-([설계](../../../docs/superpowers/specs/2026-10-03-rag-kb-eval-split-design.md)).
+([설계](../../../docs/archive/superpowers/specs/2026-10-03-rag-kb-eval-split-design.md)).
 
 - KB 몫 153건 중 147건은 링크 표기를 지워 KB 레코드(`CE-0298`~`CE-0444`)로 옮겼다. 레코드의 `testset_id` 가 원래 id 다.
 - 나머지 6건은 어느 쪽에도 넣지 않았다. 1건은 링크를 지우자 다른 행과 같아졌고, 5건은 `smishing.jsonl` 에 같은 문장이 있다.

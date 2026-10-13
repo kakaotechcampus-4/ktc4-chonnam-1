@@ -1,4 +1,4 @@
-"""3단계 브라우저 수집 (설계: docs/superpowers/specs/2026-10-01-smishing-pipeline-design.md
+"""3단계 브라우저 수집 (설계: docs/archive/superpowers/specs/2026-10-01-smishing-pipeline-design.md
 "3단계 페이지 방문", 보안: docs/isolation-security.md §5.1·§5.2·§5.4·§5.9).
 
 2단계(httpx) HTML 에 JS 의존 신호가 있을 때만 돈다. 판정은 하지 않고 본 것만 돌려준다.

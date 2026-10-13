@@ -14,7 +14,7 @@
 - 제약 근거: `docs/designs/kakao-chatbot-build-guide.md` 7절 (글자수), `docs/latency-budget.md`
 - 결정 근거: [ADR 0003](../adr/0003-kakao-callback.md) (콜백 채택), [ADR 0005](../adr/0005-no-detail-web.md) (상세 웹 없음)
 - 연동 근거: `docs/designs/kakao-fe-be-integration.md` (BE 전달 JSON과 카드의 관계)
-- 규칙 근거: `docs/designs/smishing-message-intake-ux.md` 3절 (참고 정보 표시 규칙)
+- 규칙 근거: `docs/archive/designs/smishing-message-intake-ux.md` 3절 (참고 정보 표시 규칙)
 - 브랜딩 참고: 서비스명 `체크바퀴`, 봇 이름 `화기니`, 캐릭터 `기니피그`.
   웰컴 이미지 방향은 팀 투표로 정했지만 원본 자산은 아직 전달받지 못했다.
 
