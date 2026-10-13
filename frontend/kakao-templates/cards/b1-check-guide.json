@@ -5,7 +5,7 @@
       {
         "basicCard": {
           "title": "📋 확인할 문자를 보내주세요",
-          "description": "링크가 포함된 문자 전체를 복사해\n입력창에 붙여넣어 보내 주세요.\n\n※ 문자 속 링크는 누르지 마세요.\n※ 개인정보는 지우고 보내 주세요.\n\n결과가 오지 않으면\n「결과 확인」이라고 보내 주세요.",
+          "description": "링크가 담긴 문자 전체를 복사해 보내 주세요.\n※ 문자 속 링크는 누르지 마세요.\n※ 개인정보는 지우고 보내 주세요.\n\n결과가 오지 않으면 「결과 확인」을 보내 주세요.",
           "thumbnail": {
             "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/w1-welcome.png",
             "altText": "링크가 담긴 의심 문자를 돋보기로 살펴보는 경찰 모자 기니피그",
