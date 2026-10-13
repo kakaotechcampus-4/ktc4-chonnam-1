@@ -358,3 +358,19 @@ def test_rag_testset_rows_carry_expected_labels():
             assert set(row["expected_actions"]) <= doubts, row["id"]
         else:
             assert "expected_actions" not in row, row["id"]
+
+
+def test_new_kind_rows_fill_each_cell():
+    # 3종류 × 3업무 × 4건. 칸마다 dev·test 가 모두 있어야 한다.
+    cells = Counter()
+    splits = defaultdict(set)
+    for row in _load_jsonl("rag_testset.jsonl"):
+        if "kind" not in row:
+            continue
+        cell = (row["kind"], row["expected_business"])
+        cells[cell] += 1
+        splits[cell].add(row["split"])
+    for kind in KINDS:
+        for business in ("delivery", "penalty", "overseas_payment"):
+            assert cells[(kind, business)] == 4, (kind, business)
+            assert splits[(kind, business)] == {"dev", "test"}, (kind, business)
