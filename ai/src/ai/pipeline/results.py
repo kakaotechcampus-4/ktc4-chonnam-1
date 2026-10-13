@@ -103,21 +103,24 @@ def _answer(completed: bool, has_signals: bool, has_material: bool) -> AnswerSta
 
 def build_message_part(
     text: str, extracted: MessageAnalysis, cases: CaseSearchResult,
-    signals: SignalAnalysis, *, failure: FailureCode | None = None,
+    signals: SignalAnalysis | None, *, failure: FailureCode | None = None,
 ) -> MessagePart:
     """Preserve grounded message facts across extraction/search/signal failures."""
-    accepted = validate_message_signals(text, signals.signals)
+    accepted = validate_message_signals(text, signals.signals) if signals is not None else []
     completed = (failure is None
         and extracted.analysis_status is AnalysisStatus.COMPLETED
         and cases.status is AnalysisStatus.COMPLETED
+        and signals is not None
         and signals.status is AnalysisStatus.COMPLETED)
-    failures = list(dict.fromkeys(code for code in (failure, signals.failure) if code is not None))
+    failures = list(dict.fromkeys(code for code in (
+        failure, extracted.failure, signals.failure if signals is not None else None,
+    ) if code is not None))
     if not completed and not failures:
         failures.append(FailureCode.MISSING_RESULT)
     # Collect facts independently of the taxonomy's synthetic failure candidate.
     # A real, unclassified request can itself span the entire input.
     candidates = message_candidates(text, extracted.model_copy(
-        update={"analysis_status": AnalysisStatus.COMPLETED}))
+        update={"analysis_status": AnalysisStatus.COMPLETED, "failure": None}))
     for signal in accepted:
         doubt = (MessageDoubt.DATA_INPUT if signal.code is RiskSignalCode.CREDENTIAL_REQUEST
             else MessageDoubt.APP_INSTALL if signal.code is RiskSignalCode.INSTALL_PROMPT

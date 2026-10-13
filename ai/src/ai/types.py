@@ -201,6 +201,13 @@ class ExtractedMessage(StrictModel):
 
 class MessageAnalysis(ExtractedMessage):
     analysis_status: AnalysisStatus
+    failure: FailureCode | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def validate_failure(self) -> "MessageAnalysis":
+        if self.analysis_status is AnalysisStatus.COMPLETED and self.failure is not None:
+            raise ValueError("completed message analyses have no failure")
+        return self
 
 
 # ── 외부 입력 (백엔드가 채워서 넘긴다) ──────────────────────────
