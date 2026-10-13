@@ -26,7 +26,7 @@
 | `block_consent` | W3 `동의하고 확인하기` | 동의 기록 후 보류한 문자로 분석을 잇는 스킬 블록 (BE 미구현) |
 | `block_detail` | (지금 안 씀) R1·R3 `자세히 보기` | 캐러셀을 보내는 BE 경로가 없어 2026-10-02에 버튼을 뺐다. 구현하면 되살린다 |
 | `block_retry` | (지금 안 씀) R4 `다시 시도` | 재검사 미구현이라 R4에서 버튼을 뺐다. 구현하면 되살린다 |
-| `kisa_chatbot_url` `kisa_chat_url` | B2b·R1a 상담 버튼 | KISA 인계 방법 확인 후 |
+| `kisa_chatbot_url` `kisa_chat_url` | B2a(`kisa_chatbot_url`만)·B2b·R1a 상담 버튼 | KISA 인계 방법 확인 후 |
 | `org_name` `official_url` | R2 · R8(`org_name`만) | `org_name`은 `message.brand`. `official_url`은 결과에 없다. 브랜드별 공식 홈페이지 주소를 BE 목록(`services/official_domains.py`, 지금은 도메인만 있음)에 더해야 한다. 문자 속 URL은 쓰지 않는다 |
 | `signal_title` `observed` `reason` `unverified` | 자세히 보기 캐러셀 | 결과의 `details.signals`(검증된 근거)만. 채우는 규칙과 신호별 문구는 `docs/designs/chatbot-copy.md` 4절 "빈칸 채우는 규칙". 128자 안 |
 | `org_label` `checked` `unchecked` | R9 | BE가 분석 결과로 채운다. 규칙은 `docs/designs/chatbot-copy.md` 3절 R9 "빈칸 채우는 규칙". 채우기 전에 배포하면 빈칸이 글자 그대로 보인다 |
