@@ -86,9 +86,9 @@ def test_datasets_exist_and_are_labelled():
     benign = _load_jsonl("benign.jsonl")
 
     assert len(smishing) >= 20
-    # 현재 확보된 정상 알림은 5건뿐이다. 목표는 20~30건이며 그때 이 값을 올린다.
-    # n=5 로는 오탐률을 의미 있게 측정할 수 없다 — 그 한계를 README 에 적는다.
-    assert len(benign) >= 5
+    # 목표 20~30건 달성(2026-10-09, PR #54 멘토 리뷰 대응). 그중 5건만 실물이고
+    # 나머지는 합성이라는 한계는 README 에 적는다.
+    assert len(benign) >= 20
     assert all(row["label"] == "smishing" for row in smishing)
     assert all(row["label"] == "benign" for row in benign)
 
