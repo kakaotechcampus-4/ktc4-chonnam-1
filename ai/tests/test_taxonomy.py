@@ -112,6 +112,37 @@ def test_brand_accepts_standalone_cu_without_matching_inside_english_word():
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
+        ("[우체국]운송번호[33**38]미배송/반송물품1건 확인부탁합니다", Brand.EPOST),
+        ("우체국화물 반송처리중 주소지 확인부탁드립니다", Brand.EPOST),
+        ("[한진] 고객님 상품 배송 예정입니다", Brand.HANJIN),
+        ("[롯데] 택배 보관 중입니다", Brand.LOTTE_PARCEL),
+        ("[로젠] 배송 주소를 확인하세요", Brand.LOGEN),
+    ],
+)
+def test_brand_reads_short_carrier_name_in_parcel_message(text, expected):
+    assert identify_brand(text) is expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "[우체국] 예금 계좌 확인이 필요합니다",
+        "[우체국예금] 배송 안내",
+        "[롯데카드] 카드 배송 안내",
+        "[한진] 안내 말씀 드립니다",
+    ],
+)
+def test_brand_keeps_short_name_unknown_outside_parcel_or_other_business(text):
+    assert identify_brand(text) is Brand.UNKNOWN
+
+
+def test_brand_short_name_does_not_replace_full_brand():
+    assert identify_brand("[우체국] 쿠팡 상품 배송 예정") is Brand.COUPANG
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
         ("정부 보조금이 은행 카드로 송금되었습니다. 확인하세요.", Topic.PUBLIC),
         ("[CJ오쇼핑] 택배 주소가 모호해 주소 변경 부탁드립니다", Topic.PARCEL),
         ("온라인 상품 구매에 대한 결제 성공", Topic.SHOPPING),
@@ -125,6 +156,45 @@ def test_brand_accepts_standalone_cu_without_matching_inside_english_word():
     ],
 )
 def test_topic_uses_purpose_not_brand(text, expected):
+    assert classify_topic(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("[청소행정과] 종량제봉투 미사용과태료 부가대상이 되었습니다.", Topic.PENALTY),
+        ("폐기물관리법 제87조위반 부과내용 보내드립니다.", Topic.PENALTY),
+        ("(환경관리법 제68조위반)음식물 혼합투기에대한 내용메시지전송", Topic.PENALTY),
+        ("[경찰청] 무인단속 위반사실 통지. 이파인 앱에서 확인", Topic.PENALTY),
+        ("[송파구] 대형폐기물 배출 신고가 접수되었습니다.", Topic.UNKNOWN),
+        ("[신한카드] 12,500원 승인 스타벅스 일시불", Topic.PAYMENT),
+        ("해외 이상거래가 탐지되었습니다. 상담원 연결", Topic.PAYMENT),
+        ("[국외발신] 고객님 승인번호 해외결제 695,000원 정상처리완료", Topic.PAYMENT),
+        ("[다날] 휴대폰 결제 99,000원이 승인되었습니다.", Topic.UNKNOWN),
+        ("[국외발신][위생관리공단]안내 말씀 드립니다.", Topic.UNKNOWN),
+    ],
+)
+def test_topic_reads_penalty_and_payment(text, expected):
+    assert classify_topic(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # 과태료 사칭이 주소·반송을 명분으로 써도 택배가 아니다.
+        ("[교통민원] 과태료 미납 고지서가 반송될 수 있으니 주소를 수정하세요", Topic.PENALTY),
+        ("[경찰청] 의견진술 결과 과태료 부과가 취소되었음을 알려드립니다.", Topic.PENALTY),
+        ("과태료 납부 기한이 7일 남았습니다. 가까운 은행에서 납부할 수 있습니다.", Topic.PENALTY),
+        # 해외결제 사칭이 결제 완료·취소·배송을 섞어 써도 쇼핑·택배가 아니다.
+        ("[구매완료] 해외인증 결제금액 916,820원 본인구매 아닐시 취소요청", Topic.PAYMENT),
+        ("[국외결제안내] 결제완료 승인번호 배송조회 환불.취소문의 전화", Topic.PAYMENT),
+        # "해외배송" 은 해외결제 단서가 아니다.
+        ("[국제발신] NSmall [해외배송] 687,890원 결제완료 본인아닐시 상담센터", Topic.PARCEL),
+        # 검진 안내에 덧붙은 과태료는 핵심 용건이 아니다.
+        ("건강검진 미수검 안내. 미수검 시 과태료 대상이 될 수 있습니다.", Topic.HEALTH),
+    ],
+)
+def test_topic_penalty_and_payment_take_precedence_over_pretext_words(text, expected):
     assert classify_topic(text) is expected
 
 

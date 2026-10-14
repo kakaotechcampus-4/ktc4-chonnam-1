@@ -77,6 +77,8 @@ class Topic(str, Enum):
     PARCEL = "택배"
     SHOPPING = "쇼핑"
     FINANCE = "금융"
+    PAYMENT = "결제·승인"
+    PENALTY = "과태료"
     PUBLIC = "공공기관"
     HEALTH = "의료·건강"
     SECURITY = "보안"
