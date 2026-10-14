@@ -28,10 +28,10 @@ _PARTIAL = "partial"
 _R9_NO_LINES = "- 없음"
 
 
-def _truncate_evidence(evidence: str) -> str:
-    if len(evidence) <= _EVIDENCE_MAX_LENGTH:
+def _truncate_evidence(evidence: str, max_length: int = _EVIDENCE_MAX_LENGTH) -> str:
+    if len(evidence) <= max_length:
         return evidence
-    return evidence[: _EVIDENCE_MAX_LENGTH - 1] + "…"
+    return evidence[: max_length - 1] + "…"
 
 
 def _r9_org_label(brand: str | None) -> str:
@@ -230,6 +230,17 @@ def render_result_card(
     values = _result_card_values(analysis_result, card_name)
 
     card = render_card(card_name, values)
+    if card_name == "r9-uncertain":
+        message = analysis_result.get("message") or {}
+        reason = ((message.get("details") or {}).get("reason") or {}).get("text")
+        reason = (reason or "").strip() or "문자 분석 결과를 전달받지 못했습니다."
+        node = card["template"]["outputs"][0]["textCard"]
+        # Reserve space for verification guidance and limits before shortening facts.
+        fixed = substitute_values(node["description"], {"message_reason": ""})
+        available = 400 - len(fixed)
+        node["description"] = substitute_values(node["description"], {
+            "message_reason": _truncate_evidence(reason, available) if available > 1 else "",
+        })
     return _inject_job_id(card, job_id)
 
 
