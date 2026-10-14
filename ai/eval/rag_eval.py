@@ -175,6 +175,30 @@ def category_table(
     return table
 
 
+KINDS = ("official_notice", "same_pretext", "unclear_org")
+
+
+def kind_table(results: Sequence[RowResult], threshold: float) -> list[dict]:
+    """새 문자 종류별 스미싱 hit@3 와 정상 부착 건수. 종류가 없는 기존 행은 빼고 센다."""
+    table = []
+    for kind in KINDS:
+        part = [result for result in results if result.row.get("kind") == kind]
+        entry = {"kind": kind}
+        smishing = _in_group(part, "smishing")
+        entry["smishing"] = (
+            sum(_rank(result, threshold) is not None for result in smishing),
+            len(smishing),
+        )
+        for group in NEGATIVE_GROUPS:
+            negatives = _in_group(part, group)
+            entry[group] = (
+                sum(metrics.attached(result.matches, threshold) for result in negatives),
+                len(negatives),
+            )
+        table.append(entry)
+    return table
+
+
 def failures(
     results: Sequence[RowResult], threshold: float
 ) -> tuple[list[RowResult], list[RowResult]]:
@@ -216,6 +240,7 @@ def evaluate(
         evaluation["test"] = summarize(test, threshold)
         evaluation["campaigns"]["test"] = campaign_split(test, threshold)
         evaluation["categories"] = category_table(test, threshold, kb_counts)
+        evaluation["kinds"] = kind_table(test, threshold)
         evaluation["misses"], evaluation["attached"] = failures(test, threshold)
     return evaluation
 
@@ -367,6 +392,15 @@ def render_report(evaluation: dict, meta: dict) -> str:
         *(
             f"| {row['category']} | {row['kb']} | {_count(row['smishing'])} | {_count(row['benign'])} | {_count(row['hard_negative'])} |"
             for row in evaluation["categories"]
+        ),
+        "",
+        "## 새 문자 종류별 (test, 건수)",
+        "",
+        "| 종류 | 스미싱 hit@3 | 정상 부착 | hard negative 부착 |",
+        "|---|---|---|---|",
+        *(
+            f"| {row['kind']} | {_count(row['smishing'])} | {_count(row['benign'])} | {_count(row['hard_negative'])} |"
+            for row in evaluation.get("kinds", [])
         ),
         "",
         "## 지연",

@@ -47,6 +47,16 @@ _NORMALIZED_BRAND_ALIASES = {
     brand: tuple(normalize(alias) for alias in aliases)
     for brand, aliases in _BRAND_ALIASES.items()
 }
+# 택배 문자에서만 택배사로 읽는 짧은 이름. "우체국"·"롯데"만으로는 예금·보험·카드
+# 같은 같은 회사 이름의 다른 업무와 구분되지 않는다. 정규화한 본문에 대조한다.
+_PARCEL_SHORT_ALIASES: dict[Brand, re.Pattern[str]] = {
+    Brand.EPOST: re.compile(r"우체국(?!예금|보험)"),
+    Brand.HANJIN: re.compile(r"한진(?!해운|관광|칼)"),
+    Brand.LOTTE_PARCEL: re.compile(
+        r"롯데(?!카드|몰|홈쇼핑|마트|온|on|백화점|손해보험|캐피탈)"
+    ),
+    Brand.LOGEN: re.compile(r"로젠"),
+}
 _STANDALONE_CU_RE = re.compile(r"(?<![0-9a-z])cu(?![0-9a-z])", re.IGNORECASE)
 _NON_BRANDS = tuple(
     normalize(value)
@@ -82,6 +92,13 @@ def identify_brand(text: str, extracted: MessageAnalysis | None = None) -> Brand
         return Brand.UNKNOWN
 
     brands = _brands_in(text)
+    if not brands and classify_topic(text, extracted) is Topic.PARCEL:
+        # 정식 이름으로 알아본 브랜드는 바꾸지 않고, 못 알아봤을 때만 짧은 이름을 본다.
+        brands = {
+            brand
+            for brand, pattern in _PARCEL_SHORT_ALIASES.items()
+            if pattern.search(normalized)
+        }
     if not brands:
         return Brand.UNKNOWN
     if len(brands) == 1:
@@ -110,6 +127,20 @@ _PAYMENT_INSTRUMENT_RE = re.compile(r"(?:은행카드|카드|(?:은행)?계좌)�
 _PARCEL_REQUEST_RE = re.compile(r"(?:택배|배송|운송)(?:상태|현황)?(?:을|를)?(?:조회|확인)")
 _SHOPPING_CANCEL_RE = re.compile(r"(?:주문|구매)?취소")
 _PURPOSE_CONNECTOR_RE = re.compile(r"(?:요청|안내)?(?:와|과|및)(?:별도)?")
+_PENALTY_TERMS = (
+    "과태료", "범칙금", "무단투기", "무단투입", "불법투기", "불법배출", "혼합배출", "혼합투기",
+    "주정차위반", "주정차단속", "불법주정차", "무인단속", "교통법규위반",
+)
+_WASTE_TERMS = ("폐기물", "쓰레기", "음식물", "종량제")
+_VIOLATION_TERMS = ("위반", "부과", "무단", "불법", "투기")
+# "[국외발신]" 은 normalize 가 지우지만 괄호 없는 "국외발신" 과 "해외배송" 은 남는다.
+_OVERSEAS_RE = re.compile(r"(?:해외|국외)(?!배송|발신)")
+_OVERSEAS_PAYMENT_TERMS = ("결제", "승인", "카드", "이상거래")
+# 과태료·결제 사칭은 주소·반송·결제 완료·계좌 같은 다른 주제의 단어를 명분으로 섞어 쓴다.
+_PENALTY_CONTEXT = frozenset(
+    {Topic.PENALTY, Topic.PAYMENT, Topic.PARCEL, Topic.SHOPPING, Topic.FINANCE, Topic.PUBLIC}
+)
+_PAYMENT_CONTEXT = frozenset({Topic.PAYMENT, Topic.SHOPPING, Topic.PARCEL, Topic.FINANCE})
 
 
 def _topic_clauses(text: str) -> list[str]:
@@ -161,6 +192,16 @@ def classify_topic(text: str, extracted: MessageAnalysis | None = None) -> Topic
         topics.add(Topic.SECURITY)
     if _contains_any(normalized, ("은행", "급여", "계좌", "증권", "인출")):
         topics.add(Topic.FINANCE)
+    if _contains_any(normalized, _PENALTY_TERMS) or (
+        _contains_any(normalized, _WASTE_TERMS)
+        and _contains_any(normalized, _VIOLATION_TERMS)
+    ):
+        topics.add(Topic.PENALTY)
+    if ("카드" in normalized and "승인" in normalized) or (
+        _OVERSEAS_RE.search(normalized)
+        and _contains_any(normalized, _OVERSEAS_PAYMENT_TERMS)
+    ):
+        topics.add(Topic.PAYMENT)
 
     cancel_or_refund = _contains_any(normalized, ("취소", "환불"))
     shopping = cancel_or_refund or _contains_any(
@@ -182,6 +223,13 @@ def classify_topic(text: str, extracted: MessageAnalysis | None = None) -> Topic
     if gift:
         topics.add(Topic.GIFT)
 
+    # 검진 안내는 "미수검 시 과태료" 를 덧붙여 쓴다. 과태료가 핵심 용건이 아니다.
+    if Topic.HEALTH in topics and topics <= {Topic.HEALTH, Topic.PENALTY}:
+        return Topic.HEALTH
+    if Topic.PENALTY in topics and topics <= _PENALTY_CONTEXT:
+        return Topic.PENALTY
+    if Topic.PAYMENT in topics and topics <= _PAYMENT_CONTEXT:
+        return Topic.PAYMENT
     if (
         {Topic.PARCEL, Topic.SHOPPING} <= topics
         and _has_independent_parcel_and_shopping_requests(text)

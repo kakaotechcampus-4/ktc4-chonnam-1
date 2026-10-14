@@ -126,7 +126,8 @@ def test_revisions_enums_match_the_closed_contract():
         "라쿠텐 익스프레스", "KISA", "검찰청", "unknown",
     }
     assert {item.value for item in Topic} == {
-        "택배", "쇼핑", "금융", "공공기관", "의료·건강", "보안", "선물·이벤트", "unknown",
+        "택배", "쇼핑", "금융", "결제·승인", "과태료", "공공기관", "의료·건강", "보안",
+        "선물·이벤트", "unknown",
     }
     assert {item.value for item in MessageDoubt} == {
         "앱 설치", "주소 입력·수정", "주소 확인", "본인 확인", "정보 입력", "사진 확인",

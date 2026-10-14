@@ -42,13 +42,14 @@ def test_waste_message_claims_reach_card_only_with_current_evidence(grounded, se
         assert "과태료 부과 확정" not in output
     assert part.details.signals == []
     assert part.answer.value == ("partial" if search_failed else "no_risk_found")
-    assert "실제 발신자" in card["description"]
+    assert "실제로 보낸 곳" in card["description"]
     assert "확인하지 못" in card["description"]
+    assert "문자에 적힌 내용" in card["description"]
     assert "택배사" not in card["description"]
     assert "{{" not in card["description"]
     if search_failed:
         assert part.details.reason.failures == [FailureCode.TIMEOUT]
-        assert "문자 분석을 완료하지 못" in card["description"]
+        assert "문자 내용 (분석 시간이 초과" in card["description"]
 
 
 def test_fallback_extraction_does_not_present_model_sender_as_a_verified_claim():
@@ -75,9 +76,9 @@ def test_long_reason_keeps_card_limit_and_verification_guidance(message_answer):
     assert len(card["description"]) <= 400
     assert "청소행정과" in card["description"]
     assert "…" in card["description"]
-    assert "공식 홈페이지" in card["description"]
-    assert "실제 발신자" in card["description"]
-    assert "페이지를 열어보려 했지만 열지 못" in card["description"]
+    assert "공식 앱이나 홈페이지" in card["description"]
+    assert "실제로 보낸 곳" in card["description"]
+    assert "페이지 내용 (열지 못했어요)" in card["description"]
     assert "위험 근거는 찾지 못" not in card["description"]
     assert "{{" not in card["description"]
     assert result["message"]["details"]["reason"]["text"] == reason

@@ -289,3 +289,32 @@ def test_default_run_times_kb_load_inside_first_search(monkeypatch):
         rag_eval.main(["--label", "t"])
 
     assert calls == ["search"]
+
+
+def test_kind_table_counts_new_rows_only():
+    rows = [
+        _result("K1", "smishing", "delivery", 0.9),
+        _result("K2", "benign", "delivery", 0.9),
+        _result("X", "smishing", "delivery", 0.9),
+    ]
+    rows[0].row["kind"] = "unclear_org"
+    rows[1].row["kind"] = "official_notice"
+    table = {entry["kind"]: entry for entry in rag_eval.kind_table(rows, 0.5)}
+    assert table["unclear_org"]["smishing"] == (1, 1)
+    assert table["official_notice"]["benign"] == (1, 1)
+    assert table["same_pretext"]["smishing"] == (0, 0)
+
+
+def test_kind_table_handles_missing_kind():
+    table = rag_eval.kind_table([_result("X", "smishing", "delivery", 0.9)], 0.5)
+    assert [entry["kind"] for entry in table] == ["official_notice", "same_pretext", "unclear_org"]
+    assert all(entry["smishing"] == (0, 0) for entry in table)
+
+
+def test_report_has_kind_section():
+    evaluation = _evaluate()
+    text = rag_eval.render_report(evaluation, {
+        "label": "t", "date": "2026-10-11", "commit": "c", "kb_total": 1, "settings": "s",
+        "latency": {"first_ms": 1.0, "p50_ms": 1.0, "p95_ms": 1.0},
+    })
+    assert "## 새 문자 종류별 (test, 건수)" in text

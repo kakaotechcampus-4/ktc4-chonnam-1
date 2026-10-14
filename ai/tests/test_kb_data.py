@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ai.kb.normalize import normalize
 from ai.kb.search import CASES_DIR, load_cases, search_cases
-from ai.types import CategoryCode
+from ai.types import CategoryCode, MessageDoubt
 
 DATASETS = Path(__file__).resolve().parents[1] / "eval" / "datasets"
 # AI 는 BE 가 주소를 지운 본문만 받는다. 스킴(가린 hxxps:// 포함)·가린 점 [.]·www.·
@@ -95,9 +95,9 @@ def test_datasets_exist_and_are_labelled():
     benign = _load_jsonl("benign.jsonl")
 
     assert len(smishing) >= 20
-    # 현재 확보된 정상 알림은 5건뿐이다. 목표는 20~30건이며 그때 이 값을 올린다.
-    # n=5 로는 오탐률을 의미 있게 측정할 수 없다 — 그 한계를 README 에 적는다.
-    assert len(benign) >= 5
+    # 목표 20~30건 달성(2026-10-09, PR #54 멘토 리뷰 대응). 그중 5건만 실물이고
+    # 나머지는 합성이라는 한계는 README 에 적는다.
+    assert len(benign) >= 20
     assert all(row["label"] == "smishing" for row in smishing)
     assert all(row["label"] == "benign" for row in benign)
 
@@ -147,11 +147,14 @@ def test_rag_testset_is_labelled():
     for row in rows:
         assert row["group"] in {"smishing", "benign", "hard_negative"}, row["id"]
         assert row["category"] in categories, row["id"]
-        # 실물은 출처 URL 필수, 합성은 템플릿 ID 필수 — 실물 교체 추적용
-        if row["origin"] == "web_public":
+        # 실물·공식 예시는 출처 URL 필수, 템플릿 합성은 템플릿 ID 필수 — 실물 교체 추적용
+        assert row["origin"] in {"web_public", "synthetic_template", "official_example", "synthetic"}, row["id"]
+        if row["origin"] in {"web_public", "official_example"}:
             assert row["source"], row["id"]
+        elif row["origin"] == "synthetic_template":
+            assert row["template"], row["id"]
         else:
-            assert row["origin"] == "synthetic_template" and row["template"], row["id"]
+            assert row["source"] is None and row["template"] is None, row["id"]
 
 
 def test_benign_messages_do_not_match_kb_strongly():
@@ -180,6 +183,9 @@ def test_kb_records_have_no_address():
             assert not _addresses(variant), (case.case_id, variant[:40])
 
 
+LINK_PLACEHOLDER = "<링크>"
+
+
 def test_search_datasets_carry_address_free_message():
     # 평가는 text(출처 원문)가 아니라 message(AI 가 받는 형태)로 검색한다.
     for name in ("rag_testset.jsonl", "benign.jsonl"):
@@ -190,8 +196,10 @@ def test_search_datasets_carry_address_free_message():
                 assert row["exclude"].strip(), label
                 continue
             assert not _addresses(row["message"]), label
+            # 사기 링크는 text 에 <링크> 로만 남기고, BE 가 지운 형태인 message 에는 두지 않는다.
+            assert LINK_PLACEHOLDER not in row["message"], label
             assert row["message"].strip(), label
-            if not _addresses(row["text"]):
+            if not _addresses(row["text"]) and LINK_PLACEHOLDER not in row["text"]:
                 # 주소가 없던 행은 손대지 않는다.
                 assert row["message"] == row["text"], label
 
@@ -295,3 +303,75 @@ def test_impersonation_norms_name_claim_pretext_action_and_cases():
             assert str(pattern[key]).strip(), (path.name, key)
         assert meta["related_cases"], path.name
         assert set(meta["related_cases"]) <= kb_ids, path.name
+
+
+def test_norm_match_uses_known_keys_and_enum_values():
+    # match 는 find_guidance 가 정해진 값과 대조하는 조건이다. enum 이름(EPOST)이나
+    # unknown 을 적으면 조용히 아무것도 안 맞으므로 여기서 잡는다.
+    from ai.kb.guidance import MATCH_KEYS
+    from ai.types import Brand, DomainMatch, MessageDoubt, Topic
+
+    allowed = {
+        "category": {item.value for item in Topic} - {"unknown"},
+        "brand": {item.value for item in Brand} - {"unknown"},
+        "doubts": {item.value for item in MessageDoubt} - {"unknown"},
+        "official": {item.value for item in DomainMatch},
+    }
+    assert set(allowed) == MATCH_KEYS
+    matched = set()
+    for path, meta in _norm_records():
+        if "match" not in meta:
+            continue
+        matched.add(meta["id"])
+        assert meta["kind"] in {"verification", "procedure"}, path.name
+        assert isinstance(meta["match"], list) and meta["match"], path.name
+        for condition in meta["match"]:
+            assert isinstance(condition, dict) and condition, path.name
+            for key, value in condition.items():
+                assert key in MATCH_KEYS, (path.name, key)
+                assert value in allowed[key], (path.name, key, value)
+    assert matched == {"NR-0011", "NR-0012", "NR-0013", "NR-0014", "NR-0015", "NR-0019", "NR-0020"}
+
+
+EXPECTED_BUSINESSES = {"delivery", "penalty", "overseas_payment", "none"}
+KINDS = {"official_notice", "same_pretext", "unclear_org"}
+_CATEGORY_BUSINESS = {"delivery": "delivery", "address_correction": "delivery", "penalty": "penalty"}
+
+
+def test_rag_testset_rows_carry_expected_labels():
+    # 안내 평가(guidance_eval.py)의 정답. payment 만 해외결제 여부를 사람이 정한다.
+    doubts = {item.value for item in MessageDoubt} - {"unknown"}
+    for row in _load_jsonl("rag_testset.jsonl"):
+        business = row["expected_business"]
+        assert business in EXPECTED_BUSINESSES, row["id"]
+        if row["category"] in _CATEGORY_BUSINESS:
+            assert business == _CATEGORY_BUSINESS[row["category"]], row["id"]
+        elif row["category"] in {"payment", "card_or_account"}:
+            # 결제 명분이지만 실제 주제가 택배(해외배송 등)면 delivery.
+            # 카드 승인 알림은 국내 결제여도 overseas_payment 다(2026-10-14 사용자 결정).
+            assert business in {"overseas_payment", "delivery", "none"}, row["id"]
+        else:
+            assert business == "none", row["id"]
+        if "kind" in row:
+            assert row["kind"] in KINDS, row["id"]
+            assert row["id"].startswith(f"K-{row['kind']}-{business}-"), row["id"]
+            assert isinstance(row["expected_actions"], list), row["id"]
+            assert set(row["expected_actions"]) <= doubts, row["id"]
+        else:
+            assert "expected_actions" not in row, row["id"]
+
+
+def test_new_kind_rows_fill_each_cell():
+    # 3종류 × 3업무 × 4건. 칸마다 dev·test 가 모두 있어야 한다.
+    cells = Counter()
+    splits = defaultdict(set)
+    for row in _load_jsonl("rag_testset.jsonl"):
+        if "kind" not in row:
+            continue
+        cell = (row["kind"], row["expected_business"])
+        cells[cell] += 1
+        splits[cell].add(row["split"])
+    for kind in KINDS:
+        for business in ("delivery", "penalty", "overseas_payment"):
+            assert cells[(kind, business)] == 4, (kind, business)
+            assert splits[(kind, business)] == {"dev", "test"}, (kind, business)
