@@ -26,7 +26,7 @@ class TestRenderCard:
             {"org_name": "CJ대한통운", "official_url": "https://cjlogistics.com"},
         )
 
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = card["template"]["outputs"][0]["basicCard"]
         assert "CJ대한통운" in text_card["title"]
         buttons = {b["label"]: b for b in text_card["buttons"]}
         assert buttons["공식 홈페이지 열기"]["webLinkUrl"] == "https://cjlogistics.com"
@@ -58,8 +58,8 @@ class TestRenderCard:
         first = render_card("r2-official", {"org_name": "첫번째택배"})
         second = render_card("r2-official", {"org_name": "두번째택배"})
 
-        first_title = first["template"]["outputs"][0]["textCard"]["title"]
-        second_title = second["template"]["outputs"][0]["textCard"]["title"]
+        first_title = first["template"]["outputs"][0]["basicCard"]["title"]
+        second_title = second["template"]["outputs"][0]["basicCard"]["title"]
 
         assert "첫번째택배" in first_title
         assert "두번째택배" in second_title
@@ -78,5 +78,5 @@ class TestLoadCardTemplate:
     def test_returns_raw_json_without_substitution(self):
         template = load_card_template("r2-official")
 
-        title = template["template"]["outputs"][0]["textCard"]["title"]
+        title = template["template"]["outputs"][0]["basicCard"]["title"]
         assert "{{ org_name }}" in title

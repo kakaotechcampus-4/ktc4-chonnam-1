@@ -13,8 +13,15 @@ import main
 
 
 @pytest.fixture(autouse=True)
-def clean_jobs():
-    """각 테스트 사이에서 Job 상태가 섞이지 않도록 초기화한다."""
+def clean_jobs(monkeypatch):
+    """각 테스트 사이에서 Job 상태가 섞이지 않도록 초기화한다.
+
+    APP_ENV=test로 고정해 verify_skill_secret()의 스킬 시크릿 검사를
+    생략한다 — 이 파일은 /kakao/skill을 직접 호출하는데, 시크릿 검사는
+    카카오 관리자센터가 실제로 호출하는 환경(운영)만 지키면 된다.
+    """
+    monkeypatch.setenv("APP_ENV", "test")
+
     main.ANALYSIS_JOBS.clear()
     main.RUNNING_USERS.clear()
 

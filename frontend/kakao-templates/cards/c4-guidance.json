@@ -1,0 +1,23 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "carousel": {
+          "type": "basicCard",
+          "items": [
+            {
+              "title": "📋 공식 확인 방법",
+              "description": "{{ guidance_text }}",
+              "thumbnail": {
+                "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/c3-action.png",
+                "altText": "링크 접속, 앱 설치, 개인정보 입력에 각각 금지 표시를 한 그림",
+                "fixedRatio": false
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -6,8 +6,12 @@ job_id가 "자세히 보기" 버튼에 꽂히는지, 캐러셀이 10장 상한�
 test_result_card_selector.py의 몫이라 여기서는 다시 다루지 않는다.
 """
 
+from types import SimpleNamespace
+
+from services import result_card_renderer
 from services.result_card_renderer import (
     MAX_CAROUSEL_SIGNAL_ITEMS,
+    MAX_CAROUSEL_TOTAL_ITEMS,
     merge_kakao_responses,
     render_detail_carousel,
     render_result_card,
@@ -18,6 +22,10 @@ from services.chatbot_copy_data import (
     get_message_failure_copy,
     MESSAGE_FAILURE_COPY,
 )
+
+
+def _guidance(kind="verification", text="본인 명의 계좌인지 우체국 공식 앱에서 확인하세요.", source="인터넷우체국 공지", published_at="2024-03-06", rule_id="NR-0015"):
+    return SimpleNamespace(kind=kind, text=text, source=source, published_at=published_at, rule_id=rule_id)
 
 def _part(
     answer: str, brand: str | None = None, signals: list | None = None,
@@ -68,7 +76,7 @@ class TestRenderResultCard:
 
         card = render_result_card(analysis)
 
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = card["template"]["outputs"][0]["basicCard"]
         assert "CJ대한통운" in text_card["title"]
         buttons = {b["label"]: b for b in text_card["buttons"]}
         assert buttons["공식 홈페이지 열기"]["webLinkUrl"] == "https://cjlogistics.com"
@@ -94,7 +102,7 @@ class TestRenderResultCard:
 
         card = render_result_card(analysis)
 
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = card["template"]["outputs"][0]["basicCard"]
         detail_button = next(
             (b for b in text_card["buttons"] if b["label"] == "자세히 보기"), None
         )
@@ -433,6 +441,99 @@ class TestR9BlankValues:
         assert "확인한 것\n- 없음" in description
 
 
+def _part_with_reason(
+    answer: str, reason_text: str | None, brand: str | None = None,
+) -> dict:
+    return {
+        "brand": brand,
+        "category": None,
+        "answer": answer,
+        "details": {
+            "doubts": [],
+            "signals": [],
+            "reason": {"text": reason_text, "failures": []},
+        },
+    }
+
+
+class TestR9MessageReason:
+    """이슈 #68: `문자에 적힌 내용`(message_reason)이 message.brand가
+    모르는 기관(택배사 아닌 발신처)의 명분·요구까지 전달하는지 검증한다."""
+
+    def test_reason_text_appears_under_the_new_section(self):
+        analysis = _analysis(
+            "unresolved",
+            _part_with_reason(
+                "no_risk_found",
+                "문자가 내세운 기관: '청소행정과'. 문자가 내세운 명분: '쓰레기 무단투기 신고가 접수되었습니다.'.",
+            ),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자에 적힌 내용\n문자가 내세운 기관: '청소행정과'." in description
+
+    def test_missing_reason_text_falls_back_to_default_copy(self):
+        analysis = _analysis(
+            "unresolved",
+            _part_with_reason("no_risk_found", None),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자에 적힌 내용\n문자 분석 결과를 전달받지 못했습니다." in description
+
+    def test_blank_reason_text_falls_back_to_default_copy(self):
+        analysis = _analysis(
+            "unresolved",
+            _part_with_reason("no_risk_found", "   "),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자에 적힌 내용\n문자 분석 결과를 전달받지 못했습니다." in description
+
+    def test_card_stays_within_400_chars_and_truncates_reason(self):
+        long_reason = "문자가 내세운 명분: '" + "가" * 500 + "'."
+        analysis = _analysis(
+            "not_registered",
+            _part_with_reason(
+                "partial", long_reason, brand="CJ대한통운",
+            ),
+            _part("partial"),
+        )
+        analysis["message"]["details"]["doubts"] = [
+            _doubt("상세 내용 확인"), _doubt("개인정보 입력"), _doubt("입금"),
+        ]
+        analysis["message"]["details"]["reason"]["failures"] = ["timeout"]
+        analysis["env"]["details"]["reason"]["failures"] = []
+
+        description = _r9_description(analysis)
+
+        assert len(description) <= 400
+        assert description.endswith("기한이 적혀 있다면 그 전에 공식 경로로 확인하세요.")
+        # 잘렸으면 원문 전체가 다 들어갈 리 없다.
+        assert long_reason not in description
+
+    def test_other_blank_values_are_not_affected_by_message_reason(self):
+        """message_reason 치환이 이미 채워진 {{ checked }}/{{ unchecked }}
+        등 다른 빈칸을 건드리면 안 된다."""
+        analysis = _analysis(
+            "not_registered",
+            _part_with_reason("no_risk_found", "문자가 내세운 명분: 테스트", brand="CJ대한통운"),
+            _part("no_risk_found"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "문자 속 링크 대신 CJ대한통운 공식 앱이나" in description
+        assert "- 문자에서 위험 신호를 찾지 못했어요" in description
+        assert "{{ message_reason }}" not in description
+
+
 class TestMergeKakaoResponses:
     def test_empty_list_falls_back_to_unavailable_card(self):
         merged = merge_kakao_responses([])
@@ -513,6 +614,109 @@ class TestRenderDetailCarousel:
 
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
         assert len(items) == 2
+
+
+class TestRenderDetailCarouselGuidance:
+    """이슈 #69: find_guidance() 결과를 캐러셀 끝에 공식 확인 방법
+    카드로 붙인다. ai.kb.guidance가 아직 merge되지 않아 실제 함수
+    대신 services.result_card_renderer.find_guidance를 monkeypatch한다."""
+
+    def _analysis(self):
+        return _analysis(
+            "not_registered",
+            _part("no_risk_found", brand=None),
+            _part("not_run"),
+        )
+
+    def test_no_guidance_adds_no_cards(self, monkeypatch):
+        monkeypatch.setattr(result_card_renderer, "find_guidance", lambda payload: [])
+
+        carousel = render_detail_carousel(self._analysis())
+
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
+        assert len(items) == 2  # C2 + C3만
+
+    def test_verification_kind_uses_text_as_is(self, monkeypatch):
+        monkeypatch.setattr(
+            result_card_renderer, "find_guidance",
+            lambda payload: [_guidance(kind="verification", text="인터넷우체국에서 본인 확인 후 조회하세요.")],
+        )
+
+        carousel = render_detail_carousel(self._analysis())
+
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
+        assert len(items) == 3
+        assert "인터넷우체국에서 본인 확인 후 조회하세요." in str(items[-1])
+
+    def test_procedure_kind_formats_source_and_year(self, monkeypatch):
+        monkeypatch.setattr(
+            result_card_renderer, "find_guidance",
+            lambda payload: [_guidance(
+                kind="procedure", text="문자 대신 공식 앱으로 확인하라",
+                source="우정사업본부", published_at="2024-03-06",
+            )],
+        )
+
+        carousel = render_detail_carousel(self._analysis())
+
+        description = str(carousel["template"]["outputs"][0]["carousel"]["items"][-1])
+        assert "우정사업본부는 문자 대신 공식 앱으로 확인하라라고 안내했어요(2024)." in description
+        # 결론을 덧붙이지 않는다 (이슈: "그래서 이 문자는 가짜" 금지)
+        assert "가짜" not in description
+        assert "진짜" not in description
+
+    def test_more_than_three_guidance_items_are_capped(self, monkeypatch):
+        monkeypatch.setattr(
+            result_card_renderer, "find_guidance",
+            lambda payload: [_guidance(text=f"안내{i}") for i in range(5)],
+        )
+
+        carousel = render_detail_carousel(self._analysis())
+
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
+        assert len(items) == 2 + 3  # C2 + C3 + 안내 최대 3장
+
+    def test_long_guidance_text_is_truncated_to_128_chars(self, monkeypatch):
+        long_text = "고객센터 " + "0" * 200
+        monkeypatch.setattr(
+            result_card_renderer, "find_guidance",
+            lambda payload: [_guidance(kind="verification", text=long_text)],
+        )
+
+        carousel = render_detail_carousel(self._analysis())
+
+        guidance_card = carousel["template"]["outputs"][0]["carousel"]["items"][-1]
+        rendered = guidance_card["description"]
+        assert len(rendered) <= 128
+        assert rendered.endswith("…")
+
+    def test_guidance_items_shrink_the_signal_budget_to_stay_within_ten(self, monkeypatch):
+        monkeypatch.setattr(
+            result_card_renderer, "find_guidance",
+            lambda payload: [_guidance(text=f"안내{i}") for i in range(3)],
+        )
+        signals = [_signal(evidence=f"증거{i}") for i in range(20)]
+        analysis = _analysis(
+            "brand_mismatch",
+            _part("risk_found", brand="CJ대한통운", signals=signals),
+            _part("not_run"),
+        )
+
+        carousel = render_detail_carousel(analysis)
+
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
+        assert len(items) == MAX_CAROUSEL_TOTAL_ITEMS
+
+    def test_find_guidance_raising_does_not_break_the_carousel(self, monkeypatch):
+        def _boom(payload):
+            raise RuntimeError("kb unavailable")
+
+        monkeypatch.setattr(result_card_renderer, "find_guidance", _boom)
+
+        carousel = render_detail_carousel(self._analysis())
+
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
+        assert len(items) == 2  # C2 + C3는 그대로 나간다
 
     def test_c2_shows_message_failure_reason_when_env_is_complete(self):
         """이슈 #59: 문자 분석 실패 + 페이지 분석 정상 완료 — 정상 완료된
