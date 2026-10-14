@@ -13,8 +13,13 @@ import main
 
 
 @pytest.fixture(autouse=True)
-def clean_jobs():
-    """테스트마다 ANALYSIS_JOBS를 비워서 테스트 간 상태가 섞이지 않게 한다."""
+def clean_jobs(monkeypatch):
+    """테스트마다 ANALYSIS_JOBS를 비워서 테스트 간 상태가 섞이지 않게 한다.
+
+    APP_ENV=test로 고정해 verify_skill_secret()의 스킬 시크릿 검사를
+    생략한다 — 이 API는 /api/analyses/{job_id}를 직접 호출한다.
+    """
+    monkeypatch.setenv("APP_ENV", "test")
     main.ANALYSIS_JOBS.clear()
     yield
     main.ANALYSIS_JOBS.clear()

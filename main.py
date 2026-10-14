@@ -1,11 +1,12 @@
 import asyncio
+import hmac
 import os
 import time
 
 import uuid
 from datetime import datetime, timezone, timedelta
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 
 from backend.src.server.shadow_tasks import track_shadow_task
 from backend.src.server.urlscan_service import (
@@ -18,7 +19,11 @@ from backend.src.server.url_utils import split_message
 from backend.src.server.templates.renderer import render_r1_lookalike
 from services.official_domain_service import check_official_domain
 from services.kakao_card_renderer import render_card
-from services.result_card_renderer import render_result_card, merge_kakao_responses
+from services.result_card_renderer import (
+    render_result_card,
+    merge_kakao_responses,
+    render_detail_carousel,
+)
 
 # AI 연결
 from ai.pipeline import analyze_message_part, finalize_analysis
@@ -31,6 +36,45 @@ from urllib.parse import urlparse
 
 
 app = FastAPI(lifespan=app_lifespan)
+
+
+# ============================================================
+# Skill Request Auth (이슈 #66 BE 할 일 2)
+# ============================================================
+
+def verify_skill_secret(request: Request) -> None:
+    """카카오 스킬 서버로 위장한 요청을 막는다.
+
+    local/test 환경에서는 매번 비밀값을 셋업하기 번거로우므로 검사를
+    생략한다 — staging/production은 카카오 관리자센터가 실제로 호출하는
+    환경이라 생략하지 않는다 (ENABLE_URL_COLLECTOR_SHADOW의 local/test/
+    staging 구분과는 다른 기준).
+
+    KAKAO_SKILL_SECRET이 비어 있으면(운영 배포에 값을 안 넣은 실수까지
+    포함) 모든 요청을 거부한다 — 빈 값끼리 비교해 우연히 통과하는 것을
+    막기 위함이다. KAKAO_SKILL_SECRET_PREVIOUS는 키 교체 기간에만 쓰며,
+    비어 있으면 비교 대상에서 제외한다.
+    """
+
+    app_env = os.getenv("APP_ENV", "production").lower()
+    if app_env in {"local", "test"}:
+        return
+
+    secret = os.getenv("KAKAO_SKILL_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=401, detail="Skill secret not configured")
+
+    provided = request.headers.get("X-Skill-Secret", "")
+
+    if hmac.compare_digest(provided, secret):
+        return
+
+    previous_secret = os.getenv("KAKAO_SKILL_SECRET_PREVIOUS", "")
+    if previous_secret and hmac.compare_digest(provided, previous_secret):
+        return
+
+    raise HTTPException(status_code=401, detail="Invalid skill secret")
+
 
 # Collector Shadow Mode는 기본적으로 비활성화한다.
 # 테스트 환경에서만 명시적으로 활성화한다.
@@ -131,6 +175,11 @@ def create_analysis_job(
         ).isoformat(),
         "completed_at": None,
         "result": None,
+        # 이슈 #69: "자세히 보기" 클릭 시 캐러셀(+ 공식 확인 방법 카드)을
+        # 다시 만들려면 렌더링 끝난 카카오 카드(result)가 아니라 원본
+        # 분석 결과가 필요하다. 링크 여러 개면 마지막 것만 남는다 —
+        # r7-multiple-urls 라우팅과 마찬가지로 다중 링크는 이번 범위 밖.
+        "final_payload": None,
         "error": None,
         "callback_status": "pending",
         "callback_error": None
@@ -173,7 +222,7 @@ def find_latest_job_by_user(
 # Analysis Job API
 # ============================================================
 
-@app.get("/api/analyses/{job_id}")
+@app.get("/api/analyses/{job_id}", dependencies=[Depends(verify_skill_secret)])
 async def get_analysis_job(job_id: str):
     """
     인메모리에 저장된 분석 작업 상태와 결과를 조회한다.
@@ -278,10 +327,40 @@ def handle_check_result(
 
 
 # ============================================================
+# Handle Detail Carousel (이슈 #69)
+# ============================================================
+
+def handle_detail_carousel(job_id: str) -> dict:
+    """"자세히 보기" 버튼 클릭을 처리한다.
+
+    분석을 다시 하지 않는다 — 저장해 둔 `final_payload`로
+    `render_detail_carousel()`을 다시 불러 캐러셀만 새로 만든다. Job이
+    없거나(서버 재시작 등으로 소실) 아직 `final_payload`가 채워지기 전
+    (분석 진행 중·실패)이면 재판정 없이 안내만 돌려준다.
+    """
+
+    job = ANALYSIS_JOBS.get(job_id)
+
+    if job is None:
+        return kakao_response(
+            "분석 결과를 찾을 수 없어요. 문자를 다시 보내 주세요."
+        )
+
+    final_payload = job.get("final_payload")
+
+    if not final_payload:
+        return kakao_response(
+            "분석 결과를 찾을 수 없어요. 문자를 다시 보내 주세요."
+        )
+
+    return render_detail_carousel(final_payload)
+
+
+# ============================================================
 # Kakao Skill
 # ============================================================
 
-@app.post("/kakao/skill")
+@app.post("/kakao/skill", dependencies=[Depends(verify_skill_secret)])
 async def kakao_skill(
     request: Request,
     background_tasks: BackgroundTasks
@@ -308,7 +387,16 @@ async def kakao_skill(
     intent_name = (
         body.get("intent", {}).get("name", "")
     )
-    
+
+    # "자세히 보기" 버튼 클릭 (이슈 #69). 결과 카드에 꽂아 둔 job_id가
+    # 버튼의 extra로 저장돼 있다가, 클릭 시 카카오가 action.clientExtra로
+    # 그대로 돌려준다(`services/result_card_renderer.py`의 `_inject_job_id`).
+    client_extra = body.get("action", {}).get("clientExtra") or {}
+    detail_job_id = client_extra.get("job_id")
+
+    if detail_job_id:
+        return handle_detail_carousel(detail_job_id)
+
     # 사용자가 결과 확인 요청하면 최근 분석 결과를 리턴
     if intent_name == "결과 확인":
         return handle_check_result(user_id)
@@ -761,6 +849,13 @@ async def run_analysis(
                 )
             )
 
+            # 이슈 #69: "자세히 보기" 클릭 시 render_detail_carousel()에
+            # 다시 넘길 수 있도록 원본 결과를 Job에 남겨 둔다.
+            if job_id is not None:
+                job = ANALYSIS_JOBS.get(job_id)
+                if job:
+                    job["final_payload"] = final_payload
+
         except Exception as e:
             if (
                 collector_task is not None
@@ -1194,7 +1289,7 @@ def parse_urlscan_result(
 # FE-BE R1 Card Test
 # ============================================================
 
-@app.post("/test/kakao/r1-lookalike")
+@app.post("/test/kakao/r1-lookalike", dependencies=[Depends(verify_skill_secret)])
 async def test_r1_lookalike():
     """
     FE-BE Kakao 카드 연동 테스트용.
