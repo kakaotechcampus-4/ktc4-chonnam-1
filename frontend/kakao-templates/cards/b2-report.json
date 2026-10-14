@@ -3,9 +3,14 @@
   "template": {
     "outputs": [
       {
-        "textCard": {
+        "basicCard": {
           "title": "☎️ 신고하거나 상담받기",
           "description": "상황에 맞는 방법을 바로 알려드릴게요.",
+          "thumbnail": {
+            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2-report.png",
+            "altText": "수화기를 들고 신고하는 경찰 모자 기니피그와 빨간 경광등",
+            "fixedRatio": false
+          },
           "buttonLayout": "vertical",
           "buttons": [
             {

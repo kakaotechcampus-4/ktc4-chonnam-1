@@ -17,8 +17,22 @@ from services.chatbot_copy_data import (
 from services.kakao_card_renderer import render_card, substitute_values
 from services.result_card_selector import select_result_card
 
+try:
+    # 이슈 #69: ai.kb.guidance는 이 글을 쓰는 시점에 feature/rag-fix-ai에만
+    # 있고 develop에는 아직 merge되지 않았다. merge 전까지는 빈 목록으로
+    # 동작해 "자세히 보기" 자체는 먼저 쓸 수 있게 하고, AI 쪽이 merge되면
+    # BE 코드를 더 바꾸지 않아도 안내 카드가 자동으로 붙는다.
+    from ai.kb.guidance import find_guidance
+except ImportError:
+    def find_guidance(final_payload: Any) -> list:
+        return []
+
 DETAIL_BUTTON_LABEL = "자세히 보기"
 MAX_CAROUSEL_SIGNAL_ITEMS = 8  # + C2 + C3 = 10장 (카카오 캐러셀 상한)
+MAX_CAROUSEL_TOTAL_ITEMS = 10  # 카카오 캐러셀 자체 상한
+_FIXED_CAROUSEL_ITEMS = 2  # C2(미확인) + C3(행동 안내)는 항상 1장씩 나간다
+_MAX_GUIDANCE_ITEMS = 3  # find_guidance() 계약(최대 3개)과 별개로 BE에서도 한 번 더 막는다
+_GUIDANCE_TEXT_MAX_LENGTH = 128  # FE 합의: 카드 1장당 128자
 _EVIDENCE_MAX_LENGTH = 60
 
 _UNKNOWN = "unknown"
@@ -26,11 +40,15 @@ _MAX_REQUESTED_ACTIONS = 3
 _NO_RISK = "no_risk_found"
 _PARTIAL = "partial"
 _R9_NO_LINES = "- 없음"
+_R9_CARD_MAX_LENGTH = 400
+_R9_DEFAULT_MESSAGE_REASON = "문자 분석 결과를 전달받지 못했습니다."
 
 
 def _truncate_evidence(evidence: str, max_length: int = _EVIDENCE_MAX_LENGTH) -> str:
     if len(evidence) <= max_length:
         return evidence
+    if max_length <= 0:
+        return ""
     return evidence[: max_length - 1] + "…"
 
 
@@ -170,6 +188,17 @@ def _r9_blank_values(analysis_result: dict) -> dict[str, str]:
     }
 
 
+def _r9_message_reason(message: dict) -> str:
+    """이슈 #68: `message.brand`는 택배사만 알아보므로, 청소행정과처럼
+    택배사가 아닌 기관이 내세운 명분·요구는 이 칸으로만 전달된다.
+    확인한 사실이 아니라 "문자가 주장한 내용"이라 기본값도 '확인'이
+    아니라 '전달받지 못했습니다'로 둔다."""
+
+    reason = ((message.get("details") or {}).get("reason") or {}).get("text")
+    reason = (reason or "").strip()
+    return reason or _R9_DEFAULT_MESSAGE_REASON
+
+
 def _inject_job_id(card: dict, job_id: str | None) -> dict:
     """"자세히 보기" 버튼에 `extra.job_id`를 넣는다.
 
@@ -230,17 +259,19 @@ def render_result_card(
     values = _result_card_values(analysis_result, card_name)
 
     card = render_card(card_name, values)
+
     if card_name == "r9-uncertain":
         message = analysis_result.get("message") or {}
-        reason = ((message.get("details") or {}).get("reason") or {}).get("text")
-        reason = (reason or "").strip() or "문자 분석 결과를 전달받지 못했습니다."
+        reason = _r9_message_reason(message)
         node = card["template"]["outputs"][0]["textCard"]
-        # Reserve space for verification guidance and limits before shortening facts.
+        # 다른 빈칸을 먼저 채운 뒤 400자에서 남는 만큼만 message_reason에 쓴다.
         fixed = substitute_values(node["description"], {"message_reason": ""})
-        available = 400 - len(fixed)
-        node["description"] = substitute_values(node["description"], {
-            "message_reason": _truncate_evidence(reason, available) if available > 1 else "",
-        })
+        available = _R9_CARD_MAX_LENGTH - len(fixed)
+        node["description"] = substitute_values(
+            node["description"],
+            {"message_reason": _truncate_evidence(reason, available)},
+        )
+
     return _inject_job_id(card, job_id)
 
 
@@ -295,15 +326,71 @@ def _env_unverified_line(env: dict) -> str | None:
     return f"페이지: {get_unverified_copy(answer)}"
 
 
+def _guidance_description(guidance: Any) -> str:
+    """이슈 #69: `kind`에 따라 FE가 정한 두 형식 중 하나로 문장을 만든다.
+
+    `procedure`는 "{source}는 ~라고 안내했어요({연도})" 형식이다 — 문자가
+    가짜라는 결론이 아니라 공식 기관이 실제로 안내한 절차임을 보여주는
+    것이 목적이라, 여기서 "그래서 가짜/진짜"라는 판단을 덧붙이지 않는다.
+    `Guidance.text`는 128자를 넘을 수 있어(이슈 댓글: 택배 고객센터
+    5곳·카드사 9곳 번호 포함) 잘라낸다 — 여러 장으로 쪼개는 규칙은 FE와
+    아직 합의되지 않아, 합의 전까지는 안전하게 자르는 쪽을 택한다.
+    """
+
+    kind = getattr(guidance, "kind", None)
+    text = getattr(guidance, "text", None) or ""
+
+    if kind == "procedure":
+        source = getattr(guidance, "source", None) or "관련 기관"
+        published_at = getattr(guidance, "published_at", None) or ""
+        year = published_at[:4] if published_at else ""
+        year_suffix = f"({year})" if year else ""
+        text = f"{source}는 {text}라고 안내했어요{year_suffix}."
+
+    return _truncate_evidence(text, _GUIDANCE_TEXT_MAX_LENGTH)
+
+
+def _guidance_items(analysis_result: dict) -> list[dict]:
+    """최종 분석 결과로 `find_guidance()`를 불러 캐러셀 항목을 만든다.
+
+    이슈 계약상 `find_guidance()`는 예외를 던지지 않지만, 아직 merge되지
+    않은 AI 쪽 코드를 믿고 그 계약에만 기대지 않는다 — 안내 카드 하나
+    때문에 "자세히 보기" 전체가 깨지면 안 된다(CLAUDE.md 절대 원칙 3과
+    같은 이유: 부가 기능 실패가 핵심 응답을 막으면 안 된다).
+    """
+
+    try:
+        guidance_list = find_guidance(analysis_result) or []
+    except Exception as e:
+        print(f"[GUIDANCE ERROR] {type(e).__name__}: {e}")
+        return []
+
+    if not guidance_list:
+        return []
+
+    template = render_card("c4-guidance")
+    item_template = template["template"]["outputs"][0]["carousel"]["items"][0]
+
+    return [
+        substitute_values(item_template, {"guidance_text": _guidance_description(guidance)})
+        for guidance in guidance_list[:_MAX_GUIDANCE_ITEMS]
+    ]
+
+
 def render_detail_carousel(analysis_result: dict) -> dict:
     """"자세히 보기"에서 쓸 의심 근거 캐러셀을 만든다.
 
     c-detail-carousel.json의 items[0]을 "의심 근거(C1)" 템플릿으로 보고
     message.details.signals 개수만큼 복제한다. items[1]은 "확인하지 못한
-    부분(C2)", items[2]는 "행동 안내(C3)"로 고정 1장씩이다.
+    부분(C2)", items[2]는 "행동 안내(C3)"로 고정 1장씩이다. 이슈 #69로
+    추가된 공식 확인 방법 카드(`find_guidance()` 결과)는 맨 뒤에 붙인다.
 
     페이지(`env.details.signals`) 신호는 아직 고정 문구가 없어
     (chatbot-copy.md 4절) 이번에는 문자 신호만 카드로 만든다.
+
+    전체 10장 상한(카카오 캐러셀 자체 제약)은 C2·C3 2장을 먼저 빼고
+    남는 자리를 신호 카드와 안내 카드가 나눠 쓴다 — 안내 카드가 있으면
+    신호 카드 상한(`MAX_CAROUSEL_SIGNAL_ITEMS`)이 그만큼 줄어든다.
     """
 
     template = render_card("c-detail-carousel")
@@ -315,8 +402,18 @@ def render_detail_carousel(analysis_result: dict) -> dict:
 
     env = analysis_result.get("env") or {}
 
+    guidance_items = _guidance_items(analysis_result)
+
+    signal_budget = max(
+        0,
+        min(
+            MAX_CAROUSEL_SIGNAL_ITEMS,
+            MAX_CAROUSEL_TOTAL_ITEMS - _FIXED_CAROUSEL_ITEMS - len(guidance_items),
+        ),
+    )
+
     c1_items = []
-    for signal in signals[:MAX_CAROUSEL_SIGNAL_ITEMS]:
+    for signal in signals[:signal_budget]:
         code = signal.get("code", "")
         evidence = signal.get("evidence", "")
         signal_title, reason = get_signal_copy(code)
@@ -346,8 +443,8 @@ def render_detail_carousel(analysis_result: dict) -> dict:
             "outputs": [
                 {
                     "carousel": {
-                        "type": "textCard",
-                        "items": [*c1_items, c2_item, c3_template],
+                        "type": template["template"]["outputs"][0]["carousel"]["type"],
+                        "items": [*c1_items, c2_item, c3_template, *guidance_items],
                     }
                 }
             ]
