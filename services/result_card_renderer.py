@@ -443,7 +443,7 @@ def render_detail_carousel(analysis_result: dict) -> dict:
             "outputs": [
                 {
                     "carousel": {
-                        "type": "textCard",
+                        "type": template["template"]["outputs"][0]["carousel"]["type"],
                         "items": [*c1_items, c2_item, c3_template, *guidance_items],
                     }
                 }
