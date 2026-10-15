@@ -60,12 +60,17 @@ url_analysis = UrlAnalysis.model_validate(raw_url_result)
 |---|---|
 | `final_url` | 확인한 최종 목적지 URL. 빈 값·공백뿐인 값은 거부 |
 | `domain` | BE가 정한 도메인 표현. 빈 값·공백뿐인 값은 거부하며 AI가 호스트/오리진 표현을 자동 변환하지 않음 |
-| `official` | 화이트리스트 대조 결과 `DomainMatch`: `official`, `brand_mismatch`, `not_registered`, `unresolved`. boolean·`no_url`·null·누락은 거부 |
+| `official` | 화이트리스트 대조 결과 `DomainMatch`: `official`, `brand_mismatch`, `not_registered`, `unresolved`, `shortener_unresolved`, `redirected_from_official`. boolean·`no_url`·null·누락은 거부 |
 | `scan` | 선택. `score`(-100~100 또는 null), `scanned_at`(ISO 8601 또는 null). 생략하면 둘 다 null. 기록용이며 `result`에 쓰지 않음 |
 
 `official`은 BE 화이트리스트 대조 결과다. 스캐너 점수는 `scan.score`로 원본 그대로 전달하며 AI는 이를 판정에 쓰지 않는다.
 
-값이 없다고 `not_registered`를 채우지 않는다. 대조하지 못했으면 `unresolved`다. 잘못된 입력은 `pydantic.ValidationError`를 BE 오류 경로에서 처리한다. 유효한 URL 결과 없이 정상 분석 응답을 만들지 않는다.
+값이 없다고 `not_registered`를 채우지 않는다. 대조하지 못했으면 `unresolved`다. 이유를 알면 세부 값을 쓴다 (#66).
+
+- `shortener_unresolved`: 문자 속 링크가 단축 주소인데 격리 서버로 풀지 못해 실제 도메인을 대조하지 못함
+- `redirected_from_official`: 문자 속 링크는 공식 도메인이지만 최종 주소가 공식이 아님
+
+두 값 모두 `result`는 `false`다. 판정상 `unresolved`와 같고 카드 문구만 다르다. 잘못된 입력은 `pydantic.ValidationError`를 BE 오류 경로에서 처리한다. 유효한 URL 결과 없이 정상 분석 응답을 만들지 않는다.
 
 이 검증 구문 자체는 네트워크 전송이 아니다. 검증한 `url_analysis`를 3번 최종 호출의 `url` 인자로 AI에 전달한다. 현재 [parse_urlscan_result()](../backend/src/server/main.py)는 `url`, `title`, `brands`만 반환하므로 그 dict를 그대로 사용할 수 없다. BE 어댑터에서 위 필드를 준비해야 한다.
 

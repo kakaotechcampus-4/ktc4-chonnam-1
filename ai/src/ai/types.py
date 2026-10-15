@@ -272,6 +272,12 @@ class DomainMatch(str, Enum):
     NOT_REGISTERED = "not_registered"
     NO_URL = "no_url"
     UNRESOLVED = "unresolved"
+    # 아래 둘은 UNRESOLVED 의 세부 사유입니다. 카드 문구를 가르기 위한 값이며
+    # 판정상으로는 UNRESOLVED 와 같습니다 (공식 아님, 대조 불가).
+    # 단축 주소를 격리 서버로 풀지 못해 실제 도메인을 대조하지 못함
+    SHORTENER_UNRESOLVED = "shortener_unresolved"
+    # 문자 속 주소는 공식이지만 최종 주소가 공식이 아님 (오픈 리다이렉트 가능성)
+    REDIRECTED_FROM_OFFICIAL = "redirected_from_official"
 
 
 class DomainCheck(InboundModel):

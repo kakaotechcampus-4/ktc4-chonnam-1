@@ -158,7 +158,11 @@ def decide(
     if page_state is PageState.UNREACHABLE or unavailable:
         return build(FinalState.NOT_ANALYZABLE, ReasonCode.UNRESOLVED)
 
-    if domain_check.match is DomainMatch.UNRESOLVED:
+    if domain_check.match in (
+        DomainMatch.UNRESOLVED,
+        DomainMatch.SHORTENER_UNRESOLVED,
+        DomainMatch.REDIRECTED_FROM_OFFICIAL,
+    ):
         return build(FinalState.NOT_ANALYZABLE, ReasonCode.UNRESOLVED)
 
     return build(FinalState.INCONCLUSIVE, ReasonCode.NOT_IN_WHITELIST)

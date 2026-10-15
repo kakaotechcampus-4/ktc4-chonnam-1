@@ -209,6 +209,8 @@ def test_analysis_response_rejects_parts_without_answer():
 @pytest.mark.parametrize(("official", "message", "env", "expected"), [
     (DomainMatch.OFFICIAL, AnswerState.NO_RISK_FOUND, AnswerState.NO_RISK_FOUND, True),
     (DomainMatch.NOT_REGISTERED, AnswerState.NO_RISK_FOUND, AnswerState.NO_RISK_FOUND, False),
+    (DomainMatch.SHORTENER_UNRESOLVED, AnswerState.NO_RISK_FOUND, AnswerState.NO_RISK_FOUND, False),
+    (DomainMatch.REDIRECTED_FROM_OFFICIAL, AnswerState.NO_RISK_FOUND, AnswerState.NO_RISK_FOUND, False),
     (DomainMatch.OFFICIAL, AnswerState.PARTIAL, AnswerState.NO_RISK_FOUND, False),
     (DomainMatch.OFFICIAL, AnswerState.NO_RISK_FOUND, AnswerState.NOT_RUN, False),
 ])

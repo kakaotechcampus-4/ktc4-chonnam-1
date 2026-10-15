@@ -61,6 +61,8 @@ def signal(ref: str, source=EvidenceSource.OBSERVATION) -> RiskSignal:
         (DomainMatch.BRAND_MISMATCH, PageState.RENDERED, FinalState.SMISHING_SUSPECTED, ReasonCode.LOOKALIKE),
         (DomainMatch.NOT_REGISTERED, PageState.RENDERED, FinalState.INCONCLUSIVE, ReasonCode.NOT_IN_WHITELIST),
         (DomainMatch.UNRESOLVED, PageState.RENDERED, FinalState.NOT_ANALYZABLE, ReasonCode.UNRESOLVED),
+        (DomainMatch.SHORTENER_UNRESOLVED, PageState.RENDERED, FinalState.NOT_ANALYZABLE, ReasonCode.UNRESOLVED),
+        (DomainMatch.REDIRECTED_FROM_OFFICIAL, PageState.RENDERED, FinalState.NOT_ANALYZABLE, ReasonCode.UNRESOLVED),
         (DomainMatch.OFFICIAL, PageState.CLOAKED_SUSPECT, FinalState.INCONCLUSIVE, ReasonCode.UNRESOLVED),
         (DomainMatch.BRAND_MISMATCH, PageState.CLOAKED_SUSPECT, FinalState.SMISHING_SUSPECTED, ReasonCode.LOOKALIKE),
         (DomainMatch.NOT_REGISTERED, PageState.EXPIRED, FinalState.SMISHING_SUSPECTED, ReasonCode.EXPIRED_LINK),
