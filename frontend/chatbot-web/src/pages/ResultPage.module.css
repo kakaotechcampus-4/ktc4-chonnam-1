@@ -1,0 +1,10 @@
+.page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.loading {
+  padding: 24px 4px;
+  color: var(--soft);
+}
