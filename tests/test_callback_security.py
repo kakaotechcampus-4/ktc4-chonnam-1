@@ -106,9 +106,16 @@ async def skill_request(url):
 
 
 @pytest.mark.parametrize("url", INVALID_URLS)
-async def test_invalid_callback_rejected_before_analysis_job_or_background_task(
+async def test_authenticated_request_with_invalid_callback_is_blocked_without_side_effects(
     url, monkeypatch, analysis,
 ):
+    """Policy: authenticated request + invalid callbackUrl → HTTP 200 with the
+    r4-unavailable card, while still blocking the SSRF attempt itself (no
+    background task, no job, no outbound call). 200 here is a deliberate
+    choice (Kakao skills conventionally expect 200), not a gap — see
+    test_unauthenticated_request_is_rejected_before_any_side_effect for the
+    401 case this must not be confused with."""
+
     callback = AsyncMock()
     monkeypatch.setattr(main, "run_analysis_and_callback", callback)
     create_job = Mock(wraps=main.create_analysis_job)
@@ -123,15 +130,93 @@ async def test_invalid_callback_rejected_before_analysis_job_or_background_task(
     monkeypatch.setattr(main.BackgroundTasks, "add_task", record_add)
     response = await skill_request(url)
 
-    # Check security before status: rejection's exact HTTP code is not prescribed.
     assert registered == [], "Invalid callback registered a background task"
     create_job.assert_not_called()
     analysis.assert_not_awaited()
     callback.assert_not_awaited()
     assert main.ANALYSIS_JOBS == {}
     assert USER not in main.RUNNING_USERS
-    assert 400 <= response.status_code < 500
-    assert response.status_code != 401, "Authentication must not mask URL validation"
+    assert response.status_code == 200
+    assert response.json() == main.render_card("r4-unavailable")
+
+
+async def test_unauthenticated_request_is_rejected_before_any_side_effect(monkeypatch, analysis):
+    """Policy: an unauthenticated skill request must get 401/403 and never
+    reach callback validation, analysis, or job bookkeeping — regardless of
+    whether its callbackUrl would otherwise be valid."""
+
+    callback = AsyncMock()
+    monkeypatch.setattr(main, "run_analysis_and_callback", callback)
+    create_job = Mock(wraps=main.create_analysis_job)
+    monkeypatch.setattr(main, "create_analysis_job", create_job)
+    registered = []
+    original_add = main.BackgroundTasks.add_task
+
+    def record_add(tasks, function, *args, **kwargs):
+        registered.append(function)
+        return original_add(tasks, function, *args, **kwargs)
+
+    monkeypatch.setattr(main.BackgroundTasks, "add_task", record_add)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=main.app),
+        base_url="https://skill.example.test",
+    ) as client:
+        # No X-Skill-Secret header at all — the common "forgot to configure
+        # the admin console header" and "random internet request" case.
+        response = await client.post("/kakao/skill", json={
+            "userRequest": {
+                "utterance": "https://example.com/message 확인",
+                "user": {"id": USER},
+                "callbackUrl": CALLBACK_URL,
+            },
+        })
+
+    assert response.status_code in (401, 403)
+    assert registered == [], "Unauthenticated request registered a background task"
+    create_job.assert_not_called()
+    analysis.assert_not_awaited()
+    callback.assert_not_awaited()
+    assert main.ANALYSIS_JOBS == {}
+    assert USER not in main.RUNNING_USERS
+
+
+async def test_wrong_secret_is_rejected_before_any_side_effect(monkeypatch, analysis):
+    """Same as above but with an incorrect secret rather than a missing one."""
+
+    callback = AsyncMock()
+    monkeypatch.setattr(main, "run_analysis_and_callback", callback)
+    registered = []
+    original_add = main.BackgroundTasks.add_task
+
+    def record_add(tasks, function, *args, **kwargs):
+        registered.append(function)
+        return original_add(tasks, function, *args, **kwargs)
+
+    monkeypatch.setattr(main.BackgroundTasks, "add_task", record_add)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=main.app),
+        base_url="https://skill.example.test",
+    ) as client:
+        response = await client.post(
+            "/kakao/skill",
+            headers={"X-Skill-Secret": "wrong-secret"},
+            json={
+                "userRequest": {
+                    "utterance": "https://example.com/message 확인",
+                    "user": {"id": USER},
+                    "callbackUrl": CALLBACK_URL,
+                },
+            },
+        )
+
+    assert response.status_code in (401, 403)
+    assert registered == []
+    analysis.assert_not_awaited()
+    callback.assert_not_awaited()
+    assert main.ANALYSIS_JOBS == {}
+    assert USER not in main.RUNNING_USERS
 
 
 @pytest.mark.parametrize("url", INVALID_URLS)

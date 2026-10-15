@@ -305,8 +305,8 @@ async def test_callback_request_exception(
 
     assert job["callback_status"] == "failed"
 
-    assert job["callback_error"] == (
-        "RuntimeError: callback connection failed"
-    )
+    # 예외 메시지 원문은 저장하지 않는다 — 콜백 URL 쿼리스트링(토큰 등)이
+    # 섞여 들어올 수 있어 예외 유형만 남긴다(_safe_callback_error).
+    assert job["callback_error"] == "RuntimeError"
 
     assert "test-user" not in main.RUNNING_USERS

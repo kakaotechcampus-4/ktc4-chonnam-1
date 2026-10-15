@@ -1012,6 +1012,21 @@ def build_ai_url_analysis(
 # Kakao callback
 # ============================================================
 
+def _safe_callback_error(error: Exception) -> str:
+    """콜백 전송 실패를 안전하게 요약한다.
+
+    httpx.HTTPStatusError·ConnectError 등은 str()에 요청 URL 전체(쿼리
+    스트링의 1회성 토큰 포함)를 담는다 — 그대로 로그나 Job에 남기면
+    간접적으로 토큰이 샌다. 여기서는 예외 유형과(있으면) HTTP 상태
+    코드만 남긴다.
+    """
+
+    status_code = getattr(getattr(error, "response", None), "status_code", None)
+    if status_code is not None:
+        return f"{type(error).__name__} (status={status_code})"
+    return type(error).__name__
+
+
 async def run_analysis_and_callback(
     links: list[str],
     message: str,
@@ -1133,10 +1148,10 @@ async def run_analysis_and_callback(
             f"{response.status_code}"
         )
 
-        print(
-            f"[CALLBACK RESPONSE] "
-            f"{response.text}"
-        )
+        # 응답 본문은 로그에 그대로 남기지 않는다 — 콜백 호스트가 응답에
+        # 요청 URL을 그대로 반사하면(예: 디버그 echo) 쿼리스트링의 토큰이
+        # 로그로 샐 수 있다. 실제로 필요한 결과 상태는 JSON 파싱 후
+        # [CALLBACK RESULT STATUS]로 따로 남긴다.
 
         response.raise_for_status()
 
@@ -1199,16 +1214,15 @@ async def run_analysis_and_callback(
 
     except Exception as e:
         job = ANALYSIS_JOBS.get(job_id)
-    
+        safe_error = _safe_callback_error(e)
+
         if job:
             job["callback_status"] = "failed"
-            job["callback_error"] = (
-                f"{type(e).__name__}: {e}"
-            )
-    
+            job["callback_error"] = safe_error
+
         print(
             f"[CALLBACK SEND FAILED] "
-            f"{type(e).__name__}: {e}"
+            f"{safe_error}"
         )
     
         print(
