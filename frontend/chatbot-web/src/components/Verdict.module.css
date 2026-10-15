@@ -1,0 +1,37 @@
+.verdict {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border-radius: 16px;
+  background: var(--calm-bg);
+  color: var(--calm);
+}
+
+.caution {
+  background: var(--caution-bg);
+  color: var(--caution);
+}
+
+.lookalike {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.uncertain {
+  background: var(--calm-bg);
+  color: var(--calm);
+}
+
+.headline {
+  font-size: 22px;
+}
+
+.actions {
+  display: grid;
+  gap: 4px;
+  color: var(--ink);
+}
+
+.actions p:first-child {
+  font-weight: 700;
+}

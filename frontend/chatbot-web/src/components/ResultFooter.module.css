@@ -1,0 +1,7 @@
+.footer {
+  display: grid;
+  gap: 2px;
+  padding: 4px 4px 0;
+  color: var(--soft);
+  font-size: 13px;
+}
