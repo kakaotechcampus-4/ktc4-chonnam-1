@@ -56,6 +56,11 @@ def verify_skill_secret(request: Request) -> None:
     포함) 모든 요청을 거부한다 — 빈 값끼리 비교해 우연히 통과하는 것을
     막기 위함이다. KAKAO_SKILL_SECRET_PREVIOUS는 키 교체 기간에만 쓰며,
     비어 있으면 비교 대상에서 제외한다.
+
+    거부할 때마다 원인 코드만 로그에 남긴다(헤더 원문·secret·토큰은
+    절대 남기지 않는다) — 오픈빌더 실제 호출이 401로 막히는 원인이
+    서버 설정 누락인지, 헤더 자체가 안 오는지, 값이 다른지 운영
+    로그만으로 구분하기 위함이다.
     """
 
     app_env = os.getenv("APP_ENV", "production").lower()
@@ -64,6 +69,7 @@ def verify_skill_secret(request: Request) -> None:
 
     secret = os.getenv("KAKAO_SKILL_SECRET", "")
     if not secret:
+        print("[SKILL AUTH REJECTED] reason=secret_not_configured")
         raise HTTPException(status_code=401, detail="Skill secret not configured")
 
     provided = request.headers.get("X-Skill-Secret", "")
@@ -74,6 +80,11 @@ def verify_skill_secret(request: Request) -> None:
     previous_secret = os.getenv("KAKAO_SKILL_SECRET_PREVIOUS", "")
     if previous_secret and hmac.compare_digest(provided, previous_secret):
         return
+
+    if not provided:
+        print("[SKILL AUTH REJECTED] reason=header_missing")
+    else:
+        print("[SKILL AUTH REJECTED] reason=secret_mismatch")
 
     raise HTTPException(status_code=401, detail="Invalid skill secret")
 
