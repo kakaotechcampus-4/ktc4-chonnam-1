@@ -454,19 +454,23 @@ def test_completed_unknown_page_values_survive_separate_collection_failure():
     assert part.category is Topic.UNKNOWN
 
 
-def test_explicit_unknown_page_metadata_survives_failed_analysis():
+@pytest.mark.parametrize("metadata", [None, "unknown"])
+def test_unknown_collector_metadata_does_not_become_failure_evidence(metadata):
     part = environment_part(
         "<p>normal</p>",
         analysis=PageAnalysis(
             status=AnalysisStatus.FALLBACK,
             failure=FailureCode.LLM_ERROR,
         ),
+        brand=metadata,
+        category=metadata,
     )
 
     assert part.answer in INCOMPLETE
-    assert part.brand is Brand.UNKNOWN
-    assert part.category is Topic.UNKNOWN
-    assert "격리 환경 전달 정보" in part.details.reason.text
+    assert part.brand is None
+    assert part.category is None
+    assert "격리 환경 전달 정보" not in part.details.reason.text
+    assert "unknown" not in part.details.reason.text
 
 
 def test_page_signal_is_preserved_when_another_stage_failed():

@@ -205,14 +205,16 @@ def build_environment_part(
     if not completed:
         if brand is None:
             try:
-                brand = Brand(page.brand)
+                candidate = Brand(page.brand)
+                brand = candidate if candidate is not Brand.UNKNOWN else None
             except ValueError:
                 pass
             if brand is not None:
                 metadata.append(brand.value)
         if category is None:
             try:
-                category = Topic(page.category)
+                candidate = Topic(page.category)
+                category = candidate if candidate is not Topic.UNKNOWN else None
             except ValueError:
                 pass
             if category is not None:
