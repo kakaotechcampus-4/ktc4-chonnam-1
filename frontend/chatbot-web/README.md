@@ -33,11 +33,11 @@ index.html               페이지 틀. 자동 링크·Referer·검색 노출을
 src/
 ├─ main.tsx, App.tsx     진입점
 ├─ pages/ResultPage.tsx  불러오는 중 / 오류 / 결과를 고른다
-├─ components/           Verdict · OriginalMessage(HighlightedText, HighlightNotes) · LineList
+├─ components/           Verdict · OriginalMessage(원문 + 근거 강조 + 설명) · LineList
 │                        · GuidanceList · ResultFooter · ErrorState · Section  (+ 각 .module.css)
 ├─ hooks/                useHashToken(입장권 읽기) · useResult(불러오기, useReducer)
 ├─ api/                  result(조회) · parseResultView(응답 필수 필드 검사)
-├─ lib/                  defang(주소 무해화) · spans(근거 위치) · token · time
+├─ lib/                  defang(주소 무해화) · markMessage(근거 표시) · token · time
 ├─ types.ts              조회 API 응답 타입 (FE 제안 계약)
 └─ **/*.test.ts(x)       테스트
 public/mock/             가짜 결과
@@ -69,7 +69,7 @@ TypeScript 타입은 실행할 때 서버 응답을 검사하지 않는다. 그�
 | 대상              | 확인하는 것                                                                                                        |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `defang`          | `http`·`https`·대문자·스킴 없는 주소·포트·경로 속 주소(`?next=https://…`)를 모두 바꾸고, 숫자·글은 건드리지 않는다 |
-| `findSpans`       | 원문에 없는 인용은 칠하지 않는다. 겹치면 먼저 나온 것만, 번호는 원래 순서대로                                      |
+| `markMessage`     | 원문과 인용을 같이 무해화해 찾는다. 원문에 없거나 겹친 인용은 칠하지도 설명하지도 않고, 번호는 인용 순서대로       |
 | `parseToken`      | `#t=`만 읽고, 비었으면 null                                                                                        |
 | `parseResultView` | 모르는 `tone`·`kind`, 빠진 필드, 잘못된 타입을 거절한다                                                            |
 | `resultReducer`   | 불러오는 중 → 준비됨 / 오류                                                                                        |
