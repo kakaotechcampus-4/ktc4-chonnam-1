@@ -42,6 +42,20 @@ describe("defang: 원문 속 주소를 눌리지 않게 바꾼다", () => {
     expect(out).not.toMatch(/[a-z0-9-]+\.[a-z]{2,}\//i);
   });
 
+  it("IP 주소도 스킴과 점을 바꾼다", () => {
+    expect(defang("http://1.2.3.4/x")).toBe("hxxp://1[.]2[.]3[.]4/x");
+  });
+
+  it("스킴이 없는 IP 주소와 포트도 점을 바꾼다", () => {
+    expect(defang("접속 1.2.3.4:8080/login 하세요")).toBe("접속 1[.]2[.]3[.]4:8080/login 하세요");
+  });
+
+  it("경로 속에 든 IP 주소도 바꾼다", () => {
+    expect(defang("https://a.example/r?next=http://1.2.3.4/x")).toBe(
+      "hxxps://a[.]example/r?next=hxxp://1[.]2[.]3[.]4/x",
+    );
+  });
+
   it("주소가 아닌 글과 숫자는 건드리지 않는다", () => {
     const text = "과태료 3.5만 원, 고객센터 1588-1300으로 연락하세요.";
     expect(defang(text)).toBe(text);
