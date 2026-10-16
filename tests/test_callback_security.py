@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 import main
-from backend.src.server import urlscan_service
+from backend.src.server import http_client
 
 
 ALLOWED_HOST = "callback.example.test"
@@ -256,9 +256,9 @@ async def test_302_is_not_followed_with_production_client_defaults(monkeypatch, 
         # Keep production client's redirect configuration; inject only transport.
         return real_client(*args, transport=httpx.MockTransport(handler), **kwargs)
 
-    monkeypatch.setattr(urlscan_service.httpx, "AsyncClient", offline_client)
+    monkeypatch.setattr(http_client.httpx, "AsyncClient", offline_client)
     job_id = start_job()
-    async with urlscan_service.http_client_lifespan(main.app):
+    async with http_client.http_client_lifespan(main.app):
         await send_callback(CALLBACK_URL, job_id)
     assert len(requests) == 1
     assert str(requests[0].url) == CALLBACK_URL

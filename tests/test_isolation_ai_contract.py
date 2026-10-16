@@ -15,6 +15,7 @@ from ai.types import (
     EnvDoubt,
     FailureCode,
     PageProposal,
+    RiskSignalCode,
     UrlAnalysis,
 )
 from scanner.isolation_client import collect_url_isolated
@@ -114,7 +115,7 @@ async def test_clean_collect_response_reaches_page_analysis(payload, llm_client)
     _, page, failure, response = await collect_and_finalize(payload, llm_client)
 
     assert page.info == STAGE_TWO
-    assert page.brand == page.category == "unknown"
+    assert page.brand is page.category is None
     assert failure is None
     assert llm_input(llm_client)["page_text"] == "stage two delivery status"
     assert isinstance(response, AnalysisResponse)
@@ -144,8 +145,11 @@ async def test_empty_browser_html_falls_back_to_stage_two(payload, llm_client):
     assert response.env.answer is AnswerState.NO_RISK_FOUND
 
 
-async def test_partial_collection_preserves_observations_without_llm(payload, llm_client):
+async def test_partial_collection_preserves_grounded_risk_from_page_analysis(payload, llm_client):
     payload.update(html=FORM_HTML, failures=["html_truncated"])
+    llm_client.chat.completions.parse.return_value.choices[0].message.parsed = PageProposal(
+        signals=[{"code": "credential_request", "evidence_source": "observation", "evidence_ref": "element-0003"},
+                 {"code": "install_prompt", "evidence_source": "observation", "evidence_ref": "element-0003"}])
     _, page, failure, response = await collect_and_finalize(payload, llm_client)
 
     assert page.info == FORM_HTML
@@ -153,9 +157,27 @@ async def test_partial_collection_preserves_observations_without_llm(payload, ll
     assert response.env.answer is AnswerState.PARTIAL
     assert response.env.details.reason.failures == [FailureCode.PARTIAL_CONTENT]
     assert any(item.value is EnvDoubt.LOGIN_FORM for item in response.env.details.doubts)
+    assert [item.code for item in response.env.details.signals] == [RiskSignalCode.CREDENTIAL_REQUEST]
+    assert response.env.details.signals[0].evidence == "계좌 비밀번호 입력 필드"
+    assert response.env.collected_at == page.collected_at
+    assert response.result is False
+    assert llm_input(llm_client)["elements"][0]["element_id"] == "element-0003"
+
+
+@pytest.mark.parametrize("failures", [["html_truncated"], []])
+async def test_page_llm_error_preserves_collector_failure_and_facts(payload, llm_client, failures):
+    payload.update(html=FORM_HTML, failures=failures)
+    llm_client.chat.completions.parse.side_effect = RuntimeError("SDK unavailable")
+    _, _, _, response = await collect_and_finalize(payload, llm_client)
+
+    expected = ([FailureCode.PARTIAL_CONTENT] if failures else []) + [FailureCode.LLM_ERROR]
+    assert response.env.answer is AnswerState.PARTIAL
+    assert response.env.details.reason.failures == expected
+    assert any(item.value is EnvDoubt.LOGIN_FORM for item in response.env.details.doubts)
+    assert response.env.brand is response.env.category is None
+    assert "unknown" not in response.env.details.reason.text
     assert response.env.details.signals == []
     assert response.result is False
-    llm_client.chat.completions.parse.assert_not_awaited()
 
 
 async def test_missing_html_becomes_failed_environment(payload, llm_client):

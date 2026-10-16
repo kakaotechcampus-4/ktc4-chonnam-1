@@ -333,14 +333,19 @@ async def test_collection_failure_skips_page_llm(supplied_page, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("info", ["", '<form><input type="password">'])
-async def test_incomplete_html_skips_page_llm_and_preserves_metadata(info, monkeypatch):
+@pytest.mark.parametrize("failure", [None, FailureCode.PARTIAL_CONTENT])
+async def test_incomplete_html_skips_page_llm_and_preserves_metadata(info, failure, monkeypatch):
     llm = AsyncMock()
     monkeypatch.setattr(module, "analyze_page", llm)
-    part = await module.analyze_environment_part(page(info))
+    part = await module.analyze_environment_part(page(info), failure=failure)
     assert part.answer in INCOMPLETE
     assert part.brand is Brand.CJ_LOGISTICS
     if info:
         assert first_doubt(part) is EnvDoubt.LOGIN_FORM
+        assert part.details.reason.failures == [FailureCode.PARTIAL_CONTENT]
+    else:
+        expected = ([FailureCode.PARTIAL_CONTENT] if failure else []) + [FailureCode.EMPTY_INPUT]
+        assert part.details.reason.failures == expected
     llm.assert_not_awaited()
 
 

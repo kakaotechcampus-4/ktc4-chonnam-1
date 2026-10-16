@@ -1,4 +1,4 @@
-"""브라우저 전용 나가는 연결 검사 프록시 (docs/isolation-security.md §5.2·§5.14).
+"""HTTPX / browser outgoing CONNECT proxy (docs/isolation-security.md §5.2·§5.14).
 
 Playwright `route`는 서버 리다이렉트를 따라간 요청을 다시 보여주지 않는다.
 "허용 주소 → 허용 주소 → 내부 주소" 2단 리다이렉트가 route 검사를 우회해 내부 서버까지
@@ -8,7 +8,7 @@ Playwright `route`는 서버 리다이렉트를 따라간 요청을 다시 보�
 - CONNECT 만 받는다. 평문 HTTP 는 응답 없이 끊는다. 한 연결로 여러 호스트에 요청할 수 있어
   검사가 새고, 403 을 돌려주면 크롬이 그 응답을 대상 페이지 내용으로 보여 주기 때문이다
 - 목적지 호스트·포트를 허용 함수로 확인하고, 허용될 때만 터널을 연다
-- DNS 는 이 프로세스가 푼다(/etc/hosts 의 extra_hosts). 브라우저는 DNS 를 하지 않는다
+- DNS 는 이 프로세스가 푼다. 공개 모드는 검증한 공인 IPv4 에 직접 연결한다
 - 헤더 크기·대기 시간·동시 터널 수·터널 수명을 제한한다
 
 네트워크 방화벽(egress-hosts 의 IP:443 만 허용)이 최종 방어선이고, 이 프록시는 그 앞의 앱 계층이다.
@@ -17,7 +17,7 @@ Playwright `route`는 서버 리다이렉트를 따라간 요청을 다시 보�
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 log = logging.getLogger("collector.proxy")
 
@@ -57,9 +57,12 @@ async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> N
 
 
 class EgressProxy:
-    def __init__(self, allow: Callable[[str, int], bool]) -> None:
+    def __init__(self, allow: Callable[[str, int], bool], *,
+                 connect_ip: Callable[[str, int], Awaitable[str]] | None = None) -> None:
         self._allow = allow
+        self._connect_ip = connect_ip
         self._server: asyncio.Server | None = None
+        self._handlers: set[asyncio.Task] = set()
         self._tunnels = 0
         self.blocked = 0  # 거부한 연결 수. 렌더러가 작업 전후 차이로 작업별 횟수를 센다
         self.port: int | None = None
@@ -79,6 +82,10 @@ class EgressProxy:
         server, self._server = self._server, None
         if server is not None:
             server.close()
+            handlers = tuple(self._handlers)
+            for task in handlers:
+                task.cancel()
+            await asyncio.gather(*handlers, return_exceptions=True)
             if hasattr(server, "close_clients"):  # Python 3.13+
                 server.close_clients()
             with contextlib.suppress(Exception):
@@ -93,6 +100,8 @@ class EgressProxy:
             await writer.drain()
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        task = asyncio.current_task()
+        self._handlers.add(task)
         upstream: asyncio.StreamWriter | None = None
         try:
             try:
@@ -110,8 +119,15 @@ class EgressProxy:
             self._tunnels += 1
             try:
                 try:
+                    address = target[0]
+                    if self._connect_ip is not None:
+                        try:
+                            address = await asyncio.wait_for(self._connect_ip(*target), CONNECT_TIMEOUT_SECONDS)
+                        except ValueError:
+                            await self._deny(writer, target)
+                            return
                     up_reader, upstream = await asyncio.wait_for(
-                        asyncio.open_connection(*target), CONNECT_TIMEOUT_SECONDS
+                        asyncio.open_connection(address, target[1]), CONNECT_TIMEOUT_SECONDS
                     )
                 except (OSError, TimeoutError):
                     writer.write(_BAD_GATEWAY)
@@ -132,3 +148,4 @@ class EgressProxy:
                 if w is not None:
                     with contextlib.suppress(Exception):
                         w.close()
+            self._handlers.discard(task)

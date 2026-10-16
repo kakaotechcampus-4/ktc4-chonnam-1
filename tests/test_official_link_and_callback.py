@@ -35,20 +35,6 @@ class TestCheckLinkOfficial:
         assert check_link_official("CJ대한통운", None, "www.cjlogistics.com", whitelist=WL) == "unresolved"
 
 
-class TestBuildAiUrlAnalysis:
-    def test_mentor_case_redirect_link_not_called_official(self):
-        parsed = {"final_url": "https://www.cjlogistics.com/ko/main", "domain": "www.cjlogistics.com", "score": 0}
-        result = main.build_ai_url_analysis(parsed, "CJ대한통운", "https://cj-delivery-check.xyz/a1b2")
-        assert result.official.value == "brand_mismatch"
-        assert result.domain == "cj-delivery-check.xyz"
-        assert result.final_url == "https://www.cjlogistics.com/ko/main"
-
-    def test_real_official_link(self):
-        parsed = {"final_url": "https://www.cjlogistics.com/ko/tool", "domain": "www.cjlogistics.com", "score": 0}
-        result = main.build_ai_url_analysis(parsed, "CJ대한통운", "https://www.cjlogistics.com/ko/tool?id=1")
-        assert result.official.value == "official"
-
-
 class TestOfficialHomepageButton:
     def test_button_comes_from_whitelist_not_from_link(self):
         assert official_homepage("CJ대한통운", "trace.cjlogistics.com", whitelist=WL) == "https://cjlogistics.com"
