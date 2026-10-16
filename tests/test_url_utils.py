@@ -13,6 +13,11 @@ from backend.src.server.url_utils import split_message
             "",
         ),
         (
+            "택배 확인: https://example.com/",
+            ["https://example.com/"],
+            "택배 확인:",
+        ),
+        (
             "example.com/login",
             ["https://example.com/login"],
             "",
