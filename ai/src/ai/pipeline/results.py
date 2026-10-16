@@ -103,21 +103,24 @@ def _answer(completed: bool, has_signals: bool, has_material: bool) -> AnswerSta
 
 def build_message_part(
     text: str, extracted: MessageAnalysis, cases: CaseSearchResult,
-    signals: SignalAnalysis, *, failure: FailureCode | None = None,
+    signals: SignalAnalysis | None, *, failure: FailureCode | None = None,
 ) -> MessagePart:
     """Preserve grounded message facts across extraction/search/signal failures."""
-    accepted = validate_message_signals(text, signals.signals)
+    accepted = validate_message_signals(text, signals.signals) if signals is not None else []
     completed = (failure is None
         and extracted.analysis_status is AnalysisStatus.COMPLETED
         and cases.status is AnalysisStatus.COMPLETED
+        and signals is not None
         and signals.status is AnalysisStatus.COMPLETED)
-    failures = list(dict.fromkeys(code for code in (failure, signals.failure) if code is not None))
+    failures = list(dict.fromkeys(code for code in (
+        failure, extracted.failure, signals.failure if signals is not None else None,
+    ) if code is not None))
     if not completed and not failures:
         failures.append(FailureCode.MISSING_RESULT)
     # Collect facts independently of the taxonomy's synthetic failure candidate.
     # A real, unclassified request can itself span the entire input.
     candidates = message_candidates(text, extracted.model_copy(
-        update={"analysis_status": AnalysisStatus.COMPLETED}))
+        update={"analysis_status": AnalysisStatus.COMPLETED, "failure": None}))
     for signal in accepted:
         doubt = (MessageDoubt.DATA_INPUT if signal.code is RiskSignalCode.CREDENTIAL_REQUEST
             else MessageDoubt.APP_INSTALL if signal.code is RiskSignalCode.INSTALL_PROMPT
@@ -133,9 +136,26 @@ def build_message_part(
     doubts = [MessageDoubtItem(value=value, evidence=evidence) for value, evidence in dict.fromkeys(
         (candidate.doubt, candidate.evidence) for candidate in kept)]
     quotes = [candidate.evidence for candidate in sorted(candidates, key=lambda item: item.start)]
+    # ponytail: expand only a single-sentence quote; keep source-local candidates
+    # for longer quotes, add clause parsing if broader request context is needed.
+    for action in extracted.requested_actions:
+        quote = action.evidence
+        if (quote and quote.strip() and quote in text
+                and not re.search(r"[.!?\n。！？]\s*\S", quote.strip())):
+            start = text.index(quote)
+            if any(start <= candidate.start
+                    and candidate.start + len(candidate.evidence) <= start + len(quote)
+                    for candidate in candidates):
+                quotes.append(quote)
     quotes = [quote for quote in quotes if not any(quote != other and quote in other for other in quotes)]
-    reasons = [f"문자에서 '{plain}'라고 안내했습니다." for quote in dict.fromkeys(quotes)
-        if (plain := _plain_quote(quote))]
+    reasons = []
+    if extracted.analysis_status is AnalysisStatus.COMPLETED:
+        for label, field in (("기관", extracted.claimed_sender), ("명분", extracted.claimed_purpose)):
+            quote = field.evidence
+            if quote and quote.strip() and quote in text and (plain := _plain_quote(quote)):
+                reasons.append(f"문자가 내세운 {label}: '{plain}'.")
+    reasons.extend(f"문자에서 '{plain}'라고 안내했습니다." for quote in sorted(dict.fromkeys(quotes), key=text.index)
+        if (plain := _plain_quote(quote)))
     if completed and not candidates:
         reasons.append("제공된 문자에서 명시적인 행동 요구를 확인하지 못했습니다.")
     if extracted.analysis_status is AnalysisStatus.FALLBACK:
@@ -185,14 +205,16 @@ def build_environment_part(
     if not completed:
         if brand is None:
             try:
-                brand = Brand(page.brand)
+                candidate = Brand(page.brand)
+                brand = candidate if candidate is not Brand.UNKNOWN else None
             except ValueError:
                 pass
             if brand is not None:
                 metadata.append(brand.value)
         if category is None:
             try:
-                category = Topic(page.category)
+                candidate = Topic(page.category)
+                category = candidate if candidate is not Topic.UNKNOWN else None
             except ValueError:
                 pass
             if category is not None:

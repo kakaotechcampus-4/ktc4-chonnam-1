@@ -1,6 +1,6 @@
 """scanner.static_checks 테스트.
 
-docs/scanner-static-checks-proposal.md 기준. 접속 없이 도메인 문자열만
+docs/archive/scanner-static-checks-proposal.md 기준. 접속 없이 도메인 문자열만
 보고 하는 1단계 검사 — 기존 공식 도메인 비교 + KISA 목록 대조 +
 Punycode/Unicode 사칭 분석.
 """

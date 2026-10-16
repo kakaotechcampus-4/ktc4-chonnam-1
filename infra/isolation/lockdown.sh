@@ -2,14 +2,22 @@
 set -euo pipefail
 
 # Preserve SSH replies and link-local DHCP/time services; new application egress stays closed.
-# collector.env 가 있으면 수집 API 경로 두 개만 연다:
-#   Render(RENDER_CIDRS) → 컨테이너 8443, 컨테이너 → TEST_PAGE_IP:443
-# 없으면 기존처럼 컨테이너 전달을 모두 막는다.
+# collector.env 와 egress-ips.txt 가 있으면 수집 API 경로만 연다:
+#   Render(RENDER_CIDRS) → 컨테이너 8443, 컨테이너 → egress-ips.txt 의 IP:443
+# egress-ips.txt 는 render-egress.py 가 공인 IPv4 만 골라 만든다.
+# 둘 중 하나라도 없으면 기존처럼 컨테이너 전달을 모두 막는다.
 COLLECTOR_BRIDGE=ktc-collector
 if [ -f /opt/ktc-isolation/collector.env ]; then
+    set -a
     # shellcheck disable=SC1091
     . /opt/ktc-isolation/collector.env
+    set +a
 fi
+# Validate every value before touching existing firewall chains. Generated commands contain
+# only validated addresses and fixed arguments; invalid public configuration opens nothing.
+rules_file=$(mktemp)
+trap 'rm -f "$rules_file"' EXIT
+python3 /opt/ktc-isolation/network_config.py /opt/ktc-isolation > "$rules_file"
 iptables -N KTC-INPUT 2>/dev/null || true
 iptables -F KTC-INPUT
 # 컨테이너에서 호스트 서비스(sshd, dockerd 등)로 가는 새 연결은 모두 막는다.
@@ -37,18 +45,8 @@ iptables -C OUTPUT -j KTC-OUTPUT 2>/dev/null || iptables -I OUTPUT 1 -j KTC-OUTP
 
 iptables -N KTC-FORWARD 2>/dev/null || true
 iptables -F KTC-FORWARD
-if [ -n "${TEST_PAGE_IP:-}" ] && [ -n "${RENDER_CIDRS:-}" ]; then
-    iptables -A KTC-FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-    for cidr in $RENDER_CIDRS; do
-        iptables -A KTC-FORWARD -o "$COLLECTOR_BRIDGE" -s "$cidr" -p tcp --dport 8443 \
-            -m conntrack --ctstate NEW -j RETURN
-    done
-    iptables -A KTC-FORWARD -i "$COLLECTOR_BRIDGE" -d "$TEST_PAGE_IP" -p tcp --dport 443 \
-        -m conntrack --ctstate NEW -j RETURN
-    # 감시 신호(§5.12): 차단 패킷 수는 iptables -L KTC-FORWARD -v -n 으로 본다.
-    iptables -A KTC-FORWARD -i "$COLLECTOR_BRIDGE" -m limit --limit 6/min \
-        -j LOG --log-prefix "ktc-collector-drop "
-fi
+# shellcheck disable=SC1090
+. "$rules_file"
 iptables -A KTC-FORWARD -j DROP
 iptables -C FORWARD -j KTC-FORWARD 2>/dev/null || iptables -I FORWARD 1 -j KTC-FORWARD
 if iptables -S DOCKER-USER >/dev/null 2>&1; then

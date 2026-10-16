@@ -85,3 +85,59 @@ def check_official_domain(
     )
 
     return "official" if matched else "brand_mismatch"
+
+
+def check_link_official(
+    brand: str | None,
+    input_domain: str | None,
+    final_domain: str | None,
+    *,
+    whitelist: dict[str, set[str]] | None = None,
+) -> DomainMatch:
+    """문자 속 링크(사용자가 받은 주소)를 기준으로 공식 여부를 정한다.
+
+    결과 카드는 "문자 속 주소가 공식 주소와 같아요"라고 안내한다. 그런데
+    리다이렉트·클로킹으로 최종 페이지만 공식 사이트로 보내는 스미싱 링크가
+    있어서, 최종 도메인만 대조하면 공격자 주소를 공식 주소로 안내하게 된다
+    (멘토 리뷰). 그래서 판정은 입력 주소로 하고, 최종 주소는 공식 판정을
+    깎는 데만 쓴다.
+
+        - 입력 주소가 공식이 아니면 최종 주소와 관계없이 입력 주소의 결과
+        - 입력 주소가 공식인데 최종 주소가 같은 기관의 공식 주소가 아니면
+          (오픈 리다이렉트 가능성) → unresolved. 공식이라고 안내하지 않는다
+        - 둘 다 공식이거나 최종 주소를 모르면 → official
+    """
+
+    input_match = check_official_domain(brand, input_domain, whitelist=whitelist)
+    if input_match != "official":
+        return input_match
+
+    if final_domain and final_domain.strip():
+        final_match = check_official_domain(brand, final_domain, whitelist=whitelist)
+        if final_match != "official":
+            return "unresolved"
+
+    return "official"
+
+
+def official_homepage(
+    brand: str | None,
+    domain: str | None,
+    *,
+    whitelist: dict[str, set[str]] | None = None,
+) -> str | None:
+    """공식 홈페이지 버튼 주소를 화이트리스트에서 만든다.
+
+    문자 속 링크나 urlscan 이 본 주소를 그대로 버튼에 넣지 않는다
+    (`frontend/kakao-templates/README.md`: "문자 속 URL은 쓰지 않는다").
+    `domain`이 일치한 화이트리스트 항목(등록 도메인)으로 주소를 만들고,
+    일치하는 항목이 없으면 None 을 돌려준다.
+    """
+
+    if not brand or not domain:
+        return None
+    active_whitelist = OFFICIAL_DOMAINS if whitelist is None else whitelist
+    for official_domain in sorted(active_whitelist.get(brand, ())):
+        if is_same_or_subdomain(domain, official_domain):
+            return f"https://{_normalize_domain(official_domain)}"
+    return None

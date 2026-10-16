@@ -11,7 +11,7 @@
 # (서브도메인은 official_domain_service.is_same_or_subdomain()이 별도로 처리).
 OFFICIAL_DOMAINS: dict[str, set[str]] = {
     # CJ대한통운/CJ택배/CJ익스프레스는 실사용 문자에서 표기가 갈리지만
-    # 전부 같은 CJ대한통운 배송 서비스를 가리킨다 (docs/ai/Revisions.md
+    # 전부 같은 CJ대한통운 배송 서비스를 가리킨다 (docs/archive/ai/Revisions.md
     # 브랜드 후보 근거 참고). 별도 도메인이 확인되기 전까지 하나로 묶는다.
     "CJ대한통운": {"cjlogistics.com"},
     "CJ택배": {"cjlogistics.com"},

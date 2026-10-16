@@ -1,0 +1,15 @@
+.section {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--paper);
+}
+
+.title {
+  color: var(--soft);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}

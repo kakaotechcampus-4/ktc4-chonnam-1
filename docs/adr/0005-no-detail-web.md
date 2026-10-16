@@ -8,7 +8,7 @@
 전제로 쓰여 있다. 라우트(`/e/[token]`, `/a/[jobId]`, `/routes`), 토큰 교환,
 폴링까지 설계돼 있지만 코드는 없다.
 
-`docs/designs/kakao-result-card-prototype.md` 의 개발 채널 검증에서 첫 카드 +
+`docs/archive/designs/kakao-result-card-prototype.md` 의 개발 채널 검증에서 첫 카드 +
 `자세히 보기` 캐러셀 3장(확인한 것 / 확인 못 한 것 / 지금 할 일)으로 현재 범위의
 근거를 표현할 수 있음을 확인했다. 사용자 테스트는 하지 않았다.
 

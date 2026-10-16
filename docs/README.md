@@ -5,13 +5,18 @@
 - `conventions.md` — 브랜치·커밋·PR 규칙
 - `contracts.md` — 카카오 스키마 변경 절차
 - `security-checklist.md` — 보안 점검 항목
+- `scheme.md`, `ai-be-final-result-schema.md` — AI → BE 분석 결과 스키마
+- `ai-be-python-integration.md` — BE에서 AI 패키지를 호출하는 방법
+- `isolation-security.md` — 격리 환경 위협 모델과 방어 원칙
+- `aws-isolation-setup.md` — AWS 격리환경 구축 요소
 - `isolation-collector-api.md` — 격리 서버 수집 API 계약·대상 제한·배포 순서 (EC2 검증 전 초안)
-- `designs/` — 구현 전 검토용 설계 문서 (합의 전 초안)
-  - `designs/smishing-message-intake-ux.md` — 문자 접수 UX·FE–BE 상호작용 **검토 요청 (Draft)**
+- `designs/`
   - `designs/chatbot-flow.md` — 카카오 챗봇 블록 흐름과 사용자 문구
+  - `designs/chatbot-copy.md` — 챗봇 화면 문구
   - `designs/kakao-chatbot-build-guide.md` — 개발 채널에서 네이티브 카드를 제작·검증하는 방법
-  - `designs/ux-options-3.md` — 결과 화면 3안 비교와 웹 필요성 검증 설계
-  - `designs/kakao-result-card-prototype.md` — 개발 채널 네이티브 결과 카드 검증 기록
+  - `designs/kakao-fe-be-integration.md` — 카카오 결과 카드–BE 연동 명세
+  - `designs/result-meaning-cases.md` — 결과 의미 합의용 사례표
 - `adr/` — 왜 그렇게 정했는지
 - `runbook/` — 세팅·시크릿 관리
 - `experiments/` — 비교 실험 리포트
+- `archive/` — 구현 완료·대체된 문서 보관. **참고하지 않는다** (`archive/CLAUDE.md`)

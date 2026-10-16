@@ -1,6 +1,6 @@
 # AI 파트 안내
 
-기준 설계는 [스미싱 메시지 분석](../docs/ai/smishing-message-intake-ai.md)이다. 이 문서는 전체 프로토타입 요구사항의 구현 완료를 뜻하지 않지만, 아래 구조화 메시지 분석의 JSON·함수 계약은 구현되어 있다.
+기준 설계는 [스미싱 메시지 분석](../docs/archive/ai/smishing-message-intake-ai.md)이다. 이 문서는 전체 프로토타입 요구사항의 구현 완료를 뜻하지 않지만, 아래 구조화 메시지 분석의 JSON·함수 계약은 구현되어 있다.
 
 AI는 링크를 제외한 메시지에서 브랜드·주장 목적·요구 행동을 추출하고, 본문으로 피해 사례를 검색해 참고 유사도를 제공한다. 키워드 압축은 하지 않는다. 관측 사실과 모델 해석을 구분해 설명하며 최종 판정은 결정적 코드가 수행한다. RAG 유사도와 urlscan 점수·brands는 판정을 바꾸지 않는다.
 
@@ -28,6 +28,11 @@ payload = result.model_dump(mode="json")
 분석 결과의 근거는 입력 본문에서 확인된 문자열만 포함하며, 호출 실패나 빈
 입력에서는 동일한 JSON 구조의 `fallback` 결과를 반환한다.
 
+문자 추출 실패의 원인은 Python 반환 객체의 `failure`에 보존한다.
+이 내부 필드는 직렬화에서 제외되어 기존 추출 JSON과 모델 입력은 유지된다.
+문자 파이프라인은 이를 최종 `message.details.reason.failures`에 담는다.
+원인 정보가 없는 기존 폴백은 알려진 다른 실패 원인도 없을 때 `missing_result`로 안내한다.
+
 ## 판정
 
 ```python
@@ -47,3 +52,10 @@ text = await explain_verdict(verdict, observations, cases)
 
 RAG 유사도, 스캐너 점수, 주제 분류는 판정 입력에서 제외한다. LLM이 제안한 신호는
 근거가 실제 입력에 존재하는 것만 채택한다.
+
+## 최소 스미싱 시나리오 검증
+
+기존 `analyze_message_part()` → `finalize_analysis(page=None)`를 그대로 사용한다.
+AI 제품 코드·공개 API·판정 규칙은 바꾸지 않는다.
+기존 회귀 검증은 저장소 루트에서 `python -X utf8 -m pytest ai/tests -q`로 실행한다.
+실제 모델 품질과 카카오 전달 성공은 배포 후 별도로 확인한다.

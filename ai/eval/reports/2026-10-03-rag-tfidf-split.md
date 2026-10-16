@@ -90,7 +90,7 @@
 
 ### 이전 리포트와의 관계
 
-KB 와 평가 행이 모두 바뀌었다. KB 는 296건에서 443건이 됐고(유형 라벨 428건), 평가 스미싱은 215건에서 62건(dev 31 / test 31)이 됐다. 그래서 `2026-10-03-rag-tfidf.md` 등 이전 리포트 수치와 직접 비교하지 않는다. 분할 방법은 `docs/superpowers/specs/2026-10-03-rag-kb-eval-split-design.md` 를 따른다.
+KB 와 평가 행이 모두 바뀌었다. KB 는 296건에서 443건이 됐고(유형 라벨 428건), 평가 스미싱은 215건에서 62건(dev 31 / test 31)이 됐다. 그래서 `2026-10-03-rag-tfidf.md` 등 이전 리포트 수치와 직접 비교하지 않는다. 분할 방법은 `docs/archive/superpowers/specs/2026-10-03-rag-kb-eval-split-design.md` 를 따른다.
 
 ### 이번 결과 (test)
 

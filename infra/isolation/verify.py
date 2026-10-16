@@ -5,10 +5,23 @@ import os
 import socket
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+from collector.policy import NetworkPolicy, load_allowed_hosts
+
+
+def blocked_probe_addresses():
+    targets = ("169.254.169.254", "10.0.1.1")
+    if os.getenv("COLLECTOR_NETWORK_MODE", "allowlist") == "public":
+        policy = NetworkPolicy(
+            mode="public",
+            protected_hosts=load_allowed_hosts(os.getenv("COLLECTOR_PROTECTED_HOSTS", "")),
+            protected_ips=load_allowed_hosts(os.getenv("COLLECTOR_PROTECTED_IPS", "")),
+        )
+        return (*targets, *sorted(policy.protected_ips))
+    return (*targets, "1.1.1.1")
 
 
 def main():
+    from playwright.sync_api import sync_playwright
     assert os.getuid() == 10001, "browser must not run as root"
     status = Path("/proc/self/status").read_text()
     assert "CapEff:\t0000000000000000" in status
@@ -22,14 +35,14 @@ def main():
         assert error.errno == errno.EROFS, error
     else:
         raise AssertionError("root filesystem is writable")
-    for address in ("169.254.169.254", "10.0.1.1", "1.1.1.1"):
+    for address in blocked_probe_addresses():
         try:
             socket.create_connection((address, 443), timeout=1).close()
         except OSError:
             pass
         else:
             raise AssertionError(f"network unexpectedly reachable: {address}")
-    # 수집 API용 브리지 하나만 있어야 한다. 바깥으로 나가는 길은 lockdown.sh 가 TEST_PAGE_IP:443 만 연다.
+    # 수집 API용 브리지 하나만 있어야 한다. 바깥으로 나가는 길은 lockdown.sh 가 egress-ips.txt 의 IP:443 만 연다.
     assert set(os.listdir("/sys/class/net")) <= {"lo", "eth0"}, "unexpected network interface present"
     token = Path("/run/secrets/collect_token").read_text().strip()
     assert token not in "".join(os.environ.values()), "collect token leaked into environment"

@@ -3,15 +3,25 @@
   "template": {
     "outputs": [
       {
-        "textCard": {
+        "basicCard": {
           "title": "⚠️ 위험한 문자로 판단했어요",
           "description": "문자 속 링크를 누르거나 앱을 설치하지 마세요.\n추가 확인이 필요하면 한국인터넷진흥원의 스미싱 확인 서비스를 이용해 주세요.\n화기니는 URL 분석 결과의 정확성과 링크의 안전을 보증하지 않습니다.",
+          "thumbnail": {
+            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/r1-danger.png",
+            "altText": "빨간 경고 표지판 옆에서 손바닥을 들어 멈추라고 하는 경찰 모자 기니피그",
+            "fixedRatio": false
+          },
           "buttonLayout": "vertical",
           "buttons": [
             {
               "label": "신고하기",
               "action": "block",
               "blockId": "6abba220c841065f2fe49628"
+            },
+            {
+              "label": "자세히 보기",
+              "action": "block",
+              "blockId": "6aad3abfe745d3358bd90c8d"
             }
           ]
         }

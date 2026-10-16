@@ -497,6 +497,27 @@ async def test_actual_timeout_preserves_other_completed_part(timed_out, make_par
 
 
 @pytest.mark.asyncio
+async def test_extraction_timeout_preserves_final_json_and_completed_environment(make_parse_client):
+    failed_client, failed_parse = make_parse_client(side_effect=TimeoutError())
+    ready_client, _ = make_parse_client(parsed=PageProposal())
+    message = await analyze_message_part(TEXT, client=failed_client, model="test")
+    env = await analyze_environment_part(page(), client=ready_client, model="test")
+    response = assemble_analysis(url(True), message, env)
+    wire = response.model_dump(mode="json")
+    assert set(wire) == {"url", "message", "env", "result"}
+    assert set(wire["message"]) == {"brand", "category", "answer", "details"}
+    assert set(wire["message"]["details"]) == {"doubts", "signals", "reason"}
+    assert set(wire["message"]["details"]["reason"]) == {"text", "failures"}
+    assert wire["message"]["answer"] == "partial"
+    assert wire["message"]["details"]["reason"]["failures"] == ["timeout"]
+    assert response.env.answer is _Answer.NO_RISK_FOUND
+    assert response.env.details.reason.failures == []
+    assert response.result is False
+    assert type(response).model_validate_json(response.model_dump_json()) == response
+    failed_parse.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("suffix", [
     "<span></span>" * (page_module.MAX_ELEMENTS + 1),
     "가" * (page_module.MAX_PAGE_TEXT_CHARS + 1),
