@@ -7,12 +7,15 @@
 검증에 실패하면 아무 파일도 바꾸지 않고 끝난다.
 """
 
+import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from egress_hosts import EgressHostsError, parse_egress_hosts  # noqa: E402
+from network_config import public_config  # noqa: E402
 
 HEADER = "# render-egress.py 가 egress-hosts 로 만든 파일이다. 직접 고치지 않는다.\n"
 
@@ -29,11 +32,24 @@ def render(entries: list[tuple[str, str]]) -> tuple[str, str]:
 def main(directory: str = "/opt/ktc-isolation") -> int:
     base = Path(directory)
     try:
-        entries = parse_egress_hosts((base / "egress-hosts").read_text(encoding="utf-8"))
-    except (OSError, EgressHostsError) as exc:
+        mode = os.getenv("COLLECTOR_NETWORK_MODE", "allowlist")
+        if mode == "public":
+            policy, dns = public_config(os.environ)
+            compose = HEADER + "services:\n  browser:\n    dns:\n      - " + json.dumps(dns) + "\n    environment:\n"
+            values = dict(COLLECTOR_NETWORK_MODE="public",
+                          COLLECTOR_PROTECTED_HOSTS=",".join(sorted(policy.protected_hosts)),
+                          COLLECTOR_PROTECTED_IPS=",".join(sorted(policy.protected_ips)))
+            compose += "".join(f"      {key}: {json.dumps(value)}\n" for key, value in values.items())
+            ips = ""
+            entries = []
+        elif mode == "allowlist":
+            entries = parse_egress_hosts((base / "egress-hosts").read_text(encoding="utf-8"))
+            compose, ips = render(entries)
+        else:
+            raise ValueError("invalid COLLECTOR_NETWORK_MODE")
+    except (OSError, ValueError) as exc:
         print(f"egress-hosts 오류: {exc}", file=sys.stderr)
         return 1
-    compose, ips = render(entries)
     (base / "compose.egress.yaml").write_text(compose, encoding="utf-8")
     (base / "egress-ips.txt").write_text(ips, encoding="utf-8")
     print(f"허용 호스트 {len(entries)}개, IP {len(ips.splitlines())}개")
