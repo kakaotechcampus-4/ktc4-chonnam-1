@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ResultPage } from "./ResultPage";
 import caution from "../../public/mock/caution.json";
+import uncertain from "../../public/mock/uncertain.json";
 
 function openWithHash(hash: string) {
   window.history.replaceState(null, "", `/${hash}`);
@@ -34,6 +35,24 @@ describe("ResultPage", () => {
     expect(url).not.toContain("x7Kq");
     expect(init.headers).toEqual({ Authorization: "Bearer x7Kq" });
     expect(init.cache).toBe("no-store");
+  });
+
+  it("공식 확인 방법은 출처와 연도를 함께 보여 준다", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(caution))));
+    openWithHash("#t=x7Kq");
+    render(<ResultPage />);
+    expect(await screen.findByRole("heading", { name: "공식 확인 방법" })).toBeInTheDocument();
+    expect(
+      screen.getByText("경찰청·대한민국 정책브리핑 공지와 보도자료 (2025)"),
+    ).toBeInTheDocument();
+  });
+
+  it("공식 확인 방법 자료가 없으면 그 칸을 만들지 않는다", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(uncertain))));
+    openWithHash("#t=x7Kq");
+    render(<ResultPage />);
+    expect(await screen.findByRole("heading", { level: 1 })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "공식 확인 방법" })).toBeNull();
   });
 
   it("만료된 입장권이면 열람 시간이 지났다고 안내한다", async () => {

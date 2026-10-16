@@ -33,8 +33,8 @@ index.html               페이지 틀. 자동 링크·Referer·검색 노출을
 src/
 ├─ main.tsx, App.tsx     진입점
 ├─ pages/ResultPage.tsx  불러오는 중 / 오류 / 결과를 고른다
-├─ components/           Verdict · OriginalMessage(원문 + 근거 강조 + 설명) · LineList
-│                        · GuidanceList · ResultFooter · ErrorState · Section  (+ 각 .module.css)
+├─ components/           OriginalMessage(원문 + 근거 강조 + 설명) · LineList · ErrorState · Section
+│                        (+ 각 .module.css). 한 곳에서만 쓰는 칸은 페이지 안에 둔다
 ├─ hooks/                useHashToken(입장권 읽기) · useResult(불러오기, useReducer)
 ├─ api/                  result(조회) · parseResultView(응답 필수 필드 검사)
 ├─ lib/                  defang(주소 무해화) · markMessage(근거 표시) · token · time
@@ -44,7 +44,7 @@ public/mock/             가짜 결과
 dist/                    빌드 결과. 커밋한다 (BE가 이 폴더를 내보낸다)
 ```
 
-컴포넌트는 이름 붙여 내보낸다(`export function Verdict`). 스타일은 컴포넌트 옆의 CSS Module(`Verdict.module.css`)에 둔다.
+컴포넌트는 이름 붙여 내보낸다(`export function OriginalMessage`). 스타일은 컴포넌트 옆의 CSS Module(`OriginalMessage.module.css`)에 둔다.
 
 ## 기술 스택과 고른 이유
 
