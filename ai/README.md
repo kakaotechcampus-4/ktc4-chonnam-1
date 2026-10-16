@@ -52,3 +52,10 @@ text = await explain_verdict(verdict, observations, cases)
 
 RAG 유사도, 스캐너 점수, 주제 분류는 판정 입력에서 제외한다. LLM이 제안한 신호는
 근거가 실제 입력에 존재하는 것만 채택한다.
+
+## 최소 스미싱 시나리오 검증
+
+기존 `analyze_message_part()` → `finalize_analysis(page=None)`를 그대로 사용한다.
+AI 제품 코드·공개 API·판정 규칙은 바꾸지 않는다.
+기존 회귀 검증은 저장소 루트에서 `python -X utf8 -m pytest ai/tests -q`로 실행한다.
+실제 모델 품질과 카카오 전달 성공은 배포 후 별도로 확인한다.
