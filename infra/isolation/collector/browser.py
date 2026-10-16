@@ -13,7 +13,7 @@
 - service_workers="block": 서비스 워커가 처리한 요청은 route 를 피하므로 아예 막는다
 - accept_downloads=False: 다운로드는 주소만 기록하고 본문은 받지 않는다
 - 새 탭·팝업은 바로 닫는다
-- 최종 방어선은 호스트 방화벽이다 (컨테이너는 TEST_PAGE_IP:443 으로만 나갈 수 있다)
+- 최종 방어선은 호스트 방화벽이다 (컨테이너는 egress-hosts 의 IP:443 으로만 나갈 수 있다)
 """
 
 import asyncio
