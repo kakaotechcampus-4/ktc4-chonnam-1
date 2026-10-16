@@ -18,6 +18,10 @@ Windows / Python 가상환경에서 `.venv/Scripts/python.exe -X utf8 -m pytest 
 
 ## 실행 환경의 제약
 
+후속 EC2 검증에서 실제 Chromium 샌드박스, 새 브라우저 코드, 새 공개 방화벽의 커널 패킷 검사가
+통과했다. [EC2 실제 검증 기록](2026-10-17-ec2-browser-firewall.md)을 확인한다.
+아래 실패는 로컬 Docker 환경에 한정하며, 운영 공개 모드 적용·결합 검증과 구분한다.
+
 로컬 Docker 엔진은 28.5.2이며 기존 `ktc-isolation:collector-candidate` 이미지에
 Playwright 1.63.0과 Chromium이 설치되어 있다.
 그러나 샌드박스를 활성화한 Chromium 실행은 `No usable sandbox`로 실패했다.
