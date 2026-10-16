@@ -704,7 +704,7 @@ class TestRenderDetailCarouselGuidance:
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
         assert len(items) == 2 + 3  # C2 + C3 + 안내 최대 3장
 
-    def test_long_guidance_text_is_truncated_to_128_chars(self, monkeypatch):
+    def test_long_guidance_text_is_split_without_losing_content(self, monkeypatch):
         long_text = "고객센터 " + "0" * 200
         monkeypatch.setattr(
             result_card_renderer, "find_guidance",
@@ -713,10 +713,40 @@ class TestRenderDetailCarouselGuidance:
 
         carousel = render_detail_carousel(self._analysis())
 
-        guidance_card = carousel["template"]["outputs"][0]["carousel"]["items"][-1]
-        rendered = guidance_card["description"]
-        assert len(rendered) <= 128
-        assert rendered.endswith("…")
+        cards = carousel["template"]["outputs"][0]["carousel"]["items"][2:]
+        assert len(cards) == 2
+        assert all(len(card["description"]) <= 128 for card in cards)
+        assert "".join(card["description"] for card in cards) == long_text
+        assert [card["title"] for card in cards] == [
+            "📋 공식 확인 방법 (1/2)", "📋 공식 확인 방법 (2/2)",
+        ]
+
+    def test_parcel_guidance_preserves_every_customer_service_number(self):
+        analysis = self._analysis()
+        analysis["message"]["brand"] = "CJ대한통운"
+        analysis["message"]["category"] = "택배"
+
+        items = render_detail_carousel(analysis)["template"]["outputs"][0]["carousel"]["items"]
+        guidance = items[2:]
+
+        assert guidance
+        assert all(len(card["description"]) <= 128 for card in guidance)
+        for number in ("1588-1300", "1588-1255", "1588-0011", "1588-2121", "1588-9988"):
+            assert any(number in card["description"] for card in guidance)
+
+    def test_split_guidance_keeps_carousel_limit_and_never_includes_half_a_rule(self, monkeypatch):
+        monkeypatch.setattr(
+            result_card_renderer, "find_guidance",
+            lambda payload: [_guidance(text="가" * 900), _guidance(text="나" * 256)],
+        )
+        analysis = _analysis(
+            "brand_mismatch", _part("risk_found", signals=[_signal()] * 20), _part("not_run"),
+        )
+
+        items = render_detail_carousel(analysis)["template"]["outputs"][0]["carousel"]["items"]
+
+        assert len(items) == 10
+        assert "".join(card["description"] for card in items[2:]) == "가" * 900
 
     def test_guidance_items_shrink_the_signal_budget_to_stay_within_ten(self, monkeypatch):
         monkeypatch.setattr(

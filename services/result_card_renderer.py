@@ -7,6 +7,7 @@ be_teammate_card_integration_tasks.md 4~6절 기준.
 캐러셀을 보여주는 구조라, 결과 카드와 캐러셀은 서로 다른 응답이다).
 """
 
+from textwrap import wrap
 from typing import Any
 
 from services.chatbot_copy_data import (
@@ -32,7 +33,7 @@ DETAIL_BUTTON_LABEL = "자세히 보기"
 MAX_CAROUSEL_SIGNAL_ITEMS = 8  # + C2 + C3 = 10장 (카카오 캐러셀 상한)
 MAX_CAROUSEL_TOTAL_ITEMS = 10  # 카카오 캐러셀 자체 상한
 _FIXED_CAROUSEL_ITEMS = 2  # C2(미확인) + C3(행동 안내)는 항상 1장씩 나간다
-_MAX_GUIDANCE_ITEMS = 3  # find_guidance() 계약(최대 3개)과 별개로 BE에서도 한 번 더 막는다
+_MAX_GUIDANCE_ITEMS = 3  # 안내 자료 개수. 긴 자료는 여러 카드로 나눈다.
 _GUIDANCE_TEXT_MAX_LENGTH = 128  # FE 합의: 카드 1장당 128자
 _EVIDENCE_MAX_LENGTH = 60
 
@@ -334,9 +335,8 @@ def _guidance_description(guidance: Any) -> str:
     `procedure`는 "{source}는 ~라고 안내했어요({연도})" 형식이다 — 문자가
     가짜라는 결론이 아니라 공식 기관이 실제로 안내한 절차임을 보여주는
     것이 목적이라, 여기서 "그래서 가짜/진짜"라는 판단을 덧붙이지 않는다.
-    `Guidance.text`는 128자를 넘을 수 있어(이슈 댓글: 택배 고객센터
-    5곳·카드사 9곳 번호 포함) 잘라낸다 — 여러 장으로 쪼개는 규칙은 FE와
-    아직 합의되지 않아, 합의 전까지는 안전하게 자르는 쪽을 택한다.
+    긴 안내는 `_guidance_items`에서 나눈다. 여기서 자르면 고객센터
+    번호가 중간에 끊겨 잘못된 확인 경로를 안내할 수 있다.
     """
 
     kind = getattr(guidance, "kind", None)
@@ -349,7 +349,7 @@ def _guidance_description(guidance: Any) -> str:
         year_suffix = f"({year})" if year else ""
         text = f"{source}는 {text}라고 안내했어요{year_suffix}."
 
-    return _truncate_evidence(text, _GUIDANCE_TEXT_MAX_LENGTH)
+    return text
 
 
 def _guidance_items(analysis_result: dict) -> list[dict]:
@@ -373,10 +373,19 @@ def _guidance_items(analysis_result: dict) -> list[dict]:
     template = render_card("c4-guidance")
     item_template = template["template"]["outputs"][0]["carousel"]["items"][0]
 
-    return [
-        substitute_values(item_template, {"guidance_text": _guidance_description(guidance)})
-        for guidance in guidance_list[:_MAX_GUIDANCE_ITEMS]
-    ]
+    items = []
+    for guidance in guidance_list[:_MAX_GUIDANCE_ITEMS]:
+        # 하이픈에서 나누지 않아 전화번호를 한 카드 안에 보존한다.
+        chunks = wrap(_guidance_description(guidance), width=_GUIDANCE_TEXT_MAX_LENGTH,
+                      break_on_hyphens=False) or [""]
+        if len(items) + len(chunks) > MAX_CAROUSEL_TOTAL_ITEMS - _FIXED_CAROUSEL_ITEMS:
+            break  # 안내 하나를 중간까지만 보여 주지 않는다.
+        for index, chunk in enumerate(chunks, start=1):
+            item = substitute_values(item_template, {"guidance_text": chunk})
+            if len(chunks) > 1:
+                item["title"] = f"{item['title']} ({index}/{len(chunks)})"
+            items.append(item)
+    return items
 
 
 def render_detail_carousel(analysis_result: dict) -> dict:
