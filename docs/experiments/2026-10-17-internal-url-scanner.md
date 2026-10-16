@@ -1,5 +1,8 @@
 # 자체 URL 수집 전환 검증 기록
 
+후속 사용자 승인에 따라 [EC2 공개 수집 적용](2026-10-17-public-collector-rollout.md)을 완료했다.
+아래는 코드 구현·초기 검증 시점의 기록이며, Render의 BE 전환은 아직 남아 있다.
+
 작업 브랜치: `refactor/internal-url-scanner`.
 변경 전 기준: `test/render`의 `d7164888e6d6f9f9fa1b1b95cd90f5b11f66bb93`.
 운영 Render·EC2·카카오 설정은 이 작업에서 변경하지 않는다.
