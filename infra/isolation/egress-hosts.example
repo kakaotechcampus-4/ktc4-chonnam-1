@@ -1,0 +1,24 @@
+# 격리 서버가 접속할 수 있는 호스트와 고정 IP. /opt/ktc-isolation/egress-hosts 로 복사해 채운다.
+# 형식: 호스트 IP  (한 줄에 하나, # 뒤는 주석)
+#
+# - 컨테이너는 DNS 를 쓰지 않는다. 여기 적은 IP 로만 해석하고(/etc/hosts), 방화벽도 이 IP 의 443 만 연다.
+# - IP 는 노트북에서 `python3 infra/isolation/check-egress-ips.py --print egress-hosts` 로 채운다.
+#   배포 전마다 `check-egress-ips.py egress-hosts` 로 바뀌었는지 확인한다.
+# - IP 가 바뀌면 접속이 실패하고, 메인 서버는 그 링크를 판단 보류로 안내한다 (틀린 안내가 나가지 않는다).
+# - 공인 IPv4 만 받는다. 아래 203.0.113.x 는 문서용 주소라 그대로 두면 render-egress.py 가 거부한다.
+
+# 가짜 페이지 (docs/superpowers/specs/2026-10-10-isolation-test-pages-design.md)
+example-account.github.io   203.0.113.10
+fixture.example-test.kr     203.0.113.11
+
+# 단축 도메인. 메인 서버 services/link_resolution.py 의 SHORTENER_HOSTS 와 함께 관리한다.
+# 여기 없으면 그 단축 주소는 풀지 못하고 판단 보류가 된다.
+bit.ly        203.0.113.20
+naver.me      203.0.113.21
+me2.do        203.0.113.22
+han.gl        203.0.113.23
+url.kr        203.0.113.24
+vo.la         203.0.113.25
+kko.to        203.0.113.26
+tinyurl.com   203.0.113.27
+is.gd         203.0.113.28

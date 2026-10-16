@@ -29,7 +29,7 @@ def main():
             pass
         else:
             raise AssertionError(f"network unexpectedly reachable: {address}")
-    # 수집 API용 브리지 하나만 있어야 한다. 바깥으로 나가는 길은 lockdown.sh 가 TEST_PAGE_IP:443 만 연다.
+    # 수집 API용 브리지 하나만 있어야 한다. 바깥으로 나가는 길은 lockdown.sh 가 egress-ips.txt 의 IP:443 만 연다.
     assert set(os.listdir("/sys/class/net")) <= {"lo", "eth0"}, "unexpected network interface present"
     token = Path("/run/secrets/collect_token").read_text().strip()
     assert token not in "".join(os.environ.values()), "collect token leaked into environment"

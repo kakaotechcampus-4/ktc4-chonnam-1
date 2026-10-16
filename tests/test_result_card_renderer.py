@@ -395,6 +395,34 @@ class TestR9BlankValues:
 
         assert "- 문자 내용 (문자 분석을 완료하지 못했어요)" in description
 
+    def test_link_only_message_shows_empty_input_reason(self):
+        """이슈 #78 (#59 후속): 링크만 보내 본문이 비면 분석 실패가 아니라
+        '읽을 글이 없었다'는 뜻이다 — 기본 문구로 뭉뚱그리면 안 된다."""
+
+        analysis = _analysis(
+            "not_registered",
+            _part("failed", brand="CJ대한통운", failures=["empty_input"]),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "- 문자 내용 (링크만 있어서 확인할 글이 없었어요)" in description
+
+    def test_too_long_message_shows_input_too_large_reason(self):
+        """이슈 #78: 본문이 8,192자를 넘어 검사를 못 한 경우도 검사
+        실패와 구분한다."""
+
+        analysis = _analysis(
+            "not_registered",
+            _part("failed", brand="CJ대한통운", failures=["input_too_large"]),
+            _part("not_run"),
+        )
+
+        description = _r9_description(analysis)
+
+        assert "- 문자 내용 (문자가 너무 길어 끝까지 확인하지 못했어요)" in description
+
     def test_env_partial_from_timeout_is_treated_as_unchecked(self):
         analysis = _analysis(
             "not_registered",
@@ -744,6 +772,20 @@ class TestRenderDetailCarouselGuidance:
 
         assert "문자:" not in c2
         assert "페이지: 페이지를 열어보려 했지만 열지 못했어요." in c2
+
+    def test_c2_shows_empty_input_reason_for_link_only_message(self):
+        """이슈 #78: 링크만 보낸 경우도 '자세히 보기'에서 기본 문구가
+        아니라 전용 문구로 나와야 한다."""
+
+        analysis = _analysis(
+            "brand_mismatch",
+            _part("failed", brand="CJ대한통운", failures=["empty_input"]),
+            _part("no_risk_found"),
+        )
+
+        c2 = _c2_text(analysis)
+
+        assert "문자: 링크만 있어서 확인할 글이 없었어요" in c2
 
     def test_c2_shows_both_reasons_distinguished_when_both_incomplete(self):
         analysis = _analysis(
