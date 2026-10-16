@@ -470,8 +470,7 @@ def build_ai_url_analysis(
 ) -> UrlAnalysis:
     """Compare the received/first real host; incomplete or later movement only downgrades."""
     browser = collected.browser
-    chain = (*collected.redirect_chain, *(browser.navigation_chain if browser else ()))
-    judged_domain = first_real_host(input_url, chain)
+    judged_domain = first_real_host(input_url, collected.redirect_chain)
 
     # fetch.final_url may name an unvisited blocked/timeout destination.
     final_url = (collected.final_url
@@ -483,24 +482,20 @@ def build_ai_url_analysis(
 
     official = check_link_official(brand, judged_domain, _http_host(final_url))
     if official == "official":
-        incomplete = (not final_url or not (collected.html or (browser and browser.html))
-                      or bool(collected.failures)
-                      or bool(browser and (browser.failures
-                          or browser.final_url not in browser.navigation_chain
-                          or not _http_host(browser.final_url))))
+        # shortcut: browser commits omit HTTP redirect hops; require full request history before confirming.
+        incomplete = (browser is not None or not final_url or not collected.html
+                      or bool(collected.failures))
         if incomplete:
             official = "unresolved"
-        # Each stage starts at input_url; a browser restart is not a redirect back.
-        for stage_chain in (collected.redirect_chain, browser.navigation_chain if browser else ()):
-            reached_real_host = False
-            for url in (input_url, *stage_chain):
-                host = _http_host(url)
-                if not reached_real_host and is_shortener(host):
-                    continue
-                reached_real_host = True
-                if not host or check_link_official(brand, judged_domain, host) != "official":
-                    official = "unresolved"
-                    break
+        reached_real_host = False
+        for url in (input_url, *collected.redirect_chain):
+            host = _http_host(url)
+            if not reached_real_host and is_shortener(host):
+                continue
+            reached_real_host = True
+            if not host or check_link_official(brand, judged_domain, host) != "official":
+                official = "unresolved"
+                break
 
     return UrlAnalysis(
         final_url=final_url,
