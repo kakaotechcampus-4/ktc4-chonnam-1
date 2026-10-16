@@ -62,6 +62,15 @@ describe("ResultPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("열람 시간이 지났어요");
   });
 
+  it("결과가 사라졌으면(404) 찾을 수 없다고 안내하고 문자를 다시 보내게 한다", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 404 })));
+    openWithHash("#t=gone");
+    render(<ResultPage />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("결과를 찾을 수 없어요");
+    expect(alert).not.toHaveTextContent("결과 확인");
+  });
+
   it("응답 모양이 어긋나면 불러오지 못했다고 안내한다", async () => {
     const broken = { ...caution, tone: "safe" };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(broken))));

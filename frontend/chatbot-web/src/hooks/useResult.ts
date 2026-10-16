@@ -27,7 +27,7 @@ function initialState(token: string | null): ResultState {
 }
 
 function toLoadError(error: unknown): LoadError {
-  return error === "expired" ? "expired" : "failed";
+  return error === "expired" || error === "not_found" ? error : "failed";
 }
 
 /** 입장권으로 결과를 받는다. 입장권이 바뀌면 다시 받고, 늦게 온 이전 응답은 버린다. */

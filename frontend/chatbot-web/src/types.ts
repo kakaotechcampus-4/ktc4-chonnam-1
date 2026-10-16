@@ -30,4 +30,5 @@ export interface ResultView {
   expires_at: string;
 }
 
-export type LoadError = "no_token" | "expired" | "failed";
+/** expired: 입장권 만료·무효(401·410), not_found: 결과가 사라짐(404, 서버 재시작 등) */
+export type LoadError = "no_token" | "expired" | "not_found" | "failed";
