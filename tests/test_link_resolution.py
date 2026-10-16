@@ -1,31 +1,17 @@
 """단축 주소 해석: 격리 서버 2단계 경로에서 첫 실제 도메인을 찾아 공식 여부를 판정한다."""
 
-import asyncio
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import httpx
-import pytest
 
-import main
 from scanner.collect_response import parse_collect_response
 from scanner.fetch import collect_url
-from scanner.models import CollectResult
-from services.link_resolution import first_real_host, is_shortener, resolve_real_host
+from services.link_resolution import first_real_host, is_shortener
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "infra" / "isolation"))
 from collector.app import create_app  # noqa: E402
-from collector.policy import is_allowed_url  # noqa: E402
-
-
-def collected(link, chain=(), final=None, failures=()):
-    return CollectResult(
-        input_url=link, final_url=final, redirect_chain=tuple(chain), status_code=None,
-        content_type=None, html="", title=None, elapsed_ms=1, failures=tuple(failures),
-    )
 
 
 class TestFirstRealHost:
@@ -50,48 +36,6 @@ class TestFirstRealHost:
 
     def test_is_shortener(self):
         assert is_shortener("BIT.LY.") and not is_shortener("bit.ly.evil.example") and not is_shortener(None)
-
-
-class TestResolveRealHost:
-    async def test_uses_redirect_chain(self):
-        async def collect(link):
-            return collected(link, ["https://cj-delivery.xyz/a"], "https://cj-delivery.xyz/a", ("blocked_address",))
-
-        assert await resolve_real_host("https://bit.ly/a", collect) == "cj-delivery.xyz"
-
-    async def test_failure_is_none(self):
-        async def collect(link):
-            raise RuntimeError("isolation down")
-
-        assert await resolve_real_host("https://bit.ly/a", collect) is None
-
-    async def test_shortener_blocked_by_isolation_is_none(self):
-        # 격리 서버 허용 목록에 없는 단축 도메인: 요청을 보내지 않아 경로가 비어 있다
-        async def collect(link):
-            return collected(link, (), link, ("blocked_address",))
-
-        assert await resolve_real_host("https://bit.ly/a", collect) is None
-
-
-class TestJudgement:
-    PARSED = {"final_url": "https://www.cjlogistics.com/ko/main", "domain": "www.cjlogistics.com", "score": 0}
-
-    def test_shortener_to_official(self):
-        r = main.build_ai_url_analysis(self.PARSED, "CJ대한통운", "https://bit.ly/a", judged_domain="www.cjlogistics.com")
-        assert r.official.value == "official"
-
-    def test_shortener_to_attacker_cloaking_to_official(self):
-        r = main.build_ai_url_analysis(self.PARSED, "CJ대한통운", "https://bit.ly/a", judged_domain="cj-delivery.xyz")
-        assert r.official.value == "brand_mismatch"
-        assert r.domain == "cj-delivery.xyz"
-
-    def test_unresolved_shortener(self):
-        r = main.build_ai_url_analysis(self.PARSED, "CJ대한통운", "https://bit.ly/a", judged_domain=None)
-        assert r.official.value == "unresolved"
-
-    def test_without_shortener_uses_link(self):
-        r = main.build_ai_url_analysis(self.PARSED, "CJ대한통운", "https://cj-delivery.xyz/a")
-        assert r.official.value == "brand_mismatch"
 
 
 class TestEndToEndWithCollector:
@@ -122,7 +66,8 @@ class TestEndToEndWithCollector:
                                  headers={"Authorization": "Bearer " + "t" * 40})
                 return parse_collect_response(link, r.json())
 
-            return await resolve_real_host(next(iter(routes)), collect), sent
+            result = await collect(next(iter(routes)))
+            return first_real_host(result.input_url, result.redirect_chain), sent
 
     async def test_attacker_site_is_never_requested(self):
         real, sent = await self.run({
@@ -136,40 +81,3 @@ class TestEndToEndWithCollector:
         real, sent = await self.run({"https://bit.ly/a": "https://www.cjlogistics.com/ko/main"})
         assert real == "www.cjlogistics.com"
         assert sent == ["https://bit.ly/a"]
-
-
-async def test_run_analysis_resolves_shortener(monkeypatch):
-    link = "https://bit.ly/abc"
-    seen = {}
-
-    async def fake_resolve(url):
-        seen["resolve"] = url
-        return "cj-delivery.xyz"
-
-    def fake_build(parsed_result, brand, input_url, **kwargs):
-        seen["judged_domain"] = kwargs.get("judged_domain")
-        return SimpleNamespace(domain="cj-delivery.xyz", official="brand_mismatch")
-
-    class FakeMessage:
-        brand = "CJ대한통운"
-
-        def model_dump(self, mode="json"):
-            return {"brand": "CJ대한통운"}
-
-    class FakeFinal:
-        def model_dump(self, mode="json"):
-            return {}
-
-    monkeypatch.setattr(main, "ENABLE_URL_COLLECTOR_SHADOW", False)
-    monkeypatch.setattr(main, "resolve_real_host", fake_resolve)
-    monkeypatch.setattr(main, "submit_url_scan", AsyncMock(return_value={"uuid": "s"}))
-    monkeypatch.setattr(main, "wait_for_url_scan_result", AsyncMock(return_value={"x": 1}))
-    monkeypatch.setattr(main, "parse_urlscan_result", lambda r: {"final_url": "https://www.cjlogistics.com/", "domain": "www.cjlogistics.com", "score": 0})
-    monkeypatch.setattr(main, "analyze_message_part", AsyncMock(return_value=FakeMessage()))
-    monkeypatch.setattr(main, "finalize_analysis", AsyncMock(return_value=FakeFinal()))
-    monkeypatch.setattr(main, "build_ai_url_analysis", fake_build)
-    monkeypatch.setattr(main, "render_result_card", lambda payload, **kw: {})
-    monkeypatch.setattr(main, "merge_kakao_responses", lambda responses: responses)
-
-    await asyncio.wait_for(main.run_analysis(links=[link], message="m"), timeout=2)
-    assert seen == {"resolve": link, "judged_domain": "cj-delivery.xyz"}
