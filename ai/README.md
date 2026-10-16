@@ -53,13 +53,9 @@ text = await explain_verdict(verdict, observations, cases)
 RAG 유사도, 스캐너 점수, 주제 분류는 판정 입력에서 제외한다. LLM이 제안한 신호는
 근거가 실제 입력에 존재하는 것만 채택한다.
 
-## 스미싱 한 사례의 연결 검증
+## 최소 스미싱 시나리오 검증
 
-`tests/test_smishing_scenario.py`는 CJ대한통운을 사칭하며 앱 설치를 요구하는
-합성 문자를 `analyze_message_part()` → `finalize_analysis(page=None)`로 처리한다.
-정상 근거·원문에 없는 근거·신호 분석 시간 초과를 검증한다. SDK 응답만 대체하고
-사례 검색·분류·근거 검증·결과 조립은 실제 구현을 쓴다.
-
-저장소 루트에서 `python -X utf8 -m pytest ai/tests/test_smishing_scenario.py -q`로 실행한다.
-실제 모델 품질이나 카카오 전달 성공을 입증하는 테스트는 아니다.
-`docs/designs/agent-loop-plan-v2.md`의 새 API는 이 검증 경로에 도입하지 않는다.
+기존 `analyze_message_part()` → `finalize_analysis(page=None)`를 그대로 사용한다.
+AI 제품 코드·공개 API·판정 규칙은 바꾸지 않는다.
+기존 회귀 검증은 저장소 루트에서 `python -X utf8 -m pytest ai/tests -q`로 실행한다.
+실제 모델 품질과 카카오 전달 성공은 배포 후 별도로 확인한다.
