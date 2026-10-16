@@ -1,3 +1,4 @@
+import type { ResultView } from "../types";
 import { useHashToken } from "../hooks/useHashToken";
 import { useResult } from "../hooks/useResult";
 import { formatTime } from "../lib/time";
@@ -18,8 +19,11 @@ export function ResultPage() {
   if (state.status === "error") {
     return <ErrorState kind={state.error} />;
   }
+  return <ResultBody view={state.view} />;
+}
 
-  const { view } = state;
+/** 받은 결과를 칸마다 배치한다. 상태 고르기와 나눠 두어 여기에는 훅을 자유롭게 쓸 수 있다. */
+function ResultBody({ view }: { view: ResultView }) {
   const analyzed = formatTime(view.analyzed_at);
   const expires = formatTime(view.expires_at);
 
