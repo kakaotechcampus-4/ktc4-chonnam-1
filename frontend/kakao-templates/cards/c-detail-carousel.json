@@ -8,7 +8,7 @@
           "items": [
             {
               "title": "{{ signal_title }}",
-              "description": "확인한 내용\n{{ observed }}\n\n의심되는 이유\n{{ reason }}"
+              "description": "문자 근거\n{{ observed }}\n\n주의 이유\n{{ reason }}"
             },
             {
               "title": "이번 분석으로 확인하지 못한 부분",

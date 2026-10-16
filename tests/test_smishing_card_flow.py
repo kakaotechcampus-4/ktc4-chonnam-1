@@ -49,3 +49,15 @@ def test_guidance_template_matches_text_details():
     carousel = load_card_template("c4-guidance")["template"]["outputs"][0]["carousel"]
     assert carousel["type"] == "textCard"
     assert "thumbnail" not in carousel["items"][0]
+
+
+def test_long_remote_control_quote_keeps_the_reason_within_text_card_limit():
+    payload = analysis(True)
+    payload["message"]["details"]["signals"] = [{
+        "code": "remote_control", "evidence": "원격 지원 앱을 설치하고 연결해 주세요. " + "가" * 100,
+    }]
+
+    items = render_detail_carousel(payload)["template"]["outputs"][0]["carousel"]["items"]
+
+    assert len(items[0]["description"]) <= 128
+    assert "다른 사람이 내 휴대폰을 조작할 수 있어요" in items[0]["description"]
