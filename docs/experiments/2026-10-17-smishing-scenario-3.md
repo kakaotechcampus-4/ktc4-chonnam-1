@@ -21,11 +21,11 @@
 ## 자동 검증
 
 ```powershell
-.\.venv\Scripts\python.exe -X utf8 -m pytest tests/test_smishing_scenario.py tests/test_result_card_renderer.py tests/test_url_utils.py -q
+.\.venv\Scripts\python.exe -X utf8 -m pytest tests/test_smishing_service_flow.py tests/test_result_card_renderer.py tests/test_url_utils.py -q
 .\.venv\Scripts\python.exe -X utf8 -m pytest -q
 ```
 
-`tests/test_smishing_scenario.py`는 FastAPI 스킬 인증, 실제 OpenAI SDK의 구조화 응답 파싱,
+`tests/test_smishing_service_flow.py`는 FastAPI 스킬 인증, 실제 OpenAI SDK의 구조화 응답 파싱,
 AI 분석·사례 검색·공식 주소 대조·카드 조립·작업 저장·자세히 보기·재조회를 실행한다.
 LLM·urlscan·카카오 콜백 HTTP만 대체한다. 콜백 성공과 연결 실패를 각각 검증하고,
 상세·재조회에서 LLM과 URL 검사를 다시 부르지 않는지 확인한다.
