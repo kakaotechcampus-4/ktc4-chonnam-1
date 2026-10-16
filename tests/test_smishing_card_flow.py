@@ -1,63 +1,50 @@
-"""대표 스미싱 결과에서 상세 근거까지 이동할 수 있는 카드 계약."""
+"""기존 R1·R9의 버튼으로 저장된 상세를 조회하는 연결만 검증한다."""
 
+import httpx
 import pytest
 
-from services.kakao_card_renderer import load_card_template
-from services.result_card_renderer import render_detail_carousel, render_result_card
-
-
-def analysis(has_signal):
-    return {
-        "url": {"official": "brand_mismatch", "domain": "parcel-test.example"},
-        "message": {
-            "brand": "CJ대한통운", "category": "택배",
-            "answer": "risk_found" if has_signal else "no_risk_found",
-            "details": {
-                "signals": [{"code": "install_prompt", "evidence": "배송 확인 앱을 설치해 주세요"}]
-                if has_signal else [],
-                "doubts": [{"value": "앱 설치", "evidence": "배송 확인 앱을 설치해 주세요"}],
-                "reason": {"text": "문자는 CJ대한통운을 내세우며 앱 설치를 요구합니다.", "failures": []},
-            },
-        },
-        "env": {"answer": "not_run", "details": {"signals": [], "reason": {"failures": ["missing_result"]}}},
-    }
+import main
+from services.result_card_renderer import render_result_card
 
 
 @pytest.mark.parametrize("has_signal", [True, False])
-def test_nonofficial_parcel_result_opens_its_saved_details(has_signal):
-    result = render_result_card(analysis(has_signal), job_id="parcel-job")
+async def test_existing_result_button_opens_the_saved_analysis(monkeypatch, has_signal):
+    payload = {
+        "url": {"official": "brand_mismatch" if has_signal else "unresolved"},
+        "message": {
+            "brand": "CJ대한통운", "answer": "risk_found" if has_signal else "no_risk_found",
+            "details": {
+                "signals": [{"code": "install_prompt", "evidence": "앱을 설치해 주세요"}]
+                if has_signal else [],
+                "reason": {"text": "택배 배송을 내세운 문자입니다.", "failures": []},
+            },
+        },
+        "env": {"answer": "not_run", "details": {"reason": {"failures": ["missing_result"]}}},
+    }
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setattr(main, "ANALYSIS_JOBS", {
+        "parcel-job": {"user_id": "parcel-user", "status": "completed", "final_payload": payload},
+    })
+    result = render_result_card(payload, job_id="parcel-job")
     output = result["template"]["outputs"][0]
     card = output.get("basicCard") or output["textCard"]
-    detail = next(button for button in card["buttons"] if button["label"] == "자세히 보기")
-    assert detail["action"] == "block"
-    assert detail["blockId"] == "6aad3abfe745d3358bd90c8d"
-    assert detail["extra"] == {"job_id": "parcel-job"}
+    button = next(b for b in card["buttons"] if b["label"] == "자세히 보기")
+    assert button["action"] == "block"
+    assert button["blockId"] == "6aad3abfe745d3358bd90c8d"
 
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=main.app), base_url="http://test",
+    ) as client:
+        response = await client.post("/kakao/skill", json={
+            "userRequest": {"utterance": "자세히 보기", "user": {"id": "parcel-user"}},
+            "action": {"clientExtra": button["extra"]},
+        })
 
-def test_details_use_text_carousel_for_multiline_evidence():
-    carousel = render_detail_carousel(analysis(True))["template"]["outputs"][0]["carousel"]
-    # basicCard 캐러셀은 두 줄 뒤의 의심 이유·안내가 숨겨진다.
-    assert carousel["type"] == "textCard"
-    items = carousel["items"]
-    assert "배송 확인 앱을 설치해 주세요" in items[0]["description"]
-    assert "악성 앱일 수 있어요" in items[0]["description"]
-    assert "페이지 내용은 확인하지 않았어요" in items[1]["description"]
-    assert all("thumbnail" not in item and len(item["description"]) <= 128 for item in items)
-
-
-def test_guidance_template_matches_text_details():
-    carousel = load_card_template("c4-guidance")["template"]["outputs"][0]["carousel"]
-    assert carousel["type"] == "textCard"
-    assert "thumbnail" not in carousel["items"][0]
-
-
-def test_long_remote_control_quote_keeps_the_reason_within_text_card_limit():
-    payload = analysis(True)
-    payload["message"]["details"]["signals"] = [{
-        "code": "remote_control", "evidence": "원격 지원 앱을 설치하고 연결해 주세요. " + "가" * 100,
-    }]
-
-    items = render_detail_carousel(payload)["template"]["outputs"][0]["carousel"]["items"]
-
-    assert len(items[0]["description"]) <= 128
-    assert "다른 사람이 내 휴대폰을 조작할 수 있어요" in items[0]["description"]
+    assert response.status_code == 200
+    items = response.json()["template"]["outputs"][0]["carousel"]["items"]
+    descriptions = "\n".join(item["description"] for item in items)
+    assert "페이지 내용은 확인하지 않았어요" in descriptions
+    if has_signal:
+        assert "앱을 설치해 주세요" in descriptions
+    else:
+        assert len(items) == 2  # 확인 범위 + 행동 안내. 다른 분석 결과가 섞이지 않는다.

@@ -4,19 +4,34 @@
     "outputs": [
       {
         "carousel": {
-          "type": "textCard",
+          "type": "basicCard",
           "items": [
             {
               "title": "{{ signal_title }}",
-              "description": "문자 근거\n{{ observed }}\n\n주의 이유\n{{ reason }}"
+              "description": "확인한 내용\n{{ observed }}\n\n의심되는 이유\n{{ reason }}",
+              "thumbnail": {
+                "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/c1-signal.png",
+                "altText": "경고 표시가 강조된 문서를 돋보기로 살펴보는 그림",
+                "fixedRatio": false
+              }
             },
             {
               "title": "이번 분석으로 확인하지 못한 부분",
-              "description": "{{ unverified }}\n결과는 확인한 자료로만 안내했어요. 확인하지 못한 부분은 판단에 넣지 않았어요."
+              "description": "{{ unverified }}\n결과는 확인한 자료로만 안내했어요. 확인하지 못한 부분은 판단에 넣지 않았어요.",
+              "thumbnail": {
+                "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/c2-scope.png",
+                "altText": "체크 표시 두 개와 물음표 하나가 있는 확인 목록과 돋보기",
+                "fixedRatio": false
+              }
             },
             {
               "title": "문자 속 링크에 접속하지 마세요",
               "description": "문자에서 안내한 앱을 설치하거나 개인정보를 입력하지 마세요.\n추가 확인이 필요하면 한국인터넷진흥원의 스미싱 확인 서비스를 이용해 주세요.",
+              "thumbnail": {
+                "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/c3-action.png",
+                "altText": "링크 접속, 앱 설치, 개인정보 입력에 각각 금지 표시를 한 그림",
+                "fixedRatio": false
+              },
               "buttonLayout": "vertical",
               "buttons": [
                 {
