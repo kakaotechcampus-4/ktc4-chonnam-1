@@ -31,6 +31,27 @@ def test_public_firewall_drops_internal_and_protected_before_443(tmp_path):
     assert "-o ktc-collector -s 192.0.2.0/24" in rules
 
 
+def test_protected_render_ip_can_receive_only_inbound_api_replies(tmp_path):
+    module = runpy.run_path(str(ISOLATION / "network_config.py"))
+    config = env()
+    config["RENDER_CIDRS"] = "8.8.8.0/24"
+    rules = module["firewall_rules"](tmp_path, config).splitlines()
+    reply_rule = (
+        "iptables -A KTC-FORWARD -i ktc-collector -d 8.8.8.0/24 -p tcp --sport 8443 "
+        "-m conntrack --ctstate ESTABLISHED --ctdir REPLY "
+        "--ctorigsrc 8.8.8.0/24 --ctorigdstport 8443 -j RETURN"
+    )
+    assert reply_rule in rules
+    protected_drop = "iptables -A KTC-FORWARD -i ktc-collector -d 8.8.8.8 -j DROP"
+    private_drop = "iptables -A KTC-FORWARD -i ktc-collector -d 10.0.0.0/8 -j DROP"
+    established = "iptables -A KTC-FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN"
+    assert rules.index(reply_rule) < rules.index(protected_drop) < rules.index(established)
+    assert rules.index(reply_rule) < rules.index(private_drop)
+    # Original-direction collector flows still meet the protected DROP before any allowance.
+    exemptions = [rule for rule in rules[:rules.index(protected_drop)] if "8.8.8.0/24" in rule]
+    assert exemptions == [reply_rule]
+
+
 @pytest.mark.parametrize("key,value", [
     ("COLLECTOR_NETWORK_MODE", "publik"), ("COLLECTOR_PROTECTED_HOSTS", ""),
     ("COLLECTOR_PROTECTED_IPS", ""), ("COLLECTOR_PROTECTED_IPS", "not-an-ip"),

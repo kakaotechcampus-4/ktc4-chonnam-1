@@ -58,6 +58,11 @@ def firewall_rules(base: Path, env) -> str:
         rules.append(shlex.join(("iptables", "-A", "KTC-FORWARD", *args)))
 
     if mode == "public":
+        # Render may share a protected service IP; only replies to its inbound API flow pass.
+        for cidr in cidrs:
+            add("-i", "ktc-collector", "-d", cidr, "-p", "tcp", "--sport", "8443",
+                "-m", "conntrack", "--ctstate", "ESTABLISHED", "--ctdir", "REPLY",
+                "--ctorigsrc", cidr, "--ctorigdstport", "8443", "-j", "RETURN")
         for protocol in ("udp", "tcp"):
             add("-i", "ktc-collector", "-d", dns, "-p", protocol, "--dport", "53", "-j", "RETURN")
         for target in (*BLOCKED_CIDRS, *sorted(policy.protected_ips)):
