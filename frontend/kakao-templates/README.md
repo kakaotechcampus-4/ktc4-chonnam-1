@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | `block_b1` `block_b1a` `block_b2` `block_b2a` `block_b2b` `block_w2` `block_w2a` `block_r1a` `block_detail` | 버튼 `blockId` | **채움** (2026-10-01). 아래 "블록 ID" 표 |
 | `block_consent` | W3 `동의하고 확인하기` | 동의 기록 후 보류한 문자로 분석을 잇는 스킬 블록 (BE 미구현) |
-| `block_detail` | R1·R9 `자세히 보기` | 2026-10-14 되살림(이슈 #69). BE가 버튼의 `extra.job_id`를 채우고, 이 블록의 스킬이 `/kakao/skill`을 부르면 저장한 결과로 캐러셀을 보낸다. 관리자센터 스킬 연결은 확인 필요 |
+| `block_detail` | R1·R8·R9 `자세히 보기` | BE가 버튼의 `extra.job_id`를 채우고, 이 블록의 스킬이 `/kakao/skill`을 부르면 저장한 결과로 캐러셀을 보낸다. 관리자센터 스킬 연결은 확인 필요 |
 | `block_retry` | (지금 안 씀) R4 `다시 시도` | 재검사 미구현이라 R4에서 버튼을 뺐다. 구현하면 되살린다 |
 | `kisa_chatbot_url` `kisa_chat_url` | B2a(`kisa_chatbot_url`만)·B2b·R1a 상담 버튼 | KISA 인계 방법 확인 후 |
 | `org_name` `official_url` | R2 · R8(`org_name`만) | `org_name`은 `message.brand`. `official_url`은 결과에 없다. 브랜드별 공식 홈페이지 주소를 BE 목록(`services/official_domains.py`, 지금은 도메인만 있음)에 더해야 한다. 문자 속 URL은 쓰지 않는다 |
@@ -54,7 +54,7 @@
   이미지가 준비되면 해당 카드를 `basicCard` + `thumbnail`로 바꾼다.
 - 확정 카드 이미지는 `assets/cards/`에 둔다. `imageUrl`은 `develop` 브랜치의
   `raw.githubusercontent.com` 주소라 **develop에 머지된 뒤에야 보인다.**
-  지금 적용한 카드: W1, B1a, B2, B2a, B2b, R1~R4, 자세히 보기 캐러셀(C1~C3).
+  지금 적용한 카드: W1, B1a, B2, B2a, B2b, R1~R4.
   이미지 파일 이름은 카드 파일 이름을 따른다(R1만 `r1-danger.png`, 캐러셀은 `c1-signal` `c2-scope` `c3-action`).
   B1은 W1 이미지(`w1-welcome.png`)를, R1a는 B2 이미지(`b2-report.png`)를 같이 쓴다.
 - R5는 `template`이 없어 이미지를 붙일 수 없으므로 그대로 둔다. R5용으로 받은 "분석 중"
@@ -62,6 +62,19 @@
 - R5(`r5-analyzing.json`)는 콜백 대기 응답이라 `template` 없이 `useCallback`과 `data.text`만 있다.
   버튼을 달 수 없다.
 - K2(시각 + 저장한 결과 카드)와 K3(R4 재사용)는 BE가 조립하는 응답이라 파일로 두지 않는다.
+- C1~C4 상세 캐러셀은 `textCard`로 보내 본문 128자를 사용한다. 이미지 카드 캐러셀의
+  두 줄 제한으로 근거·이유가 숨겨지지 않도록 썸네일은 쓰지 않는다. 기존 이미지 파일은 보관한다.
+
+## 최소 스미싱 시나리오의 관리자센터 연결
+
+다음은 필요한 연결 조건이며, 현재 관리자센터에 적용됐다는 뜻은 아니다. Chrome으로
+수정하기 전 사용자 승인을 받는다.
+
+- 문자 입력을 받는 블록과 자세히 보기 블록은 같은 `/kakao/skill`을 호출한다.
+- 자세히 보기 블록 ID는 `6aad3abfe745d3358bd90c8d`이며, 고정 응답 대신 스킬 응답을 사용한다.
+- 결과 확인 블록의 `intent.name`은 `결과 확인`이어야 한다. `결과 확인`·`결과 확인하기` 발화를 등록한다.
+- 입력 분석은 콜백을 사용한다. 결과 확인과 자세히 보기는 저장된 결과로 즉시 응답한다.
+- 스킬 요청의 `X-Skill-Secret`은 Render의 설정과 일치해야 한다. 실제 비밀값은 문서에 적지 않는다.
 
 ## 프로토타입 자산
 
