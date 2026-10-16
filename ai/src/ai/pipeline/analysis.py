@@ -113,7 +113,8 @@ async def analyze_environment_part(
     """Analyze only supplied page material or an explicit collection failure."""
     inspection = (inspect_html(page.info) if page is not None else
         PageInspection(text="", elements=(), failure=FailureCode.MISSING_RESULT))
-    stop = failure or inspection.failure
+    # Collector truncation leaves usable material; inspection limits still stop analysis.
+    stop = inspection.failure or (failure if failure is not FailureCode.PARTIAL_CONTENT else None)
     if stop is not None:
         analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=stop)
         return build_environment_part(page, inspection, analysis, failure=failure)
@@ -122,4 +123,4 @@ async def analyze_environment_part(
         analysis = await analyze_page(inspection, client=client, model=model)
     except Exception as error:
         analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=_failure_code(error))
-    return build_environment_part(page, inspection, analysis)
+    return build_environment_part(page, inspection, analysis, failure=failure)

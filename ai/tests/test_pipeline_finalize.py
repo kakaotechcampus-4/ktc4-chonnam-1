@@ -129,19 +129,29 @@ async def test_missing_message_is_not_success():
 ])
 @pytest.mark.parametrize("has_page", [False, True])
 @pytest.mark.parametrize("official", [False, True])
-async def test_collection_failure_keeps_message_and_partial_facts(official, failure, fragment, has_page):
+async def test_collection_failure_keeps_message_and_partial_facts(
+    official, failure, fragment, has_page, make_parse_client,
+):
     source_message = message()
+    client, _ = make_parse_client(parsed=PageProposal())
     response = await public.finalize_analysis(
-        url(official), source_message, page() if has_page else None, failure=failure)
+        url(official), source_message, page() if has_page else None, failure=failure,
+        client=client, model="test")
     assert response.message == source_message
+    assert response.result is False
     assert response.env.details.reason.failures == [failure]
     assert fragment in response.env.details.reason.text
     if has_page:
         assert response.env.answer is AnswerState.PARTIAL
-        assert response.env.brand is Brand.CJ_LOGISTICS
-        assert response.env.category is Topic.PARCEL
         assert doubt_values(response.env) == [EnvDoubt.LOGIN_FORM]
-        assert "격리 환경 전달 정보" in response.env.details.reason.text
+        if failure is FailureCode.PARTIAL_CONTENT:
+            assert response.env.brand is Brand.UNKNOWN
+            assert response.env.category is Topic.UNKNOWN
+            assert "격리 환경 전달 정보" not in response.env.details.reason.text
+        else:
+            assert response.env.brand is Brand.CJ_LOGISTICS
+            assert response.env.category is Topic.PARCEL
+            assert "격리 환경 전달 정보" in response.env.details.reason.text
         assert "HTML" in response.env.details.reason.text
     else:
         assert response.env.answer is AnswerState.FAILED
@@ -237,7 +247,8 @@ async def test_page_sdk_failure_keeps_completed_message(error, fragment, make_pa
 @pytest.mark.parametrize("official", [False, True])
 @pytest.mark.parametrize("owned", [False, True])
 @pytest.mark.parametrize("cancel", [False, True])
-async def test_client_ownership_and_cancellation(official, owned, cancel, monkeypatch, make_parse_client):
+@pytest.mark.parametrize("failure", [None, FailureCode.PARTIAL_CONTENT])
+async def test_client_ownership_and_cancellation(official, owned, cancel, failure, monkeypatch, make_parse_client):
     entered, stopped = asyncio.Event(), asyncio.Event()
     async def block(**kwargs):
         entered.set()
@@ -259,7 +270,7 @@ async def test_client_ownership_and_cancellation(official, owned, cancel, monkey
     factory = Mock(return_value=client)
     monkeypatch.setattr(page_analysis, "create_client", factory)
     task = asyncio.create_task(public.finalize_analysis(url(official), message(), page(),
-        client=None if owned else client, model="test"))
+        client=None if owned else client, model="test", failure=failure))
     try:
         if cancel:
             await asyncio.wait_for(entered.wait(), 1)
@@ -268,7 +279,9 @@ async def test_client_ownership_and_cancellation(official, owned, cancel, monkey
                 await task
             assert stopped.is_set()
         else:
-            assert (await task).env.answer is AnswerState.NO_RISK_FOUND
+            result = await task
+            assert result.env.answer is (AnswerState.PARTIAL if failure else AnswerState.NO_RISK_FOUND)
+            assert result.env.details.reason.failures == ([failure] if failure else [])
     finally:
         if not task.done():
             task.cancel()

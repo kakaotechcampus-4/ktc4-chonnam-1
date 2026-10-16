@@ -24,12 +24,15 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
 
+import httpx
+
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from collector.policy import MAX_URL_LENGTH, is_allowed_url, load_allowed_hosts
+from collector.policy import MAX_URL_LENGTH, NetworkPolicy, load_allowed_hosts
+from collector.egress_proxy import EgressProxy
 from scanner.fetch import collect_url
 from scanner.models import BrowserResult, CollectResult
 
@@ -134,11 +137,18 @@ def create_app(
     renderer: Renderer | None = None,
     trigger: Callable[[CollectResult], str | None] | None = None,
     collect: Collect = collect_url,
+    network_policy: NetworkPolicy | None = None,
+    egress_proxy: EgressProxy | None = None,
 ) -> Starlette:
     if len(token) < MIN_TOKEN_LENGTH:
         raise RuntimeError("수집 토큰이 너무 짧습니다")
-    if not allowed_hosts:
-        raise RuntimeError("허용 호스트가 비어 있습니다. 카테캠 1단계는 허용 목록 없이 실행하지 않습니다")
+    try:
+        policy = network_policy or NetworkPolicy(allowed_hosts=allowed_hosts)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+    proxy = egress_proxy
+    if policy.mode == "public" and proxy is None:
+        proxy = EgressProxy(policy.host_allowed, connect_ip=policy.connect_ip)
 
     if browser_mode not in BROWSER_MODES:
         raise RuntimeError(f"COLLECTOR_BROWSER 는 {BROWSER_MODES} 중 하나여야 합니다")
@@ -150,10 +160,17 @@ def create_app(
     backstop = fetch_timeout + (browser_timeout if browser_mode != "off" else 0) + BACKSTOP_EXTRA_SECONDS
 
     def url_allowed(url: str) -> bool:
-        return is_allowed_url(url, allowed_hosts)
+        return policy.url_allowed(url)
 
     async def run_stages(url: str) -> CollectResult:
-        fetched = await collect(url, timeout=fetch_timeout, url_allowed=url_allowed)
+        if policy.mode == "public":
+            await proxy.start()
+            # Both stages use this CONNECT proxy. No environment proxies or TLS bypass.
+            async with httpx.AsyncClient(proxy=proxy.url, trust_env=False) as client:
+                fetched = await collect(url, timeout=fetch_timeout, url_allowed=url_allowed,
+                                        client=client, resolve=policy.resolve, allow_insecure_retry=False)
+        else:
+            fetched = await collect(url, timeout=fetch_timeout, url_allowed=url_allowed)
         if browser_mode == "off":
             return fetched
         reason = "always" if browser_mode == "always" else trigger(fetched)
@@ -210,6 +227,8 @@ def create_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
+        if proxy is not None:
+            await proxy.start()
         if renderer is not None and browser_mode != "off":
             await renderer.start()
         try:
@@ -217,6 +236,8 @@ def create_app(
         finally:
             if renderer is not None:
                 await renderer.close()
+            if proxy is not None:
+                await proxy.close()
 
     return Starlette(routes=[Route("/collect", collect_endpoint, methods=["POST"])], lifespan=lifespan)
 
@@ -226,16 +247,21 @@ def create_app_from_env() -> Starlette:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     token_file = os.getenv("COLLECTOR_TOKEN_FILE", "/run/secrets/collect_token")
     allowed_hosts = load_allowed_hosts()
+    policy = NetworkPolicy(
+        mode=os.getenv("COLLECTOR_NETWORK_MODE", "allowlist"), allowed_hosts=allowed_hosts,
+        protected_hosts=load_allowed_hosts(os.getenv("COLLECTOR_PROTECTED_HOSTS", "")),
+        protected_ips=load_allowed_hosts(os.getenv("COLLECTOR_PROTECTED_IPS", "")),
+    )
+    proxy = EgressProxy(policy.host_allowed, connect_ip=policy.connect_ip)
     browser_mode = os.getenv("COLLECTOR_BROWSER", "auto")
     renderer = trigger = None
     if browser_mode != "off":
         # playwright 는 브라우저를 켤 때만 불러온다. 운영 진입점은 샌드박스를 끄는 길이 없다.
         from collector.browser import BrowserRenderer, browser_trigger
-        from collector.egress_proxy import EgressProxy
 
         renderer = BrowserRenderer(
-            lambda u: is_allowed_url(u, allowed_hosts),
-            EgressProxy(lambda host, port: host in allowed_hosts and port == 443),
+            policy.url_allowed,
+            proxy,
             restart_every=int(os.getenv("COLLECTOR_BROWSER_RESTART_EVERY", "50")),
             sandbox=True,
         )
@@ -249,4 +275,6 @@ def create_app_from_env() -> Starlette:
         browser_mode=browser_mode,
         renderer=renderer,
         trigger=trigger,
+        network_policy=policy,
+        egress_proxy=proxy,
     )

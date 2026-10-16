@@ -3,6 +3,12 @@
 작성일: 2026-10-10
 상태: 초안. 로컬 검증만 마쳤고 EC2 검증 전이다.
 
+2026-10-17 추가: 기본 허용 목록 모드는 유지하며, 일반 공개 HTTPS 주소를 수집하는
+`COLLECTOR_NETWORK_MODE=public`을 추가했다. 아래의 고정 허용 목록 설명은 기본 모드에
+해당한다. 공개 모드에서는 HTTPX와 Chromium이 같은 CONNECT 프록시를 사용하고,
+접속 직전 DNS 응답을 검증해 공인 IPv4로 연결을 고정한다. 보호 호스트·IP 설정이
+필수이며 HTTPS/443만 허용한다. [검증 및 배포 기록](experiments/2026-10-17-internal-url-scanner.md)을 참조한다.
+
 | 문서 | 이 문서와의 관계 |
 | --- | --- |
 | `docs/isolation-security.md` | 위협 모델과 방어 원칙. 이 문서는 그 원칙을 수집 API 코드로 옮긴 결과다 |

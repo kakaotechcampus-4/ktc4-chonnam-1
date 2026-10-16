@@ -85,15 +85,11 @@ class TestHtmlPresentWithoutFailures:
         assert page.collected_at is not None
         assert before <= page.collected_at <= after
 
-    def test_brand_and_category_use_the_unknown_placeholder(self):
-        """이슈 #60: ai.types.IsolatedPage.brand/category가 아직 필수
-        str 필드라(None 허용 전) "unknown"을 쓴다 — AI 쪽이 선택형으로
-        바꾸면 이 상수만 바뀐다."""
-
+    def test_unobserved_brand_and_category_are_null(self):
         page, _ = to_isolated_page(_collect_result())
 
-        assert page.brand == "unknown"
-        assert page.category == "unknown"
+        assert page.brand is None
+        assert page.category is None
 
 
 class TestHtmlPresentWithFailures:

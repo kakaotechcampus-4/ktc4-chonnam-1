@@ -27,19 +27,6 @@ from ai.types import FailureCode, IsolatedPage
 
 from scanner.models import CollectResult
 
-# 이슈 #60 결정: brand/category는 수집기가 모르므로 None으로 표현해야
-# 한다. 하지만 지금 ai.types.IsolatedPage.brand/category는 아직 `str`
-# 필수 필드다(`str | None = None`으로 바꾸는 건 이슈 #60의 AI 담당
-# 체크리스트 항목이고, 이 글을 쓰는 시점엔 아직 안 바뀌었다 — 직접
-# IsolatedPage(info=...)만 넘겨 ValidationError 로 확인함).
-# 그래서 당장은 "unknown"을 쓴다 — Brand("unknown")/Topic("unknown")이
-# 둘 다 유효한 UNKNOWN 멤버라 예외 없이 넘어가고,
-# ai/src/ai/pipeline/results.py의 build_environment_part()가 실패 사유
-# 텍스트에 "unknown, unknown"을 덧붙이는 것 말고는 분석 자체를 막지
-# 않는다(이슈 코멘트에서 실제로 확인됨). AI가 필드를 선택형으로 바꾸면
-# 이 상수를 None으로 바꾸기만 하면 된다.
-_UNKNOWN_IDENTITY = "unknown"
-
 
 def to_isolated_page(result: CollectResult) -> tuple[IsolatedPage | None, FailureCode | None]:
     """수집 결과를 AI 입력(`IsolatedPage`)으로 바꾼다.
@@ -61,8 +48,6 @@ def to_isolated_page(result: CollectResult) -> tuple[IsolatedPage | None, Failur
 
     page = IsolatedPage(
         info=html,
-        brand=_UNKNOWN_IDENTITY,
-        category=_UNKNOWN_IDENTITY,
         collected_at=datetime.now(timezone.utc),
     )
     return page, (FailureCode.PARTIAL_CONTENT if failures else None)
