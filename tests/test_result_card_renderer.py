@@ -7,6 +7,9 @@ test_result_card_selector.py의 몫이라 여기서는 다시 다루지 않는�
 """
 
 from types import SimpleNamespace
+from copy import deepcopy
+
+import pytest
 
 from services import result_card_renderer
 from services.result_card_renderer import (
@@ -132,6 +135,70 @@ def _c2_text(analysis: dict) -> str:
     carousel = render_detail_carousel(analysis)
     items = carousel["template"]["outputs"][0]["carousel"]["items"]
     return str(items[-2])  # C2는 끝에서 두 번째(마지막은 C3 행동 안내)
+
+
+class TestVerificationConsistency:
+    @pytest.mark.parametrize("official", ["not_registered", "unresolved", None, "future_state"])
+    @pytest.mark.parametrize("brand", [None, "CJ대한통운"])
+    def test_address_gap_is_shared_by_first_and_detail(self, official, brand, monkeypatch):
+        monkeypatch.setattr(result_card_renderer, "find_guidance", lambda result: [])
+        analysis = _analysis(official, _part("no_risk_found", brand=brand), _part("no_risk_found"))
+        before = deepcopy(analysis)
+        first = _r9_description(analysis)
+        detail = _c2_text(analysis)
+        for text in (first, detail):
+            assert "주소가 공식 주소인지" in text
+            assert "실제로 보낸 곳" in text
+            assert "모두 확인했어요" not in text
+        # Both completed analyses remain completed even when URL verification failed.
+        assert "문자:" not in detail
+        assert "페이지:" not in detail
+        assert analysis == before
+
+    @pytest.mark.parametrize("part,first_label,detail_label", [
+        ("message", "문자 내용", "문자:"), ("env", "페이지 내용", "페이지:"),
+    ])
+    @pytest.mark.parametrize("answer", ["partial", "failed", "not_run", None, "future_state"])
+    def test_incomplete_analysis_is_shared(self, part, first_label, detail_label, answer, monkeypatch):
+        monkeypatch.setattr(result_card_renderer, "find_guidance", lambda result: [])
+        analysis = _analysis("official", _part("no_risk_found", brand="CJ대한통운"), _part("no_risk_found"))
+        analysis[part] = _part(answer)
+        assert first_label in _r9_description(analysis)
+        detail = _c2_text(analysis)
+        assert detail_label in detail
+        assert "모두 확인했어요" not in detail
+        assert "주소가 공식 주소인지" not in detail
+        other_label = "페이지:" if part == "message" else "문자:"
+        assert other_label not in detail
+
+    @pytest.mark.parametrize("part", ["message", "env"])
+    def test_absent_analysis_is_not_treated_as_complete(self, part, monkeypatch):
+        monkeypatch.setattr(result_card_renderer, "find_guidance", lambda result: [])
+        analysis = _analysis("unresolved", _part("no_risk_found"), _part("no_risk_found"))
+        del analysis[part]
+        assert ("문자 내용" if part == "message" else "페이지 내용") in _r9_description(analysis)
+        assert ("문자:" if part == "message" else "페이지:") in _c2_text(analysis)
+
+    @pytest.mark.parametrize("source", ["message", "env"])
+    def test_risk_card_and_evidence_survive_missing_verification(self, source, monkeypatch):
+        monkeypatch.setattr(result_card_renderer, "find_guidance", lambda result: [])
+        analysis = _analysis("unresolved", _part("no_risk_found"), _part("failed"))
+        analysis[source] = _part("partial", signals=[_signal()])
+        before = deepcopy(analysis)
+        assert render_result_card(analysis)["template"]["outputs"][0]["basicCard"]["title"] == "⚠️ 위험한 문자로 판단했어요"
+        assert "주소가 공식 주소인지" in _c2_text(analysis)
+        assert analysis == before
+
+    def test_fully_analyzed_official_result_only_leaves_sender_unverified(self, monkeypatch):
+        monkeypatch.setattr(result_card_renderer, "find_guidance", lambda result: [])
+        analysis = _analysis("official", _part("no_risk_found", brand="CJ대한통운"), _part("no_risk_found"), domain="cjlogistics.com")
+        assert "basicCard" in render_result_card(analysis)["template"]["outputs"][0]
+        assert _r9_blank_values(analysis)["unchecked"] == "- 실제로 보낸 곳"
+        detail = _c2_text(analysis)
+        assert "실제로 보낸 곳" in detail
+        assert "주소가 공식 주소인지" not in detail
+        assert "문자:" not in detail
+        assert "페이지:" not in detail
 
 
 class TestR9BlankValues:
@@ -799,7 +866,7 @@ class TestRenderDetailCarouselGuidance:
         assert "문자: 분석 중 오류가 발생해 확인하지 못했어요" in c2
         assert "페이지: 페이지 내용은 확인하지 않았어요." in c2
 
-    def test_c2_falls_back_when_both_complete(self):
+    def test_c2_keeps_sender_unverified_when_both_analyses_complete(self):
         analysis = _analysis(
             "brand_mismatch",
             _part("risk_found", brand="CJ대한통운", signals=[_signal()]),
@@ -808,7 +875,9 @@ class TestRenderDetailCarouselGuidance:
 
         c2 = _c2_text(analysis)
 
-        assert "모두 확인했어요." in c2
+        assert "실제로 보낸 곳" in c2
+        assert "모두 확인했어요." not in c2
+        assert "주소가 공식 주소인지" not in c2
         assert "문자:" not in c2
         assert "페이지:" not in c2
 

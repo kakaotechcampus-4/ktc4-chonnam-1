@@ -100,7 +100,7 @@ def _r9_address_lines(official: str | None, brand: str | None) -> tuple[str | No
         return "공식 주소 목록에 없는 주소예요", None
     if official == "unresolved":
         return None, "주소가 공식 주소인지"
-    return None, None
+    return None, "주소가 공식 주소인지"
 
 
 def _r9_message_lines(
@@ -121,7 +121,9 @@ def _r9_message_lines(
     if answer == "not_run":
         return None, "문자 내용"
 
-    return None, None
+    if answer == "risk_found":
+        return None, None
+    return None, "문자 내용"
 
 
 def _r9_env_lines(
@@ -139,7 +141,30 @@ def _r9_env_lines(
     if answer == "not_run":
         return None, "페이지 내용"
 
-    return None, None
+    if answer == "risk_found":
+        return None, None
+    return None, "페이지 내용"
+
+
+def _unverified_lines(analysis_result: dict, *, detail: bool = False) -> list[str]:
+    """첫 카드와 C2가 같은 항목을 미확인으로 선택하고 표시 형식만 달리한다."""
+    message = analysis_result.get("message") or {}
+    env = analysis_result.get("env") or {}
+    brand = message.get("brand")
+    _, sender = _r9_sender_lines(brand)
+    _, address = _r9_address_lines((analysis_result.get("url") or {}).get("official"), brand)
+    _, message_line = _r9_message_lines(
+        message.get("answer"),
+        ((message.get("details") or {}).get("reason") or {}).get("failures") or [],
+    )
+    _, env_line = _r9_env_lines(
+        env.get("answer"),
+        ((env.get("details") or {}).get("reason") or {}).get("failures") or [],
+    )
+    if detail:
+        message_line = _message_unverified_line(message) if message_line else None
+        env_line = _env_unverified_line(env) if env_line else None
+    return [line for line in (sender, address, message_line, env_line) if line]
 
 
 def _r9_blank_values(analysis_result: dict) -> dict[str, str]:
@@ -154,16 +179,16 @@ def _r9_blank_values(analysis_result: dict) -> dict[str, str]:
     env = analysis_result.get("env") or {}
     brand = message.get("brand")
 
-    sender_checked, sender_unchecked = _r9_sender_lines(brand)
+    sender_checked, _ = _r9_sender_lines(brand)
     requested_checked = _r9_requested_actions_line(
         (message.get("details") or {}).get("doubts") or []
     )
-    address_checked, address_unchecked = _r9_address_lines(url.get("official"), brand)
-    message_checked, message_unchecked = _r9_message_lines(
+    address_checked, _ = _r9_address_lines(url.get("official"), brand)
+    message_checked, _ = _r9_message_lines(
         message.get("answer"),
         ((message.get("details") or {}).get("reason") or {}).get("failures") or [],
     )
-    env_checked, env_unchecked = _r9_env_lines(
+    env_checked, _ = _r9_env_lines(
         env.get("answer"),
         ((env.get("details") or {}).get("reason") or {}).get("failures") or [],
     )
@@ -175,12 +200,7 @@ def _r9_blank_values(analysis_result: dict) -> dict[str, str]:
         )
         if line
     ]
-    unchecked = [
-        line for line in (
-            sender_unchecked, address_unchecked, message_unchecked, env_unchecked,
-        )
-        if line
-    ]
+    unchecked = _unverified_lines(analysis_result)
 
     return {
         "org_label": _r9_org_label(brand),
@@ -315,7 +335,7 @@ def _message_unverified_line(message: dict) -> str | None:
     않는다)."""
 
     answer = message.get("answer")
-    if answer in _COMPLETE_ANSWERS or answer is None:
+    if answer in _COMPLETE_ANSWERS:
         return None
     failures = ((message.get("details") or {}).get("reason") or {}).get("failures") or []
     return f"문자: {get_message_failure_copy(failures)}"
@@ -402,8 +422,6 @@ def render_detail_carousel(analysis_result: dict) -> dict:
     message = analysis_result.get("message") or {}
     signals = (message.get("details") or {}).get("signals") or []
 
-    env = analysis_result.get("env") or {}
-
     guidance_items = _guidance_items(analysis_result)
 
     signal_budget = max(
@@ -431,11 +449,7 @@ def render_detail_carousel(analysis_result: dict) -> dict:
             )
         )
 
-    unverified_lines = [
-        line for line in (_message_unverified_line(message), _env_unverified_line(env))
-        if line
-    ]
-    unverified_text = "\n".join(unverified_lines) if unverified_lines else "모두 확인했어요."
+    unverified_text = "\n".join(_unverified_lines(analysis_result, detail=True))
 
     c2_item = substitute_values(c2_template, {"unverified": unverified_text})
 
