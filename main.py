@@ -99,6 +99,7 @@ ANALYSIS_JOBS: dict[str, dict] = {}
 
 # 콜백 URL 유효 시간을 고려한 안전 마진
 CALLBACK_DEADLINE_SECONDS = 45.0
+MESSAGE_SYNC_TIMEOUT_SECONDS = 3.0
 
 
 # ============================================================
@@ -271,7 +272,7 @@ def handle_check_result(
             result,
         ])
 
-    if status in ("failed", "timeout"):
+    if status in ("failed", "timeout", "cancelled"):
         return render_card("r4-unavailable")
 
     return render_card("k4-no-result")
@@ -365,16 +366,12 @@ async def kakao_skill(
     print(f"[LINK COUNT] {len(links)}")
     print(f"[MESSAGE] {message!r}")
 
-    # URL이 없는 경우: 완전히 빈 입력만 즉시 응답하고, 실제 문자 내용이
-    # 있으면 문자 분석만으로 판단한다(신규 시나리오 — "URL 검사와 문자
-    # 분석 흐름 분리"). urlscan/격리 수집 같은 느린 작업이 없어 콜백
-    # 없이도 카카오 5초 예산 안에 끝난다.
+    # 잘못된 주소와 빈 입력은 분석 Job을 만들지 않는다.
     if not links:
         if has_malformed_url(utterance):
             return kakao_response("주소 형식을 확인하지 못했어요. http:// 또는 https://로 시작하는 전체 주소를 다시 보내 주세요.")
         if not message.strip():
             return render_card("r6-input-required")
-        return await run_message_only_analysis(message)
 
     # 같은 사용자의 이전 분석이 아직 진행 중인 경우
     if user_id and user_id in RUNNING_USERS:
@@ -383,6 +380,19 @@ async def kakao_skill(
     # callbackUrl이 없는 경우 개발/테스트용 동기 처리
     if not callback_url:
         print("[CALLBACK] callbackUrl 없음 - 동기 처리")
+        if not links:
+            if user_id:
+                RUNNING_USERS.add(user_id)
+            try:
+                return await asyncio.wait_for(
+                    run_message_only_analysis(message),
+                    timeout=MESSAGE_SYNC_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                return kakao_response("문자 분석 시간이 초과되었어요. 잠시 후 다시 보내 주세요.")
+            finally:
+                if user_id:
+                    RUNNING_USERS.discard(user_id)
 
         return await run_analysis(
             links,
@@ -399,13 +409,18 @@ async def kakao_skill(
     )
 
     # 오래 걸리는 분석은 background task에서 수행
+    callback_options = {}
+    if not links:
+        ANALYSIS_JOBS[job_id]["analysis_kind"] = "message_only"
+        callback_options["message_only"] = True
     background_tasks.add_task(
         run_analysis_and_callback,
         links,
         message,
         callback_url,
         user_id,
-        job_id
+        job_id,
+        **callback_options,
     )
 
     # 카카오에는 즉시 callback 사용 응답
@@ -462,22 +477,23 @@ async def run_analysis(
     return merge_kakao_responses(cards)
 
 
-async def run_message_only_analysis(message: str) -> dict:
-    """URL이 없는 문자를 문자 분석만으로 판단한다.
-
-    `run_analysis()`와 분리한 이유: URL 경로는 격리 수집(네트워크 I/O)이
-    있어 느리고 job/콜백이 필요하지만, 문자 분석은 LLM 호출 하나뿐이라
-    카카오 5초 예산 안에 동기로 끝난다. 결과는 "자세히 보기"로 다시 불러올
-    job_id가 없다 — 이번 범위에서는 단발 응답까지만 지원한다.
-    """
+async def run_message_only_analysis(message: str, job_id: str | None = None) -> dict:
+    """문자 전용 카드 생성. 실행 예산과 콜백은 호출부가 소유한다."""
 
     try:
         message_result = await analyze_message_part(message)
     except Exception as error:
         print(f"[AI MESSAGE ERROR] {type(error).__name__}")
+        if job_id is not None:
+            raise
         return render_card("r4-unavailable")
 
-    return render_message_only_card(message_result.model_dump(mode="json"))
+    payload = message_result.model_dump(mode="json")
+    card = render_message_only_card(payload)
+    if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
+        # URL/페이지 결과용 상세 캐러셀에는 문자 단독 payload를 넘기지 않는다.
+        job["message_payload"] = payload
+    return card
 
 
 def _http_host(url: str | None) -> str | None:
@@ -555,7 +571,9 @@ async def run_analysis_and_callback(
     message: str,
     callback_url: str,
     user_id: str | None,
-    job_id: str
+    job_id: str,
+    *,
+    message_only: bool = False,
 ):
     """
     백그라운드에서 분석을 수행한 뒤
@@ -569,7 +587,7 @@ async def run_analysis_and_callback(
 
         try:
             result = await asyncio.wait_for(
-                run_analysis(
+                run_message_only_analysis(message, job_id=job_id) if message_only else run_analysis(
                     links,
                     message,
                     job_id=job_id
@@ -735,6 +753,17 @@ async def run_analysis_and_callback(
                 f"job_id={job_id}"
             )
 
+    except asyncio.CancelledError:
+        job = ANALYSIS_JOBS.get(job_id)
+        if job:
+            if job["status"] == "running":
+                job["status"] = "cancelled"
+                job["error"] = "analysis_cancelled"
+                job["completed_at"] = datetime.now(timezone.utc).isoformat()
+            if job["callback_status"] == "pending":
+                job["callback_status"] = "cancelled"
+                job["callback_error"] = "task_cancelled"
+        raise
     except Exception as e:
         job = ANALYSIS_JOBS.get(job_id)
         safe_error = _safe_callback_error(e)
