@@ -34,21 +34,29 @@ def state(monkeypatch):
 
 @pytest.mark.parametrize("text,expected", [
     ("일반 문자", "no-link"), ("010-1234-5678", "no-link"),
+    ("", "empty"), ("   ", "empty"),
     ("https://", "malformed"), ("https:/example.com", "malformed"),
     ("https://example.com:bad/path", "malformed"),
 ])
 async def test_no_link_and_bad_format_have_different_skill_responses(text, expected, monkeypatch):
     analysis = AsyncMock()
     monkeypatch.setattr(main, "run_analysis", analysis)
+    message_only = AsyncMock(return_value=main.render_card("r6b"))
+    monkeypatch.setattr(main, "run_message_only_analysis", message_only)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="https://test") as client:
         response = await client.post("/kakao/skill", json={"userRequest": {"utterance": text}})
     assert response.status_code == 200
     body = response.json()
     if expected == "no-link":
+        assert body == main.render_card("r6b")
+        message_only.assert_awaited_once_with(text)
+    elif expected == "empty":
         assert body == main.render_card("r6-input-required")
     else:
         assert "주소 형식" in json.dumps(body, ensure_ascii=False)
         assert body != main.render_card("r6-input-required")
+    if expected != "no-link":
+        message_only.assert_not_awaited()
     analysis.assert_not_awaited()
     assert not main.ANALYSIS_JOBS
 

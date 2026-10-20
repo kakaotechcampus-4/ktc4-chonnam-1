@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import main
+from ai.types import AnswerState, MessageDetails, MessagePart, Reason
 
 
 @pytest.fixture(autouse=True)
@@ -295,14 +296,28 @@ class TestCheckResultSkill:
     def test_same_utterance_without_check_result_intent_does_not_query_job(
         self,
         client,
+        monkeypatch,
     ):
-        """발화 문자열이 같아도 결과 확인 intent가 아니면 Job 조회로 처리하지 않는다."""
+        """발화 문자열이 같아도 결과 확인 intent가 아니면 Job 조회로 처리하지 않는다.
+
+        "결과 확인"에는 링크가 없어 신규 시나리오(URL 없는 문자 분석)로
+        빠진다 — 핵심은 어떤 카드가 나오냐가 아니라 Job을 조회하지
+        않는다는 것이라, 문자 분석은 안전 쪽 결과로 고정해 둔다.
+        """
 
         _create_job(
             "running-job",
             "kakao-user-1",
             status="running",
         )
+
+        async def fake_analyze_message_part(text):
+            return MessagePart(
+                answer=AnswerState.NO_RISK_FOUND,
+                details=MessageDetails(doubts=[], signals=[], reason=Reason(text="ok")),
+            )
+
+        monkeypatch.setattr(main, "analyze_message_part", fake_analyze_message_part)
 
         payload = {
             "intent": {
@@ -323,8 +338,11 @@ class TestCheckResultSkill:
 
         assert response.status_code == 200
 
+        # 핵심 검증: "아직 확인하고 있어요"(Job 조회 결과)가 아니다.
+        assert response.json() != main.render_card("k1-still-running")
+
         expected = main.render_card(
-            "r6-input-required"
+            "r6b"
         )
 
         assert response.json() == expected
