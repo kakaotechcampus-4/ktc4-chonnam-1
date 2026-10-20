@@ -53,6 +53,41 @@ def _truncate_evidence(evidence: str, max_length: int = _EVIDENCE_MAX_LENGTH) ->
     return evidence[: max_length - 1] + "…"
 
 
+def render_message_only_card(message_part: dict) -> dict:
+    """URL 없는 문자를 문자 분석만으로 안내한다 ("URL 검사와 문자 분석 흐름
+    분리" 신규 시나리오).
+
+    대조할 링크가 없어 공식 도메인 대조 자체가 불가능하다 — CLAUDE.md
+    절대 원칙 1(판정은 화이트리스트 대조가 근거)과 같은 이유로, 비교
+    대상이 없을 때 임의로 "안전"이라고 확정하지 않는다. 위험 신호가
+    있으면 r6b-warning, 없거나 분석을 끝내지 못했으면 r6b/기존
+    r4-unavailable로 보낸다.
+    """
+
+    answer = message_part.get("answer")
+    details = message_part.get("details") or {}
+
+    if answer == "risk_found":
+        signals = details.get("signals") or []
+        lines = [
+            f"- {get_signal_copy(signal.get('code', ''))[0]}: "
+            f"{_truncate_evidence(signal.get('evidence', ''))}"
+            for signal in signals[:MAX_CAROUSEL_SIGNAL_ITEMS]
+        ]
+        return render_card("r6b-warning", {
+            "org_label": _r9_org_label(message_part.get("brand")),
+            "signal_lines": "\n".join(lines) if lines else "- 위험 신호",
+        })
+
+    if answer in ("partial", "failed"):
+        return render_card("r4-unavailable")
+
+    # no_risk_found / not_run — 위험 신호를 못 찾았거나 분석 자체가 없던 경우.
+    # "위험 신호 없음"과 "분석 안 함"을 굳이 나누지 않는다 — 둘 다 결국
+    # "대조할 게 없어 안전을 확정 못 한다"는 같은 안내로 끝나기 때문이다.
+    return render_card("r6b")
+
+
 def _r9_org_label(brand: str | None) -> str:
     if brand and brand != _UNKNOWN:
         return brand

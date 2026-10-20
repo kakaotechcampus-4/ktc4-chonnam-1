@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "🔍 링크는 없지만 확인해봤어요",
+          "description": "문자에 링크가 없어서 주소 대조는 할 수 없었어요.\n문자 내용만 봤을 때는 위험 신호를 찾지 못했지만, 이것만으로 안전하다고 확정할 수는 없어요.\n\n의심되는 내용이 있다면 문자 속 번호 대신 보낸 사람·기관의 공식 번호로 직접 확인하세요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "다른 문자 확인하기",
+              "action": "block",
+              "blockId": "6aa6a4436d537a3eabb81ad5"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

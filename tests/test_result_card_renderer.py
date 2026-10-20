@@ -14,6 +14,7 @@ from services.result_card_renderer import (
     MAX_CAROUSEL_TOTAL_ITEMS,
     merge_kakao_responses,
     render_detail_carousel,
+    render_message_only_card,
     render_result_card,
     _r9_blank_values,
 )
@@ -132,6 +133,54 @@ def _c2_text(analysis: dict) -> str:
     carousel = render_detail_carousel(analysis)
     items = carousel["template"]["outputs"][0]["carousel"]["items"]
     return str(items[-2])  # C2는 끝에서 두 번째(마지막은 C3 행동 안내)
+
+
+class TestRenderMessageOnlyCard:
+    """URL 없는 문자 분석(신규 시나리오). 비교할 링크가 없어 공식 도메인
+    대조 자체가 불가능하므로, 위험 신호가 없어도 "안전"을 확정하지 않고
+    항상 r6b/r6b-warning으로만 안내한다."""
+
+    def test_risk_found_shows_warning_card_with_signal_lines(self):
+        message = _part(
+            "risk_found",
+            brand="검찰청",
+            signals=[_signal("credential_request", "계좌 비밀번호를 입력하세요")],
+        )
+
+        card = render_message_only_card(message)
+
+        text_card = card["template"]["outputs"][0]["textCard"]
+        assert "사칭이 의심" in text_card["title"]
+        assert "검찰청" in text_card["description"]
+        assert "계좌 비밀번호를 입력하세요" in text_card["description"]
+
+    def test_risk_found_without_brand_uses_generic_org_label(self):
+        message = _part("risk_found", brand=None, signals=[_signal()])
+
+        card = render_message_only_card(message)
+
+        assert "보낸 기관의" in card["template"]["outputs"][0]["textCard"]["description"]
+
+    def test_no_risk_found_does_not_claim_safety(self):
+        message = _part("no_risk_found", signals=[])
+
+        card = render_message_only_card(message)
+
+        description = card["template"]["outputs"][0]["textCard"]["description"]
+        assert "안전하다고 확정할 수는 없어요" in description
+        assert "주소 대조는 할 수 없었" in description
+
+    def test_not_run_falls_back_to_the_same_card_as_no_risk_found(self):
+        assert render_message_only_card(_part("not_run")) == render_message_only_card(
+            _part("no_risk_found")
+        )
+
+    def test_partial_and_failed_fall_back_to_unavailable_card(self):
+        from services.result_card_renderer import render_card
+
+        for answer in ("partial", "failed"):
+            card = render_message_only_card(_part(answer))
+            assert card == render_card("r4-unavailable")
 
 
 class TestR9BlankValues:

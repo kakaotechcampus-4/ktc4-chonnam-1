@@ -1,0 +1,26 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "⚠️ 링크는 없지만 사칭이 의심돼요",
+          "description": "문자 속 링크는 없지만, 내용에서 위험 신호를 발견했어요.\n\n확인한 내용\n{{ signal_lines }}\n\n{{ org_label }} 공식 번호로 직접 확인하기 전에는 송금하거나 개인정보를 알려주지 마세요.\n주소 대조는 하지 않았어요 — 문자에 링크가 없었어요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "신고·상담하기",
+              "action": "block",
+              "blockId": "6aad5cc1d29c9829bcc2adb6"
+            },
+            {
+              "label": "다른 문자 확인하기",
+              "action": "block",
+              "blockId": "6aa6a4436d537a3eabb81ad5"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

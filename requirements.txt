@@ -3,5 +3,6 @@ uvicorn[standard]
 httpx
 idna
 tldextract
+python-multipart
 
 -e ./ai

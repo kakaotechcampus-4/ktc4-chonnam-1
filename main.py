@@ -1,11 +1,12 @@
 import asyncio
 import hmac
 import os
+import tempfile
 
 import uuid
 from datetime import datetime, timezone, timedelta
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 
 from backend.src.server.http_client import get_http_client
 from backend.src.server.lifespan import app_lifespan
@@ -19,6 +20,7 @@ from services.result_card_renderer import (
     render_result_card,
     merge_kakao_responses,
     render_detail_carousel,
+    render_message_only_card,
 )
 
 # AI 연결
@@ -363,9 +365,14 @@ async def kakao_skill(
     print(f"[LINK COUNT] {len(links)}")
     print(f"[MESSAGE] {message!r}")
 
-    # URL이 없는 경우 즉시 응답
+    # URL이 없는 경우: 완전히 빈 입력만 즉시 응답하고, 실제 문자 내용이
+    # 있으면 문자 분석만으로 판단한다(신규 시나리오 — "URL 검사와 문자
+    # 분석 흐름 분리"). urlscan/격리 수집 같은 느린 작업이 없어 콜백
+    # 없이도 카카오 5초 예산 안에 끝난다.
     if not links:
-        return render_card("r6-input-required")
+        if not message.strip():
+            return render_card("r6-input-required")
+        return await run_message_only_analysis(message)
 
     # 같은 사용자의 이전 분석이 아직 진행 중인 경우
     if user_id and user_id in RUNNING_USERS:
@@ -451,6 +458,24 @@ async def run_analysis(
             message_task.cancel()
         await asyncio.gather(message_task, return_exceptions=True)
     return merge_kakao_responses(cards)
+
+
+async def run_message_only_analysis(message: str) -> dict:
+    """URL이 없는 문자를 문자 분석만으로 판단한다.
+
+    `run_analysis()`와 분리한 이유: URL 경로는 격리 수집(네트워크 I/O)이
+    있어 느리고 job/콜백이 필요하지만, 문자 분석은 LLM 호출 하나뿐이라
+    카카오 5초 예산 안에 동기로 끝난다. 결과는 "자세히 보기"로 다시 불러올
+    job_id가 없다 — 이번 범위에서는 단발 응답까지만 지원한다.
+    """
+
+    try:
+        message_result = await analyze_message_part(message)
+    except Exception as error:
+        print(f"[AI MESSAGE ERROR] {type(error).__name__}")
+        return render_card("r4-unavailable")
+
+    return render_message_only_card(message_result.model_dump(mode="json"))
 
 
 def _http_host(url: str | None) -> str | None:
@@ -777,3 +802,170 @@ async def test_r1_lookalike():
     """
 
     return render_r1_lookalike()
+
+
+# ============================================================
+# Voice Case Upload (신규 시나리오 — 보이스피싱 녹음 업로드)
+#
+# docs/designs/agent-loop-plan-v2.md §9 B4 설계를 참고하되, 이번 주
+# 범위는 "업로드 → 목업 처리 → 조회"가 끝까지 도는 수준까지만이다.
+# 실제 STT·AI 분석은 다음 주 AI 팀 연동 때 mock_analyze_voice_case()만
+# 교체하면 되도록 인터페이스를 분리해 둔다. 카카오와는 무관한 일반
+# 웹 업로드라 verify_skill_secret()을 쓰지 않는다 — 사용자 식별용
+# 서명 토큰은 설계 문서에 남아 있는 다음 작업이다(아직 없음, 알려진 공백).
+# ============================================================
+
+ALLOWED_VOICE_EXTENSIONS = (".m4a", ".mp3", ".wav", ".webm")
+MAX_VOICE_FILE_BYTES = 25 * 1024 * 1024  # 25MB (설계 문서 §9 B4)
+_VOICE_UPLOAD_CHUNK_BYTES = 1024 * 1024  # 1MB씩 읽어 상한 넘으면 바로 중단
+
+# TODO: 인메모리 저장소. 서버 재시작 시 소실된다 (ANALYSIS_JOBS와 같은 한계).
+VOICE_CASES: dict[str, dict] = {}
+
+
+def _has_allowed_voice_extension(filename: str | None) -> bool:
+    if not filename:
+        return False
+    return filename.lower().endswith(ALLOWED_VOICE_EXTENSIONS)
+
+
+async def _save_voice_upload(file: UploadFile) -> tuple[str, int]:
+    """업로드를 1MB씩 읽어 임시 파일에 쓰면서 누적 크기를 그 자리에서 검증한다.
+
+    `await file.read()`로 전체를 한 번에 메모리에 올리면, 25MB 업로드가
+    동시에 여러 건 들어올 때 메모리 사용량이 그만큼 배로 늘어난다
+    (윤여경 리뷰). 청크 단위로 읽어 디스크에 바로 흘려보내고, 상한을
+    넘는 순간 남은 바이트를 더 읽지 않고 바로 끊는다.
+    """
+
+    fd, path = tempfile.mkstemp(suffix="_voice_upload")
+    total = 0
+    try:
+        with os.fdopen(fd, "wb") as destination:
+            while True:
+                chunk = await file.read(_VOICE_UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_VOICE_FILE_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="파일이 너무 커요. 25MB 이하 파일만 업로드할 수 있어요.",
+                    )
+                destination.write(chunk)
+    except Exception:
+        os.remove(path)
+        raise
+    return path, total
+
+
+async def mock_analyze_voice_case(audio_path: str, filename: str) -> dict:
+    """실제 STT·AI 분석을 흉내 내는 자리 표시자.
+
+    다음 주 AI 연동 전까지, BE가 업로드→처리→결과 조회 흐름 전체를
+    끝까지 테스트할 수 있도록 고정된 결과를 돌려준다. 진짜 분석이
+    들어오면 이 함수만 교체하면 된다 — 호출부(process_voice_case)는
+    바뀌지 않는다. 입력을 메모리의 bytes가 아니라 파일 경로로 받는다 —
+    실제 STT 연동 때도 25MB 파일을 통째로 들고 있을 필요가 없도록
+    미리 맞춰 둔 경계다. 정확한 입출력 형식은 다음 주 AI 팀과 협의해
+    확정한다.
+    """
+
+    await asyncio.sleep(0)  # 실제 작업이면 여기서 await 체인이 이어진다
+
+    return {
+        "scenario": "voice_phishing",
+        "conclusion": "주의 필요",
+        "evidence": [
+            {"text": "(목업) 실제 STT·분석 연동 전 고정 결과입니다.", "source": "mock"},
+        ],
+        "guidance": (
+            "실제 기관은 전화로 송금이나 계좌 정보를 요구하지 않아요. "
+            "의심되면 끊고 공식 대표번호로 직접 확인하세요."
+        ),
+        "mock": True,
+    }
+
+
+def create_voice_case() -> str:
+    case_id = str(uuid.uuid4())
+
+    VOICE_CASES[case_id] = {
+        "case_id": case_id,
+        "status": "processing",
+        "result": None,
+        "error": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    print(f"[VOICE CASE CREATED] case_id={case_id}")
+
+    return case_id
+
+
+async def process_voice_case(case_id: str, audio_path: str, filename: str) -> None:
+    """분석을 실행하고, 성공·실패와 무관하게 업로드 파일을 반드시 지운다."""
+
+    case = VOICE_CASES.get(case_id)
+
+    try:
+        if case is None:
+            return
+
+        try:
+            result = await mock_analyze_voice_case(audio_path, filename)
+            case["status"] = "completed"
+            case["result"] = result
+            print(f"[VOICE CASE COMPLETED] case_id={case_id}")
+        except Exception as error:
+            print(f"[VOICE CASE ERROR] case_id={case_id} {type(error).__name__}")
+            case["status"] = "failed"
+            case["error"] = type(error).__name__
+    finally:
+        try:
+            os.remove(audio_path)
+        except OSError:
+            pass
+
+
+@app.post("/api/voice-cases", status_code=202)
+async def upload_voice_case(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+):
+    """보이스피싱 녹음 파일을 업로드받아 분석을 백그라운드로 시작한다.
+
+    이 함수는 업로드를 받아 즉시 `case_id`를 반환하고(202), 실제 분석은
+    `background_tasks`로 넘겨 응답 이후에 처리한다 — 다음 주 실제
+    STT·AI 분석이 몇 초 이상 걸려도 요청을 붙들고 있지 않는다.
+    """
+
+    if not _has_allowed_voice_extension(file.filename):
+        raise HTTPException(
+            status_code=415,
+            detail="지원하지 않는 파일 형식입니다. m4a/mp3/wav/webm만 업로드할 수 있어요.",
+        )
+
+    path, size = await _save_voice_upload(file)
+
+    if size == 0:
+        os.remove(path)
+        raise HTTPException(status_code=400, detail="빈 파일입니다.")
+
+    case_id = create_voice_case()
+
+    background_tasks.add_task(
+        process_voice_case, case_id, path, file.filename
+    )
+
+    return {"case_id": case_id, "status": "processing"}
+
+
+@app.get("/api/voice-cases/{case_id}")
+async def get_voice_case(case_id: str):
+    case = VOICE_CASES.get(case_id)
+
+    if case is None:
+        raise HTTPException(status_code=404, detail="Voice case not found")
+
+    return case
