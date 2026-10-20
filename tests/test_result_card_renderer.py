@@ -653,6 +653,89 @@ class TestMergeKakaoResponses:
         ]
 
 
+class TestPageRiskEvidence:
+    @pytest.fixture(autouse=True)
+    def no_guidance(self, monkeypatch):
+        monkeypatch.setattr(result_card_renderer, "find_guidance", lambda payload: [])
+
+    def items(self, analysis):
+        return render_detail_carousel(analysis)["template"]["outputs"][0]["carousel"]["items"]
+
+    def test_page_only_risk_has_page_evidence_in_detail(self):
+        analysis = _analysis("unresolved", _part("no_risk_found"),
+                             _part("risk_found", signals=[_signal(evidence="계좌 비밀번호 입력칸")]))
+        before = deepcopy(analysis)
+        assert "위험한 문자" in render_result_card(analysis)["template"]["outputs"][0]["basicCard"]["title"]
+        items = self.items(analysis)
+        assert len(items) == 3
+        assert "페이지에서 비밀번호·인증번호를 요구해요" in items[0]["title"]
+        assert "페이지에서 확인한 내용: 계좌 비밀번호 입력칸" in items[0]["description"]
+        assert "문자에 '" not in items[0]["description"]
+        assert "주소가 공식 주소인지" in items[-2]["description"]
+        assert analysis == before
+
+    def test_message_and_page_are_labeled_separately(self):
+        analysis = _analysis("unresolved",
+                             _part("risk_found", signals=[_signal(evidence="문자 비밀번호 요구")]),
+                             _part("risk_found", signals=[_signal(evidence="페이지 금융정보 입력칸")]))
+        items = self.items(analysis)
+        assert len(items) == 4
+        assert "문자에 '문자 비밀번호 요구'" in items[0]["description"]
+        assert "페이지 금융정보 입력칸" not in items[0]["description"]
+        assert "페이지에서 확인한 내용: 페이지 금융정보 입력칸" in items[1]["description"]
+        assert "문자 비밀번호 요구" not in items[1]["description"]
+
+    def test_duplicate_signals_are_deduplicated_within_each_source(self):
+        signal = _signal(evidence="같은 요구")
+        analysis = _analysis("unresolved", _part("risk_found", signals=[signal, signal]),
+                             _part("risk_found", signals=[signal, signal]))
+        items = self.items(analysis)
+        # Same text observed independently in message and page retains both sources.
+        assert len(items) == 4
+        assert "문자에 '" in items[0]["description"]
+        assert "페이지에서 확인한 내용:" in items[1]["description"]
+
+    @pytest.mark.parametrize("answer", ["failed", "not_run", "partial"])
+    def test_page_doubts_and_reason_are_not_promoted_to_risk_evidence(self, answer):
+        env = _part(answer, doubts=[_doubt("로그인·인증 입력폼", "확인 범위")])
+        env["details"]["reason"]["text"] = "수집 중 비밀번호라는 단어를 관측"
+        analysis = _analysis("unresolved", _part("no_risk_found"), env)
+        items = self.items(analysis)
+        assert len(items) == 2  # C2 + C3, no invented C1.
+        assert "페이지:" in items[0]["description"]
+        assert "수집 중 비밀번호라는 단어를 관측" not in str(items)
+
+    def test_failed_page_does_not_hide_message_risk(self):
+        analysis = _analysis("unresolved", _part("risk_found", signals=[_signal()]), _part("failed"))
+        assert "위험한 문자" in render_result_card(analysis)["template"]["outputs"][0]["basicCard"]["title"]
+        items = self.items(analysis)
+        assert len(items) == 3
+        assert "문자에 '" in items[0]["description"]
+        assert "페이지:" in items[-2]["description"]
+
+    def test_partial_page_keeps_explicitly_verified_signal(self):
+        analysis = _analysis("unresolved", _part("no_risk_found"),
+                             _part("partial", signals=[_signal(evidence="검증된 입력 요소")]))
+        items = self.items(analysis)
+        assert "검증된 입력 요소" in items[0]["description"]
+        assert "페이지:" in items[-2]["description"]
+
+    def test_empty_signal_evidence_is_not_rendered(self):
+        analysis = _analysis("unresolved", _part("no_risk_found"), _part("risk_found", signals=[_signal(evidence=" ")]))
+        assert len(self.items(analysis)) == 2
+
+    def test_both_sources_survive_carousel_cap_with_guidance(self, monkeypatch):
+        monkeypatch.setattr(result_card_renderer, "find_guidance", lambda payload: [_guidance()] * 3)
+        analysis = _analysis("unresolved",
+                             _part("risk_found", signals=[_signal(evidence=f"문자{i}") for i in range(20)]),
+                             _part("risk_found", signals=[_signal(evidence="페이지 유일 근거")]))
+        items = self.items(analysis)
+        assert len(items) == MAX_CAROUSEL_TOTAL_ITEMS
+        assert "문자에 '" in items[0]["description"]
+        assert "페이지 유일 근거" in items[1]["description"]
+        assert items[5]["title"] == "이번 분석으로 확인하지 못한 부분"
+
+
 class TestRenderDetailCarousel:
     def test_one_signal_produces_c1_plus_c2_plus_c3(self):
         analysis = _analysis(

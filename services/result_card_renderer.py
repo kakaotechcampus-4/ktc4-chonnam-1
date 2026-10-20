@@ -399,16 +399,43 @@ def _guidance_items(analysis_result: dict) -> list[dict]:
     ]
 
 
+def _detail_signals(analysis_result: dict) -> list[tuple[str, dict]]:
+    """검증된 signals만 출처별 중복 제거 후 교대로 배치한다.
+
+    한쪽 신호가 많아도 다른 출처가 카드 상한 밖으로 밀리지 않게 한다.
+    doubts/reason은 위험 신호로 승격하지 않는다.
+    """
+    sources = []
+    for part_name, label in (("message", "문자"), ("env", "페이지")):
+        part = analysis_result.get(part_name) or {}
+        unique = []
+        seen = set()
+        for signal in (part.get("details") or {}).get("signals") or []:
+            code, evidence = signal.get("code"), signal.get("evidence")
+            if not isinstance(code, str) or not code or not isinstance(evidence, str) or not evidence.strip():
+                continue
+            key = (code, evidence)
+            if key not in seen:
+                seen.add(key)
+                unique.append((label, signal))
+        sources.append(unique)
+    ordered = []
+    for index in range(max(map(len, sources))):
+        for source in sources:
+            if index < len(source):
+                ordered.append(source[index])
+    return ordered
+
+
 def render_detail_carousel(analysis_result: dict) -> dict:
     """"자세히 보기"에서 쓸 의심 근거 캐러셀을 만든다.
 
     c-detail-carousel.json의 items[0]을 "의심 근거(C1)" 템플릿으로 보고
-    message.details.signals 개수만큼 복제한다. items[1]은 "확인하지 못한
+    message/env.details.signals의 검증된 근거마다 복제한다. items[1]은 "확인하지 못한
     부분(C2)", items[2]는 "행동 안내(C3)"로 고정 1장씩이다. 이슈 #69로
     추가된 공식 확인 방법 카드(`find_guidance()` 결과)는 맨 뒤에 붙인다.
 
-    페이지(`env.details.signals`) 신호는 아직 고정 문구가 없어
-    (chatbot-copy.md 4절) 이번에는 문자 신호만 카드로 만든다.
+    문자와 페이지의 출처를 구분해 표시하고, 같은 출처의 중복 신호는 생략한다.
 
     전체 10장 상한(카카오 캐러셀 자체 제약)은 C2·C3 2장을 먼저 빼고
     남는 자리를 신호 카드와 안내 카드가 나눠 쓴다 — 안내 카드가 있으면
@@ -419,8 +446,7 @@ def render_detail_carousel(analysis_result: dict) -> dict:
     items_template = template["template"]["outputs"][0]["carousel"]["items"]
     c1_template, c2_template, c3_template = items_template
 
-    message = analysis_result.get("message") or {}
-    signals = (message.get("details") or {}).get("signals") or []
+    signals = _detail_signals(analysis_result)
 
     guidance_items = _guidance_items(analysis_result)
 
@@ -433,17 +459,22 @@ def render_detail_carousel(analysis_result: dict) -> dict:
     )
 
     c1_items = []
-    for signal in signals[:signal_budget]:
+    for source, signal in signals[:signal_budget]:
         code = signal.get("code", "")
         evidence = signal.get("evidence", "")
         signal_title, reason = get_signal_copy(code)
+        if source == "페이지":
+            signal_title = signal_title.replace("문자에서", "페이지에서", 1)
+            observed = f"페이지에서 확인한 내용: {_truncate_evidence(evidence)}"
+        else:
+            observed = f"문자에 '{_truncate_evidence(evidence)}'라고 적혀 있어요."
 
         c1_items.append(
             substitute_values(
                 c1_template,
                 {
                     "signal_title": signal_title,
-                    "observed": f"문자에 '{_truncate_evidence(evidence)}'라고 적혀 있어요.",
+                    "observed": observed,
                     "reason": reason,
                 },
             )
