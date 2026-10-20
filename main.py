@@ -9,7 +9,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 
 from backend.src.server.http_client import get_http_client
 from backend.src.server.lifespan import app_lifespan
-from backend.src.server.url_utils import split_message
+from backend.src.server.url_utils import has_malformed_url, split_message
 from backend.src.server.callback_guard import callback_host, is_allowed_callback_url
 from backend.src.server.templates.renderer import render_r1_lookalike
 from services.official_domain_service import check_link_official
@@ -365,6 +365,8 @@ async def kakao_skill(
 
     # URL이 없는 경우 즉시 응답
     if not links:
+        if has_malformed_url(utterance):
+            return kakao_response("주소 형식을 확인하지 못했어요. http:// 또는 https://로 시작하는 전체 주소를 다시 보내 주세요.")
         return render_card("r6-input-required")
 
     # 같은 사용자의 이전 분석이 아직 진행 중인 경우

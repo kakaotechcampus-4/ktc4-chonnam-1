@@ -15,6 +15,7 @@ from services.chatbot_copy_data import (
     get_unverified_copy,
 )
 from services.official_domain_service import official_homepage
+from services.link_resolution import is_shortener
 from services.kakao_card_renderer import render_card, substitute_values
 from services.result_card_selector import select_result_card
 
@@ -78,7 +79,7 @@ def _r9_requested_actions_line(doubts: list[dict]) -> str | None:
     return f"문자에서 요구한 것: {joined}"
 
 
-def _r9_address_lines(official: str | None, brand: str | None) -> tuple[str | None, str | None]:
+def _r9_address_lines(official: str | None, brand: str | None, domain: str | None = None) -> tuple[str | None, str | None]:
     """멘토 리뷰(PR #54): 기관을 몰라 애초에 대조를 못 한 경우와, 대조했는데
     주소가 일치하지 않는 경우를 구분한다. `check_official_domain()`은
     brand가 없으면 도메인을 보지도 않고 `not_registered`를 반환한다
@@ -99,6 +100,8 @@ def _r9_address_lines(official: str | None, brand: str | None) -> tuple[str | No
     if official == "brand_mismatch":
         return "공식 주소 목록에 없는 주소예요", None
     if official == "unresolved":
+        if is_shortener(domain):
+            return None, "주소가 공식 주소인지 (단축 주소라 실제 주소를 확인하지 못했어요)"
         return None, "주소가 공식 주소인지"
     return None, "주소가 공식 주소인지"
 
@@ -152,7 +155,8 @@ def _unverified_lines(analysis_result: dict, *, detail: bool = False) -> list[st
     env = analysis_result.get("env") or {}
     brand = message.get("brand")
     _, sender = _r9_sender_lines(brand)
-    _, address = _r9_address_lines((analysis_result.get("url") or {}).get("official"), brand)
+    url = analysis_result.get("url") or {}
+    _, address = _r9_address_lines(url.get("official"), brand, url.get("domain"))
     _, message_line = _r9_message_lines(
         message.get("answer"),
         ((message.get("details") or {}).get("reason") or {}).get("failures") or [],
@@ -183,7 +187,7 @@ def _r9_blank_values(analysis_result: dict) -> dict[str, str]:
     requested_checked = _r9_requested_actions_line(
         (message.get("details") or {}).get("doubts") or []
     )
-    address_checked, _ = _r9_address_lines(url.get("official"), brand)
+    address_checked, _ = _r9_address_lines(url.get("official"), brand, url.get("domain"))
     message_checked, _ = _r9_message_lines(
         message.get("answer"),
         ((message.get("details") or {}).get("reason") or {}).get("failures") or [],
