@@ -51,13 +51,25 @@ class TestOfficialHomepageButton:
 
 
 class TestCallbackGuard:
+    @pytest.mark.parametrize("configured", [None, "", "   ", ",", " , , "])
     @pytest.mark.parametrize("url", [
-        "https://bot-api.kakao.com/v1/bots/abc/callback/token",
-        "https://kakao.com/cb",
-        "https://BOT-API.kakao.com:443/cb",
+        "https://kakao.com/cb", "https://bot-api.kakao.com/cb",
+        "https://callback.example.test/cb",
     ])
-    def test_allowed_by_default(self, url, monkeypatch):
-        monkeypatch.delenv("KAKAO_CALLBACK_HOSTS", raising=False)
+    def test_missing_or_empty_allowlist_rejects_all(self, configured, url, monkeypatch):
+        if configured is None:
+            monkeypatch.delenv("KAKAO_CALLBACK_HOSTS", raising=False)
+        else:
+            monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", configured)
+        assert not is_allowed_callback_url(url)
+
+    @pytest.mark.parametrize("url", [
+        "https://callback.example.test/v1/callback/token",
+        "https://CALLBACK.example.test:443/cb",
+        "https://callback.example.test./cb",
+    ])
+    def test_explicit_host_is_allowed(self, url, monkeypatch):
+        monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "callback.example.test")
         assert is_allowed_callback_url(url)
 
     @pytest.mark.parametrize("url", [
@@ -78,13 +90,34 @@ class TestCallbackGuard:
         123,
     ])
     def test_blocked(self, url, monkeypatch):
-        monkeypatch.delenv("KAKAO_CALLBACK_HOSTS", raising=False)
+        # An explicit list ensures URL validation is not masked by fail-closed.
+        monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "bot-api.kakao.com")
         assert not is_allowed_callback_url(url)
 
-    def test_exact_hosts_when_configured(self, monkeypatch):
-        monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "bot-api.kakao.com")
-        assert is_allowed_callback_url("https://bot-api.kakao.com/cb")
-        assert not is_allowed_callback_url("https://other.kakao.com/cb")
+    @pytest.mark.parametrize("host", [
+        "sub.callback.example.test", "callback.example.test.evil.test",
+        "evilcallback.example.test", "example.test", "other.example.test",
+    ])
+    def test_only_exact_host_matches(self, host, monkeypatch):
+        monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "callback.example.test")
+        assert not is_allowed_callback_url(f"https://{host}/cb")
+
+    def test_multiple_hosts_are_normalized_and_matched_exactly(self, monkeypatch):
+        monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", " CALLBACK.example.test. , , second.example.test ")
+        assert is_allowed_callback_url("https://callback.example.test/cb")
+        assert is_allowed_callback_url("https://second.example.test/cb")
+        assert not is_allowed_callback_url("https://sub.second.example.test/cb")
+
+    @pytest.mark.parametrize("url", [
+        "https://callback.example.test:invalid/cb", "https://callback.example.test:65536/cb",
+        "https:///cb", "//callback.example.test/cb", "https://[broken/cb",
+        "https://user:password@callback.example.test/cb", "https://@callback.example.test/cb",
+        "https://callback.example.test/\ncb", "https://callback.example.test/\x7fcb",
+        "https://callback.example.test/" + "x" * 2048,
+    ])
+    def test_malformed_urls_remain_rejected(self, url, monkeypatch):
+        monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "callback.example.test")
+        assert not is_allowed_callback_url(url)
 
     def test_host_for_log_drops_token(self):
         assert callback_host("https://bot-api.kakao.com/v1/callback/SECRET") == "bot-api.kakao.com"
@@ -110,6 +143,22 @@ def skill_body(callback_url):
 
 
 class TestKakaoSkillCallback:
+    @pytest.mark.parametrize("configured", [None, "", " , ", "example.test"])
+    async def test_unlisted_callback_is_rejected_before_job_creation(self, configured, monkeypatch):
+        if configured is None:
+            monkeypatch.delenv("KAKAO_CALLBACK_HOSTS", raising=False)
+        else:
+            monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", configured)
+        before = set(main.ANALYSIS_JOBS)
+        tasks = BackgroundTasks()
+        response = await main.kakao_skill(
+            FakeRequest(skill_body("https://callback.example.test/cb")), tasks,
+        )
+        assert response == main.render_card("r4-unavailable")
+        assert tasks.tasks == []
+        assert set(main.ANALYSIS_JOBS) == before
+        assert "u-test" not in main.RUNNING_USERS
+
     async def test_internal_callback_is_rejected_before_analysis(self, monkeypatch):
         monkeypatch.delenv("KAKAO_CALLBACK_HOSTS", raising=False)
         tasks = BackgroundTasks()
@@ -119,15 +168,25 @@ class TestKakaoSkillCallback:
         assert json.dumps(response, ensure_ascii=False) == json.dumps(main.render_card("r4-unavailable"), ensure_ascii=False)
 
     async def test_kakao_callback_starts_analysis(self, monkeypatch):
-        monkeypatch.delenv("KAKAO_CALLBACK_HOSTS", raising=False)
+        monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "callback.example.test")
         tasks = BackgroundTasks()
         try:
-            await main.kakao_skill(FakeRequest(skill_body("https://bot-api.kakao.com/cb/t")), tasks)
+            await main.kakao_skill(FakeRequest(skill_body("https://callback.example.test/cb/t")), tasks)
             assert len(tasks.tasks) == 1
         finally:
             main.RUNNING_USERS.discard("u-test")
 
-    async def test_send_step_refuses_bad_url_too(self, monkeypatch):
+    @pytest.mark.parametrize("callback_url,configured", [
+        ("http://127.0.0.1:8000/x", "callback.example.test"),
+        ("https://callback.example.test/cb", None),
+        ("https://callback.example.test/cb", " , "),
+        ("https://sub.callback.example.test/cb", "callback.example.test"),
+    ])
+    async def test_send_step_refuses_bad_url_too(self, monkeypatch, callback_url, configured):
+        if configured is None:
+            monkeypatch.delenv("KAKAO_CALLBACK_HOSTS", raising=False)
+        else:
+            monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", configured)
         posted = []
 
         class Client:
@@ -140,6 +199,6 @@ class TestKakaoSkillCallback:
         monkeypatch.setattr(main, "get_http_client", lambda: Client())
         monkeypatch.setattr(main, "run_analysis", fake_run)
         job_id = main.create_analysis_job("u-x")
-        await main.run_analysis_and_callback(["https://a"], "m", "http://127.0.0.1:8000/x", "u-x", job_id)
+        await main.run_analysis_and_callback(["https://a"], "m", callback_url, "u-x", job_id)
         assert posted == []
         assert main.ANALYSIS_JOBS[job_id]["callback_status"] == "failed"

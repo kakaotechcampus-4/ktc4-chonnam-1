@@ -20,10 +20,11 @@ import main
 
 
 @pytest.fixture(autouse=True)
-def clean_jobs():
+def clean_jobs(monkeypatch):
     """테스트마다 Job 저장소와 실행 중 사용자 상태를 초기화한다."""
     main.ANALYSIS_JOBS.clear()
     main.RUNNING_USERS.clear()
+    monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "callback.example.com")
 
     yield
 
@@ -108,7 +109,7 @@ async def test_callback_success(monkeypatch):
     await main.run_analysis_and_callback(
         links=["https://example.com"],
         message="테스트 문자",
-        callback_url="https://bot-api.kakao.com/callback/test",
+        callback_url="https://callback.example.com/callback/test",
         user_id="test-user",
         job_id=job_id,
     )
@@ -124,7 +125,7 @@ async def test_callback_success(monkeypatch):
 
     # callback HTTP 요청이 실제로 한 번만 시도됐는지 확인
     client.post.assert_awaited_once_with(
-        "https://bot-api.kakao.com/callback/test",
+        "https://callback.example.com/callback/test",
         json=analysis_result,
         timeout=10.0,
         follow_redirects=False,
@@ -171,7 +172,7 @@ async def test_callback_failure_status(monkeypatch):
     await main.run_analysis_and_callback(
         links=["https://example.com"],
         message="테스트 문자",
-        callback_url="https://bot-api.kakao.com/callback/test",
+        callback_url="https://callback.example.com/callback/test",
         user_id="test-user",
         job_id=job_id,
     )
@@ -232,7 +233,7 @@ async def test_callback_invalid_json_response(
     await main.run_analysis_and_callback(
         links=["https://example.com"],
         message="테스트 문자",
-        callback_url="https://bot-api.kakao.com/callback/test",
+        callback_url="https://callback.example.com/callback/test",
         user_id="test-user",
         job_id=job_id,
     )
@@ -291,7 +292,7 @@ async def test_callback_request_exception(
     await main.run_analysis_and_callback(
         links=["https://example.com"],
         message="테스트 문자",
-        callback_url="https://bot-api.kakao.com/callback/test",
+        callback_url="https://callback.example.com/callback/test",
         user_id="test-user",
         job_id=job_id,
     )

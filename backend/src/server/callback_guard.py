@@ -5,23 +5,23 @@
 우리 서버가 요청을 보내게 만들 수 있다 (멘토 리뷰).
 
 허용 조건: https, 포트 443(생략 포함), 사용자 정보(`user@`) 없음, 호스트가 허용 목록에
-있음. 허용 목록은 `KAKAO_CALLBACK_HOSTS`(쉼표 구분)로 정한다. 비어 있으면
-`kakao.com` 과 그 하위 도메인만 허용한다. 카카오 문서에 콜백 호스트가 적혀 있지
-않으므로, 운영 로그의 `[CALLBACK HOST]` 로 실제 호스트를 확인해 정확한 이름으로 좁힌다.
+있음. 허용 목록은 `KAKAO_CALLBACK_HOSTS`(쉼표 구분)로 정한다. 미설정 또는
+빈 목록이면 모두 거부하며, 명시한 호스트만 정확히 일치할 때 허용한다.
+하위 도메인은 자동으로 허용하지 않는다. 실제 콜백 호스트는 배포 담당자가
+확인해 설정해야 하며 기본 호스트를 추측하지 않는다.
 IP 주소 표기는 허용 목록의 이름과 일치하지 않으므로 따로 처리하지 않아도 거부된다.
 """
 
 import os
 from urllib.parse import urlsplit
 
-DEFAULT_CALLBACK_SUFFIXES = ("kakao.com",)
 MAX_CALLBACK_URL_LENGTH = 2048
 
 
 def _allowed_hosts() -> tuple[str, ...]:
     raw = os.getenv("KAKAO_CALLBACK_HOSTS", "")
     hosts = tuple(h.strip().lower().rstrip(".") for h in raw.split(",") if h.strip())
-    return hosts or DEFAULT_CALLBACK_SUFFIXES
+    return hosts
 
 
 def callback_host(url: object) -> str | None:
@@ -49,8 +49,4 @@ def is_allowed_callback_url(url: object) -> bool:
     host = (parts.hostname or "").rstrip(".")
     if not host:
         return False
-    configured = os.getenv("KAKAO_CALLBACK_HOSTS", "").strip()
-    if configured:
-        # 운영에서 확인한 이름으로 좁힌 뒤에는 정확히 일치할 때만 허용한다.
-        return host in _allowed_hosts()
-    return any(host == suffix or host.endswith("." + suffix) for suffix in DEFAULT_CALLBACK_SUFFIXES)
+    return host in _allowed_hosts()
