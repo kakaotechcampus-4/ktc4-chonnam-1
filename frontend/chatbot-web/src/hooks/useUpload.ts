@@ -83,6 +83,8 @@ export function useUpload(token: string | null) {
   const [state, dispatch] = useReducer(uploadReducer, token, initialState);
   const server = useMemo(() => (token ? serverFor(token) : null), [token]);
   const mounted = useRef(true);
+  // 보내는 중인지 바로 기록한다. 상태(state)는 다시 그려져야 바뀌어서, 그 전에 온 두 번째 보내기를 막지 못한다.
+  const sending = useRef(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -94,9 +96,11 @@ export function useUpload(token: string | null) {
   const choose = useCallback((file: File) => dispatch({ type: "CHOOSE", file }), []);
 
   const send = useCallback(() => {
-    if (!server || !canSend(state)) return;
+    if (!server || !canSend(state) || sending.current) return;
+    sending.current = true;
     dispatch({ type: "SEND" });
     server.uploadRecording(state.file).then((result) => {
+      sending.current = false;
       if (!mounted.current) return;
       dispatch(
         result.ok

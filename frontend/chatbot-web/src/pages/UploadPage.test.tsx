@@ -243,4 +243,22 @@ describe("UploadPage", () => {
     await wait(3 * 60_000);
     expect(screen.getByRole("status")).toHaveTextContent("시간이 걸리고 있어요");
   });
+
+  it("화면이 다시 그려지기 전에 두 번 보내도 한 번만 올린다", async () => {
+    const fetchMock = fakeServer(accepted, [status("running")]);
+    render(<UploadPage />);
+    chooseFile(audio());
+
+    // 빠른 두 번 탭이나 Enter 두 번: 그 사이에 버튼이 꺼지기 전이다.
+    const form = sendButton().closest("form")!;
+    act(() => {
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+    });
+    await wait();
+
+    const uploads = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(uploads).toHaveLength(1);
+    expect(screen.getByRole("status")).toHaveTextContent("녹음을 분석하고 있어요");
+  });
 });
