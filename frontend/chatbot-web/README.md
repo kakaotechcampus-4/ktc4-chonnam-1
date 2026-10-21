@@ -29,9 +29,9 @@ npm run build          # 타입 검사 후 dist/ 빌드. 커밋 전에 돌려 �
 | `#t=demo-not-found` | 결과를 찾을 수 없음 (서버 재시작 등)        |
 | (없음)              | 입장권 없음                                 |
 
-결과 페이지는 `#t=demo-…`이면 조회 API 대신 `mock/…json`을 읽는다. 그 밖의 입장권은 `GET /api/result`에 `Authorization: Bearer <입장권>`으로 보낸다.
+`#t=demo-…` 입장권이면 `serverFor`가 진짜 서버 대신 가짜 서버(`src/api/demoServer.ts`)를 고른다. 결과 페이지의 가짜 서버는 `public/mock/…json`을 읽는다. 그 밖의 입장권은 `GET /api/result`에 `Authorization: Bearer <입장권>`으로 보낸다.
 업로드 페이지(`/upload/` 뒤에 붙인다)의 가짜 입장권은 아래와 같다. 올리기와 기다리기는 파일로 흉내 낼 수 없어서
-`src/api/demoUpload.ts`의 가짜 함수가 응답한다. 아무 녹음 파일이나 골라 보내면 된다.
+같은 가짜 서버가 응답한다. 아무 녹음 파일이나 골라 보내면 된다.
 
 | 주소 (`#` 뒤)     | 화면                                                         |
 | ----------------- | ------------------------------------------------------------ |
@@ -43,7 +43,7 @@ npm run build          # 타입 검사 후 dist/ 빌드. 커밋 전에 돌려 �
 | `#t=demo-used`    | 보내기 → 이미 올린 녹음이 있어요                             |
 | (없음)            | 올리기 화면을 열 수 없어요                                   |
 
-프로토타입이라 빌드 결과에도 가짜 데이터와 가짜 응답이 들어간다. 실제 배포 전에는 빼야 한다.
+프로토타입이라 빌드 결과에도 가짜 데이터와 가짜 응답이 들어간다. 실제 API 연결이 끝나면 `src/api/server.ts`의 `serverFor`에서 데모 갈래를 막아 뺀다.
 
 ## 구조
 
@@ -58,8 +58,9 @@ src/
 │                        (+ 각 .module.css). 한 곳에서만 쓰는 칸은 페이지 안에 둔다
 ├─ hooks/                useHashToken(입장권 읽기) · useResult(불러오기, useReducer)
 │                        · useUpload(보내기와 상태 묻기, useReducer)
-├─ api/                  callServer(입장권 붙여 요청, 상태 코드와 응답 모양 확인) · result(조회)
-│                        · upload(올리기, 상태 조회) · demoUpload(업로드 가짜 응답)
+├─ api/                  server(웹이 BE에 바라는 일 + serverFor: 입장권으로 진짜·가짜 서버 고르기)
+│                        · httpServer(진짜 서버) · demoServer(가짜 서버)
+│                        · callServer(입장권 붙여 요청, 상태 코드와 응답 모양 확인)
 ├─ lib/                  defang(주소 무해화) · markMessage(근거 표시) · token · time · audioFile(파일 검사)
 ├─ contract.ts           BE 응답 모양(zod)과 거기서 뽑은 타입 (FE 제안 계약)
 └─ **/*.test.ts(x)       테스트
@@ -105,6 +106,7 @@ TypeScript 타입은 실행할 때 서버 응답을 검사하지 않는다. 그�
 | `defang`                             | `http`·`https`·대문자·스킴 없는 주소·IP 주소·포트·경로 속 주소(`?next=https://…`)를 모두 바꾸고, 숫자·글은 건드리지 않는다                                                                                            |
 | `markMessage`                        | 원문과 인용을 같이 무해화해 찾는다. 원문에 없거나 겹친 인용은 칠하지도 설명하지도 않고, 번호는 인용 순서대로                                                                                                          |
 | `parseToken`                         | `#t=`만 읽고, 비었으면 null                                                                                                                                                                                           |
+| `serverFor`                          | 데모 입장권이면 가짜 서버를 골라 BE에 요청하지 않고, 아니면 진짜 서버를 골라 3분까지 기다린다. 아래 세 요청은 진짜 서버로 확인한다                                                                                    |
 | `fetchResult`                        | 입장권은 헤더로, `no-store`로 요청한다. 401·410 만료, 404 없음, 서버 오류와 인터넷 끊김은 실패. JSON이 아니거나 모르는 `tone`·`kind`, 빠진 필드, 잘못된 타입이면 실패. 모르는 필드는 버린다                           |
 | `resultReducer`                      | 불러오는 중 → 준비됨 / 오류                                                                                                                                                                                           |
 | `OriginalMessage`                    | 원문의 `<script>`·`<img>`가 실행되지 않고 글자로 보인다. 링크(`<a>`)를 만들지 않는다                                                                                                                                  |

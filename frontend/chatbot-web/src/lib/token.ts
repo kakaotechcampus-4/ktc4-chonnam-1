@@ -10,10 +10,3 @@ export function parseToken(hash: string): string | null {
 export function readToken(): string | null {
   return parseToken(window.location.hash);
 }
-
-/** 프로토타입: `#t=demo-…`이면 가짜 서버 대신 mock JSON을 읽는다. */
-export const DEMO_PREFIX = "demo-";
-
-export function isDemo(token: string): boolean {
-  return token.startsWith(DEMO_PREFIX);
-}

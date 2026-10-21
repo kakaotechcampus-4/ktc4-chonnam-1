@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isDemo, parseToken } from "./token";
+import { parseToken } from "./token";
 
 describe("parseToken: 주소 # 뒤의 입장권을 읽는다", () => {
   it("#t= 값을 돌려준다", () => {
@@ -19,12 +19,5 @@ describe("parseToken: 주소 # 뒤의 입장권을 읽는다", () => {
     expect(parseToken("#")).toBeNull();
     expect(parseToken("#a=1")).toBeNull();
     expect(parseToken("#t=")).toBeNull();
-  });
-});
-
-describe("isDemo: 가짜 데이터 입장권인지", () => {
-  it("demo-로 시작하면 가짜 데이터", () => {
-    expect(isDemo("demo-caution")).toBe(true);
-    expect(isDemo("x7Kq")).toBe(false);
   });
 });

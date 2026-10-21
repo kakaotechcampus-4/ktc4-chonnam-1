@@ -23,4 +23,4 @@
 
 - BE 응답 약속은 `chatbot-web/src/contract.ts`에 있습니다. **판정 값에 `safe`는 없습니다**. 없어야 실수로도 안전 보증이 나가지 않습니다.
 - BE 응답은 `chatbot-web/src/api/callServer.ts`가 모양을 확인한 뒤에만 화면에 넘깁니다. 컴포넌트가 직접 원본 응답을 받는 경로를 만들지 마세요.
-- 실제 스미싱 문자와 URL로 테스트하지 않습니다. 합성 데이터(`chatbot-web/public/mock/`, `chatbot-web/src/api/demoUpload.ts`)와 팀 소유 모형 페이지만 사용합니다.
+- 실제 스미싱 문자와 URL로 테스트하지 않습니다. 합성 데이터(`chatbot-web/public/mock/`, `chatbot-web/src/api/demoServer.ts`)와 팀 소유 모형 페이지만 사용합니다.

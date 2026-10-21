@@ -1,6 +1,6 @@
 import { useEffect, useReducer } from "react";
 import type { LoadError, ResultView } from "../contract";
-import { fetchResult } from "../api/result";
+import { serverFor } from "../api/server";
 
 export type ResultState =
   | { status: "loading" }
@@ -37,12 +37,16 @@ export function useResult(token: string | null): ResultState {
     }
     let ignore = false;
     dispatch({ type: "LOAD" });
-    fetchResult(token).then((result) => {
-      if (ignore) return;
-      dispatch(
-        result.ok ? { type: "SUCCESS", view: result.data } : { type: "FAIL", error: result.error },
-      );
-    });
+    serverFor(token)
+      .fetchResult()
+      .then((result) => {
+        if (ignore) return;
+        dispatch(
+          result.ok
+            ? { type: "SUCCESS", view: result.data }
+            : { type: "FAIL", error: result.error },
+        );
+      });
     return () => {
       ignore = true;
     };

@@ -1,15 +1,10 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import type { FileProblem, UploadError } from "../contract";
 import { checkAudioFile } from "../lib/audioFile";
-import { isDemo } from "../lib/token";
-import { fetchCaseStatus, uploadRecording } from "../api/upload";
+import { serverFor } from "../api/server";
 
 /** 상태를 묻는 간격. */
 export const POLL_INTERVAL_MS = 2_000;
-/** 이만큼 지나도 안 끝나면 묻기를 멈춘다. 웹 경로 분석 예산 90초(§9 B4)에 받아 적기 시간을 더한 값. */
-export const POLL_LIMIT_MS = 3 * 60_000;
-/** 프로토타입: `#t=demo-slow`가 3분을 기다리지 않게 줄인다. */
-const DEMO_POLL_LIMIT_MS = 10_000;
 
 /**
  * 업로드 화면 상태. 결과는 웹에 보여 주지 않으므로 분석이 끝나면 챗봇으로 돌려보내기만 한다.
@@ -86,6 +81,7 @@ function initialState(token: string | null): UploadState {
 /** 녹음 고르기 → 보내기 → 분석이 끝날 때까지 상태 묻기. */
 export function useUpload(token: string | null) {
   const [state, dispatch] = useReducer(uploadReducer, token, initialState);
+  const server = useMemo(() => (token ? serverFor(token) : null), [token]);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -98,9 +94,9 @@ export function useUpload(token: string | null) {
   const choose = useCallback((file: File) => dispatch({ type: "CHOOSE", file }), []);
 
   const send = useCallback(() => {
-    if (!token || !canSend(state)) return;
+    if (!server || !canSend(state)) return;
     dispatch({ type: "SEND" });
-    uploadRecording(token, state.file).then((result) => {
+    server.uploadRecording(state.file).then((result) => {
       if (!mounted.current) return;
       dispatch(
         result.ok
@@ -108,23 +104,22 @@ export function useUpload(token: string | null) {
           : { type: "REJECTED", error: result.error },
       );
     });
-  }, [token, state]);
+  }, [server, state]);
 
   const caseId = state.phase === "analyzing" ? state.caseId : null;
 
   useEffect(() => {
-    if (!token || !caseId) return;
-    const limit = isDemo(token) ? DEMO_POLL_LIMIT_MS : POLL_LIMIT_MS;
+    if (!server || !caseId) return;
     const startedAt = Date.now();
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
 
     const schedule = () => {
-      if (Date.now() - startedAt >= limit) dispatch({ type: "SLOW" });
+      if (Date.now() - startedAt >= server.pollLimitMs) dispatch({ type: "SLOW" });
       else timer = setTimeout(ask, POLL_INTERVAL_MS);
     };
     const ask = () => {
-      fetchCaseStatus(token, caseId).then((result) => {
+      server.fetchCaseStatus(caseId).then((result) => {
         if (stopped) return;
         if (!result.ok) {
           // 기다리는 중 입장권이 만료돼도 분석은 서버에서 계속된다. 챗봇에서 결과를 확인하게 한다.
@@ -142,7 +137,7 @@ export function useUpload(token: string | null) {
       stopped = true;
       clearTimeout(timer);
     };
-  }, [token, caseId]);
+  }, [server, caseId]);
 
   return { state, canSend: canSend(state), choose, send };
 }
