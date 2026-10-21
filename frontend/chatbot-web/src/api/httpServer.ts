@@ -19,7 +19,7 @@ export function httpServer(token: string): Server {
 
     fetchResult: () =>
       callServer(token, RESULT_API, {
-        ok: ResultView,
+        okBody: ResultView,
         errors: { 404: "not_found" },
         fallback: "failed",
         timeoutMs: REQUEST_TIMEOUT_MS,
@@ -31,7 +31,7 @@ export function httpServer(token: string): Server {
       const result = await callServer(token, CASES_API, {
         method: "POST",
         body,
-        ok: CaseCreated,
+        okBody: CaseCreated,
         errors: { 409: "used" },
         errorBodies: { 400: FileRejection },
         fallback: "send_failed",
@@ -42,7 +42,7 @@ export function httpServer(token: string): Server {
 
     async fetchCaseStatus(caseId) {
       const result = await callServer(token, `${CASES_API}/${encodeURIComponent(caseId)}`, {
-        ok: CaseStatusResponse,
+        okBody: CaseStatusResponse,
         fallback: "failed",
         timeoutMs: REQUEST_TIMEOUT_MS,
       });

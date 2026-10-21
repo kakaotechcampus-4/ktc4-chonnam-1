@@ -7,7 +7,7 @@ interface CallOptions<T, E extends string, S extends string, F extends string> {
   method?: "GET" | "POST";
   body?: BodyInit;
   /** 성공(2xx) 본문의 모양 */
-  ok: z.ZodMiniType<T>;
+  okBody: z.ZodMiniType<T>;
   /** 상태 코드별 오류 이름 */
   errors?: Partial<Record<number, E>>;
   /** 본문을 읽어야 오류 이름을 아는 상태 코드와, 이름을 꺼낼 모양. 모양이 어긋나면 fallback */
@@ -39,7 +39,15 @@ export async function callServer<
 >(
   token: string,
   path: string,
-  { method, body, ok, errors = {}, errorBodies = {}, fallback, timeoutMs }: CallOptions<T, E, S, F>,
+  {
+    method,
+    body,
+    okBody,
+    errors = {},
+    errorBodies = {},
+    fallback,
+    timeoutMs,
+  }: CallOptions<T, E, S, F>,
 ): Promise<Result<T, "expired" | E | S | F>> {
   const fail = (error: "expired" | E | S | F) => ({ ok: false, error }) as const;
 
@@ -74,6 +82,6 @@ export async function callServer<
   }
   if (!response.ok) return fail(fallback);
 
-  const parsed = ok.safeParse(json);
+  const parsed = okBody.safeParse(json);
   return parsed.success ? { ok: true, data: parsed.data } : fail(fallback);
 }

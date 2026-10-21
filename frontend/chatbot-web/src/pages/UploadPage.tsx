@@ -1,7 +1,7 @@
 import type { ChangeEvent } from "react";
 import type { FileProblem } from "../contract";
 import { useHashToken } from "../hooks/useHashToken";
-import { useUpload } from "../hooks/useUpload";
+import { useUpload, type UploadState } from "../hooks/useUpload";
 import { AUDIO_EXTENSIONS } from "../lib/audioFile";
 import { Notice } from "../components/Notice";
 import styles from "./UploadPage.module.css";
@@ -65,43 +65,32 @@ export function UploadPage() {
       );
     case "choosing":
     case "sending":
-      return (
-        <ChooseForm
-          file={state.file}
-          fileProblem={state.phase === "choosing" ? state.fileProblem : null}
-          sendFailed={state.phase === "choosing" && state.sendFailed}
-          sending={state.phase === "sending"}
-          canSend={canSend}
-          onChoose={choose}
-          onSend={send}
-        />
-      );
+      return <ChooseForm state={state} canSend={canSend} onChoose={choose} onSend={send} />;
   }
 }
 
 function ChooseForm({
-  file,
-  fileProblem,
-  sendFailed,
-  sending,
+  state,
   canSend,
   onChoose,
   onSend,
 }: {
-  file: File | null;
-  fileProblem: FileProblem | null;
-  sendFailed: boolean;
-  sending: boolean;
+  state: Extract<UploadState, { phase: "choosing" | "sending" }>;
   canSend: boolean;
   onChoose: (file: File) => void;
   onSend: () => void;
 }) {
+  const { file } = state;
+  const sending = state.phase === "sending";
   const onChange = (event: ChangeEvent<HTMLInputElement>) => {
     const chosen = event.target.files?.[0];
     // 선택 창을 그냥 닫으면 앞서 고른 파일을 그대로 둔다.
     if (chosen) onChoose(chosen);
   };
-  const problem = fileProblem ?? (sendFailed ? "send_failed" : null);
+  const problem =
+    state.phase === "choosing"
+      ? (state.fileProblem ?? (state.sendFailed ? "send_failed" : null))
+      : null;
 
   return (
     <form
