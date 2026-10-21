@@ -162,6 +162,53 @@ async def test_failed_extraction_skips_signal_api(failure, monkeypatch):
     if failure == "timeout":
         assert "시간" in part.details.reason.text
     signals.assert_not_awaited()
+    expected = {"fallback": FailureCode.MISSING_RESULT,
+                "error": FailureCode.LLM_ERROR,
+                "timeout": FailureCode.TIMEOUT}[failure]
+    assert part.details.reason.failures == [expected]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error, expected", [
+    (TimeoutError(), FailureCode.TIMEOUT),
+    (RuntimeError("upstream failed"), FailureCode.LLM_ERROR),
+])
+async def test_real_extraction_error_reaches_message_failures(error, expected, monkeypatch):
+    parse = AsyncMock(side_effect=error)
+    signals = AsyncMock()
+    monkeypatch.setattr(module, "analyze_signals", signals)
+    part = await module.analyze_message_part(TEXT, client=FakeClient(parse), model="test")
+    assert part.answer is _Answer.PARTIAL
+    assert part.details.reason.failures == [expected]
+    assert first_doubt(part) is MessageDoubt.PARCEL_LOOKUP
+    assert part.brand is Brand.CJ_LOGISTICS
+    signals.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refusal, expected", [
+    ("cannot process", FailureCode.REFUSED),
+    (None, FailureCode.INVALID_OUTPUT),
+])
+async def test_real_extraction_output_cause_reaches_message(refusal, expected, monkeypatch):
+    parse = AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(
+        message=SimpleNamespace(parsed=None, refusal=refusal))]))
+    signals = AsyncMock()
+    monkeypatch.setattr(module, "analyze_signals", signals)
+    part = await module.analyze_message_part(TEXT, client=FakeClient(parse), model="test")
+    assert part.answer is _Answer.PARTIAL
+    assert part.details.reason.failures == [expected]
+    signals.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text, expected", [
+    ("", FailureCode.EMPTY_INPUT),
+    ("가" * 8193, FailureCode.INPUT_TOO_LARGE),
+], ids=["empty", "oversized"])
+async def test_rejected_input_has_only_its_actual_cause(text, expected):
+    part = await module.analyze_message_part(text)
+    assert part.details.reason.failures == [expected]
 
 
 @pytest.mark.asyncio
@@ -286,14 +333,19 @@ async def test_collection_failure_skips_page_llm(supplied_page, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("info", ["", '<form><input type="password">'])
-async def test_incomplete_html_skips_page_llm_and_preserves_metadata(info, monkeypatch):
+@pytest.mark.parametrize("failure", [None, FailureCode.PARTIAL_CONTENT])
+async def test_incomplete_html_skips_page_llm_and_preserves_metadata(info, failure, monkeypatch):
     llm = AsyncMock()
     monkeypatch.setattr(module, "analyze_page", llm)
-    part = await module.analyze_environment_part(page(info))
+    part = await module.analyze_environment_part(page(info), failure=failure)
     assert part.answer in INCOMPLETE
     assert part.brand is Brand.CJ_LOGISTICS
     if info:
         assert first_doubt(part) is EnvDoubt.LOGIN_FORM
+        assert part.details.reason.failures == [FailureCode.PARTIAL_CONTENT]
+    else:
+        expected = ([FailureCode.PARTIAL_CONTENT] if failure else []) + [FailureCode.EMPTY_INPUT]
+        assert part.details.reason.failures == expected
     llm.assert_not_awaited()
 
 

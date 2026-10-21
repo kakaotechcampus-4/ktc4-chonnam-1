@@ -5,9 +5,9 @@
 - 상태: **네이티브 프로토타입 검증 완료, 사용자 테스트 미실행**
 - 배경: 팀원과 함께 잡은 블록 구조 초안에 용어를 다듬은 것
 - 만드는 방법: `docs/designs/kakao-chatbot-build-guide.md`
-- 결과 화면 3안: `docs/designs/ux-options-3.md`
-- 네이티브 프로토타입 기록: `docs/designs/kakao-result-card-prototype.md`
-- 흐름·상태 정의: `docs/designs/smishing-message-intake-ux.md`
+- 결과 화면 3안: `docs/archive/designs/ux-options-3.md`
+- 네이티브 프로토타입 기록: `docs/archive/designs/kakao-result-card-prototype.md`
+- 흐름·상태 정의: `docs/archive/designs/smishing-message-intake-ux.md`
 
 이 문서는 **사용자에게 보이는 글자**와 **블록 연결**만 다룬다.
 판정 로직, API 스키마는 다루지 않는다.

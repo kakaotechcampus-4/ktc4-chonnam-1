@@ -1,0 +1,83 @@
+/* 전체 색과 글꼴. 외부 글꼴·이미지를 불러오지 않는다(ADR 0006). */
+:root {
+  --bg: #f4f6f9;
+  --paper: #ffffff;
+  --ink: #1f2430;
+  --soft: #5f6878;
+  --line: #dfe4ec;
+  --caution: #b25e00;
+  --caution-bg: #fff2df;
+  --danger: #c23b3b;
+  --danger-bg: #fde8e8;
+  --calm: #3d5a80;
+  --calm-bg: #e8eef7;
+  --claim: #fff0b3;
+  --claim-ink: #4a3b00;
+  --request: #ffd9c2;
+  --request-ink: #5a2600;
+  --signal: #ffc9c9;
+  --signal-ink: #5c0f0f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #13171e;
+    --paper: #1c222c;
+    --ink: #e9edf3;
+    --soft: #a2abba;
+    --line: #2e3643;
+    --caution: #ffb560;
+    --caution-bg: #3a2a14;
+    --danger: #ff8f8f;
+    --danger-bg: #3d1c1e;
+    --calm: #9fbbe0;
+    --calm-bg: #1f2a3c;
+    --claim: #5a4a0c;
+    --claim-ink: #fff3c4;
+    --request: #5a3014;
+    --request-ink: #ffe2cf;
+    --signal: #5c1f22;
+    --signal-ink: #ffdede;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 20px 16px 40px;
+  background: var(--bg);
+  color: var(--ink);
+  font:
+    16px/1.65 -apple-system,
+    BlinkMacSystemFont,
+    "Apple SD Gothic Neo",
+    "Malgun Gothic",
+    "Noto Sans KR",
+    sans-serif;
+}
+
+/* iOS가 글 속 전화번호를 링크로 바꾸더라도 링크처럼 보이지 않게 한다 */
+a[x-apple-data-detectors] {
+  color: inherit !important;
+  text-decoration: none !important;
+  pointer-events: none;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1,
+h2 {
+  line-height: 1.35;
+}

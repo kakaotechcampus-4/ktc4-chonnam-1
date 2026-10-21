@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -7,6 +9,7 @@ from ai.types import (
     CategoryEvidence,
     EvidenceField,
     ExtractedMessage,
+    FailureCode,
     MessageAnalysis,
 )
 
@@ -34,6 +37,29 @@ def test_message_analysis_has_fixed_top_level_shape():
     assert set(result.model_dump(mode="json")) == EXPECTED_KEYS
     assert result.claimed_sender.value is None
     assert result.claimed_sender.evidence is None
+
+
+@pytest.mark.parametrize("failure", list(FailureCode))
+def test_message_failure_is_internal_and_preserves_serialized_keys(failure):
+    result = MessageAnalysis(
+        analysis_status=AnalysisStatus.FALLBACK, failure=failure)
+    assert result.failure is failure
+    assert set(result.model_dump()) == EXPECTED_KEYS
+    assert set(result.model_dump(mode="json")) == EXPECTED_KEYS
+    assert set(json.loads(result.model_dump_json())) == EXPECTED_KEYS
+    assert set(MessageAnalysis.model_json_schema(mode="serialization")["properties"]) == EXPECTED_KEYS
+
+
+def test_completed_message_cannot_carry_failure():
+    with pytest.raises(ValidationError):
+        MessageAnalysis(
+            analysis_status=AnalysisStatus.COMPLETED,
+            failure=FailureCode.TIMEOUT)
+
+
+def test_legacy_message_construction_still_works():
+    assert MessageAnalysis(analysis_status=AnalysisStatus.COMPLETED).failure is None
+    assert MessageAnalysis(analysis_status=AnalysisStatus.FALLBACK).failure is None
 
 
 def test_evidence_field_requires_value_and_evidence_together():

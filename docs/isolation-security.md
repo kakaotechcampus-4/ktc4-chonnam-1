@@ -3,6 +3,12 @@
 작성일: 2026-10-05 (2026-10-06 팀장 검토 반영: DMZ·IPS, SHA-256, 악성 파일)
 상태: 초안. 운영 검증 전이다. 팀 합의가 필요한 결정은 §10에 남긴다.
 
+2026-10-17 구현 변경: `refactor/internal-url-scanner`에서 urlscan 호출을 제거하고
+공개 HTTPS 수집 모드를 추가했다. 기본 모드는 기존 허용 목록이며, 공개 모드의 실제
+EC2 방화벽·DNS·브라우저 검증과 운영 배포는 완료하지 않았다.
+이 문서의 이전 코드 위치·미해결 항목과 구분해
+[전환 검증 기록](experiments/2026-10-17-internal-url-scanner.md)을 확인한다.
+
 이 문서는 의심 링크를 대신 열어 보는 **격리 서버**를 무엇으로부터, 어떤 기술로 지키는지 정리한다.
 아래 문서를 대체하지 않고 보완한다.
 
@@ -10,8 +16,8 @@
 | --- | --- |
 | `docs/adr/0002-isolation-server.md` | 상위 결정 (격리 서버는 별도 서버). 별도 EC2 원칙은 따른다. 격리 서버 자체 LLM 판정은 §10에서 정한다 |
 | `docs/security-checklist.md` | 체크 항목. 이 문서가 항목마다 구현 기술과 확인 방법을 붙인다 |
-| `docs/superpowers/specs/2026-10-01-smishing-pipeline-design.md` §5 | 보안 항목 7개. 위협 모델이 없어 빠진 항목을 이 문서가 채운다 |
-| `docs/ai/html-collection-handoff.md` | 수집 항목과 AWS 검증 목록. 데이터 경로(§5.6)에서 이어받는다 |
+| `docs/archive/superpowers/specs/2026-10-01-smishing-pipeline-design.md` §5 | 보안 항목 7개. 위협 모델이 없어 빠진 항목을 이 문서가 채운다 |
+| `docs/archive/ai/html-collection-handoff.md` | 수집 항목과 AWS 검증 목록. 데이터 경로(§5.6)에서 이어받는다 |
 
 ## 0. 요약
 

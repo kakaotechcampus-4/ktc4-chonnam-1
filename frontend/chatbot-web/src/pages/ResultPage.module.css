@@ -1,0 +1,79 @@
+.page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.loading {
+  padding: 24px 4px;
+  color: var(--soft);
+}
+
+/* 결론 */
+.verdict {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border-radius: 16px;
+  background: var(--calm-bg);
+  color: var(--calm);
+}
+
+.caution {
+  background: var(--caution-bg);
+  color: var(--caution);
+}
+
+.lookalike {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.uncertain {
+  background: var(--calm-bg);
+  color: var(--calm);
+}
+
+.headline {
+  font-size: 22px;
+}
+
+.actions {
+  display: grid;
+  gap: 4px;
+  color: var(--ink);
+}
+
+.actions p:first-child {
+  font-weight: 700;
+}
+
+/* 공식 확인 방법 */
+.guidance {
+  display: grid;
+  gap: 4px;
+}
+
+.guidance + .guidance {
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.source {
+  color: var(--soft);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.guidanceText {
+  overflow-wrap: anywhere;
+}
+
+/* 아래 안내 */
+.footer {
+  display: grid;
+  gap: 2px;
+  padding: 4px 4px 0;
+  color: var(--soft);
+  font-size: 13px;
+}

@@ -5,7 +5,7 @@
       {
         "textCard": {
           "title": "🔒 개인정보 처리 상세 안내",
-          "description": "사용하는 정보\n{{ used_info }}\n\n외부로 보내는 정보\n{{ sent_info }}\n\n보관 및 삭제\n{{ retention }}",
+          "description": "지금은 시험 운영 중이에요.\n확인을 위해 아래 서비스로 보내요.\n\n- 링크: 외부 검사 서비스(urlscan.io)\n- 문자 내용: AI 분석 서비스\n\n링크 검사 서비스는 시험 운영 기간에만 써요.\n처리 방침은 정식 출시 전에 안내해 드릴게요.",
           "buttonLayout": "vertical",
           "buttons": [
             {

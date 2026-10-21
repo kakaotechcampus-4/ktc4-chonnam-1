@@ -1,6 +1,6 @@
 """1단계 정적 검사 — 접속 없이 도메인 문자열만 보고 확인한다.
 
-docs/scanner-static-checks-proposal.md 기준 구현. 기존 공식 도메인 비교
+docs/archive/scanner-static-checks-proposal.md 기준 구현. 기존 공식 도메인 비교
 (`services.official_domain_service.check_official_domain`)에 두 가지를
 더한다.
 
@@ -15,7 +15,7 @@ scanner/fetch.py 와 같은 원칙을 따른다 — 여기서는 사실만 돌�
 점수·판정은 하지 않는다. KISA 목록은 함수 호출부가 주입한다
 (scanner/fetch.py 의 `resolve` 주입과 같은 이유: 아직 실제 데이터 연결
 방법이 확정되지 않았고, 데이터가 없는 상태와 "확인했는데 없음"을
-구분해야 한다 — `docs/scanner-static-checks-proposal.md` 4절).
+구분해야 한다 — `docs/archive/scanner-static-checks-proposal.md` 4절).
 """
 
 import unicodedata
@@ -30,7 +30,7 @@ from services.official_domains import OFFICIAL_DOMAINS
 # 문자열이라(services/official_domains.py), 자주 쓰이는 Cyrillic·Greek
 # 동형이의 문자만 좁게 다룬다 — 넓은 커버리지가 필요해지면
 # confusable_homoglyphs(PyPI, Unicode confusables.txt 기반) 전환을
-# 검토한다(docs/scanner-static-checks-proposal.md 3절, 팀 확인 필요).
+# 검토한다(docs/archive/scanner-static-checks-proposal.md 3절, 팀 확인 필요).
 _CONFUSABLE_MAP: dict[str, str] = {
     # Cyrillic 소문자
     "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x",
@@ -134,7 +134,7 @@ def check_static(
     `kisa_domains`를 생략하면 빈 목록으로 취급하고 `failures`에
     `kisa_feed_unavailable`을 남긴다 — "확인했는데 없음"과 "확인할 목록
     자체가 없음"을 구분한다(KISA 데이터 연결 방법은 아직 팀 확인 전,
-    docs/scanner-static-checks-proposal.md 4절).
+    docs/archive/scanner-static-checks-proposal.md 4절).
     """
 
     if domain is None or not domain.strip():

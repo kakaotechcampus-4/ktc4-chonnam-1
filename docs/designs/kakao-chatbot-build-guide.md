@@ -6,8 +6,8 @@
 - 목적: 백엔드 판정 로직 없이, 관리자센터 화면만으로 UX 흐름을 올려 사용자 테스트를 한다.
 
 흐름과 문구는 `docs/designs/chatbot-flow.md`, 결과 화면 3안은
-`docs/designs/ux-options-3.md`, 실제 카드 검증 기록은
-`docs/designs/kakao-result-card-prototype.md`를 따른다.
+`docs/archive/designs/ux-options-3.md`, 실제 카드 검증 기록은
+`docs/archive/designs/kakao-result-card-prototype.md`를 따른다.
 
 ## 0. 먼저 알아야 할 것
 

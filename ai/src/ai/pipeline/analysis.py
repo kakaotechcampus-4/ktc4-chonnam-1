@@ -57,7 +57,7 @@ async def analyze_message_part(
     """Analyze a body whose URLs were already removed by the caller."""
     extracted = fallback_analysis()
     cases = CaseSearchResult(status=AnalysisStatus.FALLBACK)
-    signals = SignalAnalysis(status=AnalysisStatus.FALLBACK, failure=FailureCode.INVALID_OUTPUT)
+    signals: SignalAnalysis | None = None
     failure = None
     if not text.strip():
         failure = FailureCode.EMPTY_INPUT
@@ -94,8 +94,7 @@ async def analyze_message_part(
             else:
                 cases = search_result
             if isinstance(extraction_result, Exception):
-                signals = SignalAnalysis(status=AnalysisStatus.FALLBACK,
-                    failure=_failure_code(extraction_result))
+                extracted = fallback_analysis(_failure_code(extraction_result))
             else:
                 extracted = extraction_result
             if extracted.analysis_status is AnalysisStatus.COMPLETED:
@@ -114,7 +113,8 @@ async def analyze_environment_part(
     """Analyze only supplied page material or an explicit collection failure."""
     inspection = (inspect_html(page.info) if page is not None else
         PageInspection(text="", elements=(), failure=FailureCode.MISSING_RESULT))
-    stop = failure or inspection.failure
+    # Collector truncation leaves usable material; inspection limits still stop analysis.
+    stop = inspection.failure or (failure if failure is not FailureCode.PARTIAL_CONTENT else None)
     if stop is not None:
         analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=stop)
         return build_environment_part(page, inspection, analysis, failure=failure)
@@ -123,4 +123,4 @@ async def analyze_environment_part(
         analysis = await analyze_page(inspection, client=client, model=model)
     except Exception as error:
         analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=_failure_code(error))
-    return build_environment_part(page, inspection, analysis)
+    return build_environment_part(page, inspection, analysis, failure=failure)

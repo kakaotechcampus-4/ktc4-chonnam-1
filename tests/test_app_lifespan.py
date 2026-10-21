@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend.src.server.lifespan as lifespan
-import backend.src.server.urlscan_service as service
+import backend.src.server.http_client as service
 from ai.types import AnalysisStatus, CaseSearchResult
 
 

@@ -77,6 +77,8 @@ class Topic(str, Enum):
     PARCEL = "택배"
     SHOPPING = "쇼핑"
     FINANCE = "금융"
+    PAYMENT = "결제·승인"
+    PENALTY = "과태료"
     PUBLIC = "공공기관"
     HEALTH = "의료·건강"
     SECURITY = "보안"
@@ -201,6 +203,13 @@ class ExtractedMessage(StrictModel):
 
 class MessageAnalysis(ExtractedMessage):
     analysis_status: AnalysisStatus
+    failure: FailureCode | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def validate_failure(self) -> "MessageAnalysis":
+        if self.analysis_status is AnalysisStatus.COMPLETED and self.failure is not None:
+            raise ValueError("completed message analyses have no failure")
+        return self
 
 
 # ── 외부 입력 (백엔드가 채워서 넘긴다) ──────────────────────────
@@ -282,30 +291,30 @@ class ScanResult(InboundModel):
 
 
 class UrlAnalysis(InboundModel):
-    final_url: str = Field(min_length=1)
+    final_url: str | None = Field(min_length=1)
     domain: str = Field(min_length=1)
     official: DomainMatch
     scan: ScanResult = Field(default_factory=ScanResult)
 
     @field_validator("final_url", "domain")
     @classmethod
-    def reject_blank_value(cls, value: str) -> str:
-        if not value.strip():
+    def reject_blank_value(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
             raise ValueError("value must not be blank")
         return value
 
     @field_validator("official")
     @classmethod
     def reject_no_url(cls, value: DomainMatch) -> DomainMatch:
-        # final_url 이 있는 응답에 "URL 없음" 대조 결과는 모순입니다.
+        # URL 분석 대상이 있는 응답에 "URL 없음" 대조 결과는 모순입니다.
         if value is DomainMatch.NO_URL:
             raise ValueError("url.official cannot be no_url")
         return value
 
 
 class IsolatedPage(InboundModel):
-    brand: str
-    category: str
+    brand: str | None = None
+    category: str | None = None
     info: str
     collected_at: datetime | None = None
 

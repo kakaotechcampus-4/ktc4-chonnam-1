@@ -1,3 +1,6 @@
 scanner/
 secrets/
 collector.env
+egress-hosts
+compose.egress.yaml
+egress-ips.txt
