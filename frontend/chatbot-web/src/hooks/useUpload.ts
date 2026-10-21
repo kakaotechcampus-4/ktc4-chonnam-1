@@ -110,13 +110,17 @@ export function useUpload(token: string | null) {
 
   useEffect(() => {
     if (!server || !caseId) return;
-    const startedAt = Date.now();
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
+    // 기다리는 시간은 대답과 상관없이 따로 잰다. 대답이 오지 않아도 화면이 멈추지 않게 한다.
+    const deadline = setTimeout(() => {
+      stopped = true;
+      clearTimeout(timer);
+      dispatch({ type: "SLOW" });
+    }, server.pollLimitMs);
 
     const schedule = () => {
-      if (Date.now() - startedAt >= server.pollLimitMs) dispatch({ type: "SLOW" });
-      else timer = setTimeout(ask, POLL_INTERVAL_MS);
+      timer = setTimeout(ask, POLL_INTERVAL_MS);
     };
     const ask = () => {
       server.fetchCaseStatus(caseId).then((result) => {
@@ -136,6 +140,7 @@ export function useUpload(token: string | null) {
     return () => {
       stopped = true;
       clearTimeout(timer);
+      clearTimeout(deadline);
     };
   }, [server, caseId]);
 

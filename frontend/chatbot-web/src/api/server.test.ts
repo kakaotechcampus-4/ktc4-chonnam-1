@@ -230,3 +230,56 @@ describe("fetchCaseStatus (진짜 서버)", () => {
     });
   });
 });
+
+describe("대답이 오지 않을 때 (진짜 서버)", () => {
+  /** 끊으라는 신호(abort)를 받을 때까지 대답하지 않는 서버 */
+  function silentServer() {
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("상태 조회는 10초 안에 대답이 없으면 끊고 실패로 본다", async () => {
+    vi.useFakeTimers();
+    silentServer();
+    const pending = serverFor("x7Kq").fetchCaseStatus("c-1");
+    await vi.advanceTimersByTimeAsync(9_999);
+    let settled = false;
+    void pending.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toEqual({ ok: false, error: "failed" });
+  });
+
+  it("결과 조회도 10초 안에 대답이 없으면 실패로 본다", async () => {
+    vi.useFakeTimers();
+    silentServer();
+    const pending = serverFor("x7Kq").fetchResult();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(pending).resolves.toEqual({ ok: false, error: "failed" });
+  });
+
+  it("녹음 올리기는 2분까지 기다리고, 그래도 대답이 없으면 보내기 실패로 본다", async () => {
+    vi.useFakeTimers();
+    silentServer();
+    const pending = serverFor("x7Kq").uploadRecording(recording);
+    let settled = false;
+    void pending.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(119_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toEqual({ ok: false, error: "send_failed" });
+  });
+});

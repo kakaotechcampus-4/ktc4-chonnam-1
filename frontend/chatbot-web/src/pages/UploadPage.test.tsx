@@ -231,4 +231,16 @@ describe("UploadPage", () => {
     await wait();
     expect(screen.getByRole("alert")).toHaveTextContent("올리기 화면을 열 수 없어요");
   });
+
+  it("상태 조회가 아예 대답하지 않아도 3분이 되면 챗봇에서 확인하게 한다", async () => {
+    // 끊으라는 신호도 무시하는 서버: 3분 시계가 대답과 상관없이 도는지 본다.
+    fakeServer(accepted, [() => new Promise<Response>(() => {})]);
+    render(<UploadPage />);
+    chooseFile(audio());
+    fireEvent.click(sendButton());
+    await wait();
+
+    await wait(3 * 60_000);
+    expect(screen.getByRole("status")).toHaveTextContent("시간이 걸리고 있어요");
+  });
 });

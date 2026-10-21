@@ -12,8 +12,10 @@ interface CallOptions<T, E extends string, S extends string, F extends string> {
   errors?: Partial<Record<number, E>>;
   /** 본문을 읽어야 오류 이름을 아는 상태 코드와, 이름을 꺼낼 모양. 모양이 어긋나면 fallback */
   errorBodies?: Partial<Record<number, z.ZodMiniType<S>>>;
-  /** 인터넷 끊김, 그 밖의 서버 오류, 모양이 어긋난 본문 */
+  /** 인터넷 끊김, 시간 초과, 그 밖의 서버 오류, 모양이 어긋난 본문 */
   fallback: F;
+  /** 이 시간 안에 본문까지 다 받지 못하면 끊고 fallback. 대답이 없을 때 화면이 멈추지 않게 한다. */
+  timeoutMs: number;
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -27,6 +29,7 @@ async function readJson(response: Response): Promise<unknown> {
 /**
  * 입장권을 헤더에 넣어 BE에 요청하고, 답장을 약속한 모양으로 확인한다(ADR 0006).
  * 입장권은 주소에 넣지 않고, 브라우저가 답장을 저장하지 않게 한다. 401·410은 늘 만료다.
+ * 오류는 던지지 않는다.
  */
 export async function callServer<
   T,
@@ -36,11 +39,15 @@ export async function callServer<
 >(
   token: string,
   path: string,
-  { method, body, ok, errors = {}, errorBodies = {}, fallback }: CallOptions<T, E, S, F>,
+  { method, body, ok, errors = {}, errorBodies = {}, fallback, timeoutMs }: CallOptions<T, E, S, F>,
 ): Promise<Result<T, "expired" | E | S | F>> {
   const fail = (error: "expired" | E | S | F) => ({ ok: false, error }) as const;
 
+  // 본문까지 시간 안에 다 받지 못하면 끊는다.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
+  let json: unknown;
   try {
     response = await fetch(path, {
       method,
@@ -48,15 +55,18 @@ export async function callServer<
       cache: "no-store",
       credentials: "omit",
       headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
     });
+    json = await readJson(response);
   } catch {
     return fail(fallback);
+  } finally {
+    clearTimeout(timer);
   }
-  if (response.status === 401 || response.status === 410) return fail("expired");
 
+  if (response.status === 401 || response.status === 410) return fail("expired");
   const named = errors[response.status];
   if (named) return fail(named);
-  const json = await readJson(response);
   const errorBody = errorBodies[response.status];
   if (errorBody) {
     const parsed = errorBody.safeParse(json);
