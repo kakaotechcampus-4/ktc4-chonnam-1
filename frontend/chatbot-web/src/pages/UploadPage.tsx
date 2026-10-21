@@ -18,7 +18,8 @@ const ACCEPT = [...AUDIO_EXTENSIONS.map((ext) => `.${ext}`), "audio/*"].join(","
 
 /**
  * 통화 녹음 업로드 페이지(이슈 #74). 올리기 → 분석 중 → "끝났어요"까지만 한다.
- * 결과와 질문은 웹에 보여 주지 않고 챗봇 카드로 보여 준다(chatbot-copy.md 1절 D10).
+ * 결과와 질문은 웹에 보여 주지 않고 챗봇 카드로 보여 준다. 멘토님 리뷰(PR #86, 2026-10-17)에서
+ * 결론과 행동은 카드만 읽어도 알 수 있어야 한다고 했고, 챗봇이 파일을 받을 수 없어 올리기만 웹에서 한다.
  */
 export function UploadPage() {
   const token = useHashToken();
