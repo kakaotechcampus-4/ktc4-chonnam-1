@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { OriginalMessage } from "./OriginalMessage";
-import type { Highlight } from "../types";
+import type { Highlight } from "../contract";
 
 const claim: Highlight = {
   quote: "청소행정과",

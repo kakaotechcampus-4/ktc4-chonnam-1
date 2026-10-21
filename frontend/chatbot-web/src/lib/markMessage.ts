@@ -1,7 +1,7 @@
 // 받은 문자에 근거 인용을 표시한다 (ADR 0006).
 // 원문과 인용을 같은 방식으로 무해화한 뒤 찾아서, 칠한 구절과 설명의 번호가 늘 맞게 한다.
 
-import type { Highlight } from "../types";
+import type { Highlight } from "../contract";
 import { defang } from "./defang";
 
 /** 원문 조각. 칠한 조각은 화면 번호(인용 순서 + 1)와 종류를 가진다. */

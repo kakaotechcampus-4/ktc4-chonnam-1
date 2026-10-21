@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { resultReducer, type ResultState } from "./useResult";
-import { parseResultView } from "../api/parseResultView";
+import { ResultView } from "../contract";
 import caution from "../../public/mock/caution.json";
 
-const view = parseResultView(caution);
+const view = ResultView.parse(caution);
 const loading: ResultState = { status: "loading" };
 
 describe("resultReducer: 결과 불러오기 상태", () => {

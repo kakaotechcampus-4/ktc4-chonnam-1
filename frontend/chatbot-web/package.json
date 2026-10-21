@@ -2,7 +2,7 @@
   "name": "chatbot-web",
   "private": true,
   "type": "module",
-  "description": "챗봇 버튼으로 여는 1회용 웹페이지 (ADR 0006). 빌드한 dist/도 함께 커밋한다.",
+  "description": "챗봇 버튼으로 여는 1회용 웹페이지 (ADR 0006). 빌드 결과 dist/는 커밋하지 않고 배포할 때 만든다.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

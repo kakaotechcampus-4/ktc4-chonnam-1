@@ -1,4 +1,4 @@
-import type { ResultView } from "../types";
+import type { ResultView } from "../contract";
 import { useHashToken } from "../hooks/useHashToken";
 import { useResult } from "../hooks/useResult";
 import { formatTime } from "../lib/time";

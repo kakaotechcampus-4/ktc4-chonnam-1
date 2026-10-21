@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { markMessage } from "./markMessage";
-import type { Highlight } from "../types";
+import type { Highlight } from "../contract";
 
 function quote(text: string, kind: Highlight["kind"] = "claim"): Highlight {
   return { quote: text, kind, label: `${text} 라벨`, note: `${text} 설명` };

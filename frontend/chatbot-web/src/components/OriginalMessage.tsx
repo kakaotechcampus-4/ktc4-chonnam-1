@@ -1,4 +1,4 @@
-import type { Highlight } from "../types";
+import type { Highlight } from "../contract";
 import { markMessage } from "../lib/markMessage";
 import { Section } from "./Section";
 import styles from "./OriginalMessage.module.css";

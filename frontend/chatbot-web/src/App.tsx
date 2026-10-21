@@ -1,11 +1,7 @@
-import { ResultPage } from "./pages/ResultPage";
+import type { ReactNode } from "react";
 import styles from "./App.module.css";
 
-// 지금은 결과 상세 페이지 하나다. 업로드 페이지(#74)가 생기면 여기서 나눈다.
-export function App() {
-  return (
-    <main className={styles.app}>
-      <ResultPage />
-    </main>
-  );
+/** 두 페이지(결과 `index.html`, 업로드 `upload/index.html`)가 같이 쓰는 바깥 틀. */
+export function App({ children }: { children: ReactNode }) {
+  return <main className={styles.app}>{children}</main>;
 }

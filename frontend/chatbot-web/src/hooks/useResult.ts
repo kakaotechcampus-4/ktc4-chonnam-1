@@ -1,5 +1,5 @@
 import { useEffect, useReducer } from "react";
-import type { LoadError, ResultView } from "../types";
+import type { LoadError, ResultView } from "../contract";
 import { fetchResult } from "../api/result";
 
 export type ResultState =
@@ -26,10 +26,6 @@ function initialState(token: string | null): ResultState {
   return token ? { status: "loading" } : { status: "error", error: "no_token" };
 }
 
-function toLoadError(error: unknown): LoadError {
-  return error === "expired" || error === "not_found" ? error : "failed";
-}
-
 /** 입장권으로 결과를 받는다. 입장권이 바뀌면 다시 받고, 늦게 온 이전 응답은 버린다. */
 export function useResult(token: string | null): ResultState {
   const [state, dispatch] = useReducer(resultReducer, token, initialState);
@@ -41,13 +37,12 @@ export function useResult(token: string | null): ResultState {
     }
     let ignore = false;
     dispatch({ type: "LOAD" });
-    fetchResult(token)
-      .then((view) => {
-        if (!ignore) dispatch({ type: "SUCCESS", view });
-      })
-      .catch((error: unknown) => {
-        if (!ignore) dispatch({ type: "FAIL", error: toLoadError(error) });
-      });
+    fetchResult(token).then((result) => {
+      if (ignore) return;
+      dispatch(
+        result.ok ? { type: "SUCCESS", view: result.data } : { type: "FAIL", error: result.error },
+      );
+    });
     return () => {
       ignore = true;
     };

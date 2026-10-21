@@ -1,5 +1,5 @@
-import type { LoadError } from "../types";
-import styles from "./ErrorState.module.css";
+import type { LoadError } from "../contract";
+import { Notice } from "./Notice";
 
 const ERROR_COPY: Record<LoadError, { title: string; body: string }> = {
   no_token: {
@@ -20,13 +20,12 @@ const ERROR_COPY: Record<LoadError, { title: string; body: string }> = {
   },
 };
 
-/** 입장권 없음·만료·실패 화면. 업로드 페이지도 같은 모양을 쓴다. */
+/** 결과 페이지의 입장권 없음·만료·실패 화면. */
 export function ErrorState({ kind }: { kind: LoadError }) {
   const { title, body } = ERROR_COPY[kind];
   return (
-    <section className={styles.state} role="alert">
-      <h1 className={styles.title}>{title}</h1>
+    <Notice title={title} role="alert">
       <p>{body}</p>
-    </section>
+    </Notice>
   );
 }

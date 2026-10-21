@@ -1,0 +1,125 @@
+/* 한글 문장이 단어 중간에서 줄바꿈되지 않게 한다(예: "거예/요"). */
+.page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  word-break: keep-all;
+}
+
+.header {
+  display: grid;
+  gap: 6px;
+  padding: 4px 2px;
+}
+
+.title {
+  font-size: 22px;
+}
+
+.soft {
+  color: var(--soft);
+}
+
+.panel {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--paper);
+}
+
+/* 파일 고르기. 기본 파일 입력은 숨기고 라벨을 버튼처럼 보인다. */
+.pick {
+  display: block;
+  padding: 14px;
+  border: 2px dashed var(--calm);
+  border-radius: 12px;
+  color: var(--calm);
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+}
+
+.pick:focus-within {
+  outline: 3px solid var(--calm);
+  outline-offset: 2px;
+}
+
+.fileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.fileName {
+  overflow-wrap: anywhere;
+}
+
+.problem {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.help summary {
+  color: var(--soft);
+  cursor: pointer;
+}
+
+.help dl {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.help dt {
+  font-weight: 700;
+}
+
+.help dd {
+  margin: 0 0 6px;
+}
+
+.privacy {
+  color: var(--soft);
+  font-size: 14px;
+}
+
+.send {
+  padding: 15px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--calm);
+  color: var(--paper);
+  font: inherit;
+  font-weight: 700;
+}
+
+.send:disabled {
+  opacity: 0.45;
+}
+
+/* 분석 중 표시 */
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--line);
+  border-top-color: var(--calm);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
