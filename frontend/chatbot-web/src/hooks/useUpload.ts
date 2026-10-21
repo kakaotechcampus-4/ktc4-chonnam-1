@@ -13,12 +13,13 @@ const DEMO_POLL_LIMIT_MS = 10_000;
 
 /**
  * 업로드 화면 상태. 결과는 웹에 보여 주지 않으므로 분석이 끝나면 챗봇으로 돌려보내기만 한다.
- * - choosing: 파일 고르기. problem은 파일 문제(보내기 막음) 또는 보내기 실패(다시 보낼 수 있음)
+ * - choosing: 파일 고르기. fileProblem은 파일 자체의 문제(보내기 막음),
+ *   sendFailed는 인터넷 끊김·서버 오류로 못 보냄(같은 파일로 다시 보낼 수 있음)
  * - slow: 3분이 지났거나 기다리는 중 입장권이 만료됨. 분석은 서버에서 계속된다
  * - expired: 입장권 없음·만료, used: 이 입장권으로 이미 올림
  */
 export type UploadState =
-  | { phase: "choosing"; file: File | null; problem: FileProblem | "send_failed" | null }
+  | { phase: "choosing"; file: File | null; fileProblem: FileProblem | null; sendFailed: boolean }
   | { phase: "sending"; file: File }
   | { phase: "analyzing"; caseId: string }
   | { phase: "finished" }
@@ -36,13 +37,25 @@ export type UploadAction =
   | { type: "ANALYSIS_FAILED" }
   | { type: "SLOW" };
 
+type Choosing = Extract<UploadState, { phase: "choosing" }>;
+
+/** 보낼 수 있나: 고르기 화면이고, 파일이 있고, 파일에 문제가 없다. 보내기 실패는 막지 않는다. */
+export function canSend(state: UploadState): state is Choosing & { file: File } {
+  return state.phase === "choosing" && state.file !== null && state.fileProblem === null;
+}
+
 export function uploadReducer(state: UploadState, action: UploadAction): UploadState {
   switch (action.type) {
     case "CHOOSE":
       if (state.phase !== "choosing") return state;
-      return { phase: "choosing", file: action.file, problem: checkAudioFile(action.file) };
+      return {
+        phase: "choosing",
+        file: action.file,
+        fileProblem: checkAudioFile(action.file),
+        sendFailed: false,
+      };
     case "SEND":
-      if (state.phase !== "choosing" || !state.file || isFileProblem(state.problem)) return state;
+      if (!canSend(state)) return state;
       return { phase: "sending", file: state.file };
     case "ACCEPTED":
       return { phase: "analyzing", caseId: action.caseId };
@@ -52,7 +65,8 @@ export function uploadReducer(state: UploadState, action: UploadAction): UploadS
       return {
         phase: "choosing",
         file: state.phase === "sending" ? state.file : null,
-        problem: action.error,
+        fileProblem: action.error === "send_failed" ? null : action.error,
+        sendFailed: action.error === "send_failed",
       };
     case "FINISHED":
       return { phase: "finished" };
@@ -63,12 +77,10 @@ export function uploadReducer(state: UploadState, action: UploadAction): UploadS
   }
 }
 
-function isFileProblem(problem: FileProblem | "send_failed" | null): problem is FileProblem {
-  return problem !== null && problem !== "send_failed";
-}
-
 function initialState(token: string | null): UploadState {
-  return token ? { phase: "choosing", file: null, problem: null } : { phase: "expired" };
+  return token
+    ? { phase: "choosing", file: null, fileProblem: null, sendFailed: false }
+    : { phase: "expired" };
 }
 
 /** 녹음 고르기 → 보내기 → 분석이 끝날 때까지 상태 묻기. */
@@ -86,9 +98,7 @@ export function useUpload(token: string | null) {
   const choose = useCallback((file: File) => dispatch({ type: "CHOOSE", file }), []);
 
   const send = useCallback(() => {
-    if (!token || state.phase !== "choosing" || !state.file || isFileProblem(state.problem)) {
-      return;
-    }
+    if (!token || !canSend(state)) return;
     dispatch({ type: "SEND" });
     uploadRecording(token, state.file).then((result) => {
       if (!mounted.current) return;
@@ -134,5 +144,5 @@ export function useUpload(token: string | null) {
     };
   }, [token, caseId]);
 
-  return { state, choose, send };
+  return { state, canSend: canSend(state), choose, send };
 }

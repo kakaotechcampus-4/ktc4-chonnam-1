@@ -22,7 +22,7 @@ const ACCEPT = [...AUDIO_EXTENSIONS.map((ext) => `.${ext}`), "audio/*"].join(","
  */
 export function UploadPage() {
   const token = useHashToken();
-  const { state, choose, send } = useUpload(token);
+  const { state, canSend, choose, send } = useUpload(token);
 
   switch (state.phase) {
     case "expired":
@@ -67,8 +67,10 @@ export function UploadPage() {
       return (
         <ChooseForm
           file={state.file}
-          problem={state.phase === "choosing" ? state.problem : null}
+          fileProblem={state.phase === "choosing" ? state.fileProblem : null}
+          sendFailed={state.phase === "choosing" && state.sendFailed}
           sending={state.phase === "sending"}
+          canSend={canSend}
           onChoose={choose}
           onSend={send}
         />
@@ -78,14 +80,18 @@ export function UploadPage() {
 
 function ChooseForm({
   file,
-  problem,
+  fileProblem,
+  sendFailed,
   sending,
+  canSend,
   onChoose,
   onSend,
 }: {
   file: File | null;
-  problem: FileProblem | "send_failed" | null;
+  fileProblem: FileProblem | null;
+  sendFailed: boolean;
   sending: boolean;
+  canSend: boolean;
   onChoose: (file: File) => void;
   onSend: () => void;
 }) {
@@ -94,7 +100,7 @@ function ChooseForm({
     // 선택 창을 그냥 닫으면 앞서 고른 파일을 그대로 둔다.
     if (chosen) onChoose(chosen);
   };
-  const blocked = !file || sending || (problem !== null && problem !== "send_failed");
+  const problem = fileProblem ?? (sendFailed ? "send_failed" : null);
 
   return (
     <form
@@ -152,7 +158,7 @@ function ChooseForm({
         <br />
         녹음은 받아 적은 뒤 분석이 끝나면 바로 지워요.
       </p>
-      <button className={styles.send} type="submit" disabled={blocked}>
+      <button className={styles.send} type="submit" disabled={!canSend}>
         {sending ? "보내는 중…" : "보내기"}
       </button>
     </form>
