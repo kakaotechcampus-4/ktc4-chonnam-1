@@ -161,6 +161,41 @@ def test_pii_masked_before_llm_and_in_segments():
     assert all("900101" not in s.text for s in r.segments)
 
 
+@pytest.mark.parametrize("rrn", ["900101.1234567", "900101 1234567"])
+def test_dotted_rrn_masked_in_diarize_request_and_one_sentence(rrn):
+    seen: list[httpx.Request] = []
+    body = _sse('{"lines": [{"id": 0, "speaker": "화자1"}]}')
+
+    async def stt(audio, filename):
+        return f"주민번호는 {rrn} 입니다."
+
+    async def dia(sentences):
+        client = _diarize_client(body, seen=seen)
+        return await diarize_llm.pick_speakers(sentences, client=client)
+
+    r = _run(TranscribeRuntime(transcribe=stt, diarize=dia))
+    sent = json.loads(seen[0].content)["messages"][0]["content"]
+    assert "900101" not in sent and "<주민번호>" in sent
+    assert sent.count(chr(10)) == 2  # 태그 두 줄 사이에 문장 하나
+    assert len(r.segments) == 1
+
+
+def test_dotted_numbers_not_split():
+    assert len(split_sentences("010.1234.5678 입니다. 1234.5678.9012.3456 네.")) == 2
+
+
+def test_truncated_wav_header_does_not_raise(monkeypatch):
+    import struct
+    import wave
+
+    def boom(*a, **k):
+        raise struct.error("truncated")
+
+    monkeypatch.setattr(wave, "open", boom)
+    assert _run(_rt(""), b"RIFF\x00\x00", "a.wav").audio_seconds is None
+    assert _run(_rt(""), b"RIFF\x00\x00WAVEfmt ", "a.wav").audio_seconds is None
+
+
 def test_audio_seconds_for_wav_only():
     import io
     import wave

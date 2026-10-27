@@ -30,7 +30,8 @@ MAX_REPEAT = 5
 # 기타·누락이 문장의 이 비율을 넘으면 화자 분리를 믿지 않는다
 MAX_UNKNOWN_RATIO = 0.3
 # 마침표·물음표·느낌표·말줄임표 뒤에서 자른다. whisper 는 짧은 맞장구에도 마침표를 찍어 화자가 바뀌는 곳에서 잘 끊긴다
-SENTENCE_RE = re.compile(r"[^.?!…]+[.?!…]*")
+# 숫자 사이의 점("010.1234.5678")은 자르지 않는다. 잘리면 가리기 규칙이 못 잡은 채 LLM 에 간다
+SENTENCE_RE = re.compile(r"(?:[^.?!…]|(?<=\d)\.(?=\d))+[.?!…]*")
 
 
 async def _default_transcribe(audio: bytes, filename: str) -> str:
@@ -68,7 +69,7 @@ def _wav_seconds(audio: bytes) -> float | None:
     try:
         with wave.open(io.BytesIO(audio)) as w:
             return round(w.getnframes() / w.getframerate(), 1)
-    except (wave.Error, EOFError, ZeroDivisionError):
+    except Exception:  # 깨진 헤더(struct.error 등)여도 길이 계산 때문에 분석이 멈추면 안 된다
         return None
 
 
@@ -124,7 +125,7 @@ async def transcribe_call(
         )
 
     # LLM 에 보내기 전에 가린다(스펙 D2). 세그먼트 텍스트도 가린 문장을 쓴다
-    sentences = [mask_pii(s) for s in split_sentences(text)]
+    sentences = [mask_pii(s) for s in split_sentences(mask_pii(text))]
     if not sentences:
         return TranscriptResult(segments=[], speaker_split_failed=False, **meta)
 
