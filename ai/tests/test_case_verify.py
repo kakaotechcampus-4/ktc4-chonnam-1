@@ -173,6 +173,16 @@ def test_v4_only_last_clause_is_checked():
         assert r.rejected == []
 
 
+def test_v4_progressive_go_is_not_a_clause_break():
+    q = "앱 설치를 요구하지 않고 있습니다"
+    r = _verify(
+        _source(("화자2", q)),
+        _reading(demands=[DemandClaim(kind=DemandKind.APP_INSTALL, quote=q)]),
+    )
+    assert _codes(r) == []
+    assert _reasons(r) == ["negated"]
+
+
 def test_gift_card_evidence_counts_for_floor():
     q = "문화상품권 사서 핀번호 보내주세요"
     r = _verify(

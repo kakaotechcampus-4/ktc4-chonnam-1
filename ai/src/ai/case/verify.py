@@ -65,7 +65,7 @@ _NOTICE_ENDINGS = (
 _NOTICE_DOEMNIDA = re.compile(r"됩니다$")
 _TRAILING_PUNCT = re.compile(r"[.!\s]+$")
 
-_CLAUSE_BREAK = re.compile(r"(?:고|며|지만|는데|,)\s+")
+_CLAUSE_BREAK = re.compile(r"(?:고(?=\s+(?!있|계시|싶))|며|지만|는데|,)\s+")
 _HOST = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$")
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://")
 
