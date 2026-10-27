@@ -18,6 +18,7 @@ from ai.case.types import (
     ResponseAction as R,
     Scenario,
     StopAction as S,
+    Unchecked,
     UncheckedItem,
     UncheckedReason,
 )
@@ -35,13 +36,15 @@ def _ev(code: E, quote: str = "인용 문장입니다") -> Evidence:
     )
 
 
-def _verify(*codes: E, split_failed: bool = False) -> VerifyResult:
+def _verify(
+    *codes: E, split_failed: bool = False, spoken_hosts: list[str] | None = None
+) -> VerifyResult:
     return VerifyResult(
         accepted=[_ev(c) for c in codes],
         rejected=[],
         other_speaker="화자2",
         speaker_split_failed=split_failed,
-        spoken_hosts=["evil.example.com"],
+        spoken_hosts=spoken_hosts or [],
         claims=ClaimView(),
     )
 
@@ -124,9 +127,19 @@ def test_u5_nothing_accepted_is_input_required():
     assert r.questions == []
 
 
-def test_u5_ignores_spoken_hosts_and_contact_blocker_only():
+def test_u5_ignores_contact_blocker_only():
     r = _decide(_verify(E.CONTACT_BLOCKER))
     assert r.conclusion == Conclusion.INPUT_REQUIRED
+
+
+def test_u5_spoken_host_counts_as_demand():
+    r = _decide(_verify(spoken_hosts=["ykics24.kr"]))
+    assert r.conclusion == Conclusion.INCONCLUSIVE
+    assert r.caution is True
+    assert r.stop_actions == [S.DONT_CLICK_LINK, S.HANG_UP]
+    assert Unchecked(
+        item=UncheckedItem.LINK_SPELLING, reason=UncheckedReason.READ_FROM_VOICE
+    ) in r.unchecked
 
 
 def test_u6_empty_transcript_is_not_analyzable():
@@ -223,9 +236,10 @@ def test_stop_actions_hang_up_when_room():
     assert r.stop_actions == [S.DONT_SEND_MONEY, S.HANG_UP]
 
 
-def test_stop_actions_never_dont_click_link():
+def test_stop_actions_no_dont_click_link_without_spoken_link():
     r = _decide(_verify(E.INSTITUTION_CLAIM))
     assert r.stop_actions == [S.HANG_UP]
+    assert all(u.item != UncheckedItem.LINK_SPELLING for u in r.unchecked)
 
 
 def test_n11_split_failed_keeps_hang_up_and_q1():

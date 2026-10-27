@@ -12,6 +12,7 @@ from ai.case.types import (
     AttachedQuestion,
     CheckItem,
     Conclusion,
+    DemandKind,
     Evidence,
     EvidenceCode,
     NumberCheck,
@@ -58,7 +59,7 @@ _RISK_DEMANDS = frozenset(
 # U-5 에서 "요구가 있다"고 보는 코드
 _ANY_DEMAND = _RISK_DEMANDS | {_E.MESSENGER_MOVE}
 
-# v3 §7.5 표 순서 (링크 줄은 통화에 없다)
+# v3 §7.5 표 순서. 링크 줄(dont_click_link)은 말로 부른 주소가 있을 때만 맨 앞에 붙는다
 _STOP_TABLE: list[tuple[frozenset[EvidenceCode], StopAction]] = [
     (frozenset({_E.INFO_REQUEST}), StopAction.DONT_ENTER_INFO),
     (
@@ -94,8 +95,10 @@ def _number_evidence(number_checks: list[NumberCheck]) -> list[Evidence]:
     ][:1]
 
 
-def _stop_actions(codes: set[EvidenceCode]) -> list[StopAction]:
+def _stop_actions(codes: set[EvidenceCode], link_spoken: bool = False) -> list[StopAction]:
     out = [action for trigger, action in _STOP_TABLE if codes & trigger]
+    if link_spoken:
+        out.insert(0, StopAction.DONT_CLICK_LINK)
     # 통화에서는 끊기가 가장 중요한 행동이라 상한에 잘리지 않게 둘만 고르고 끝에 붙인다
     return [*out[: _MAX_STOP - 1], StopAction.HANG_UP]
 
@@ -208,9 +211,23 @@ def decide_call(
     unofficial = any(e.code == _E.UNOFFICIAL_NUMBER for e in evidence)
     common.update(evidence=evidence, claims=verify.claims, rejected=verify.rejected)
 
-    # U-5: 통화에는 링크 후보 조건이 없다
-    if not (codes & _ANY_DEMAND) and not (
-        codes & {_E.INSTITUTION_CLAIM, _E.ACQUAINTANCE_CLAIM}
+    # 말로 부른 주소나 "주소로 들어가라"는 요구(R16). 링크는 조사하지 않는다
+    link_spoken = bool(verify.spoken_hosts) or any(
+        d.kind == DemandKind.VISIT_LINK for d in verify.claims.demands
+    )
+    if link_spoken:
+        common["unchecked"] = [
+            *common["unchecked"],
+            Unchecked(
+                item=UncheckedItem.LINK_SPELLING, reason=UncheckedReason.READ_FROM_VOICE
+            ),
+        ]
+
+    # U-5: 통화에는 링크 후보 조건이 없지만 말로 부른 링크는 요구로 센다
+    if (
+        not link_spoken
+        and not (codes & _ANY_DEMAND)
+        and not (codes & {_E.INSTITUTION_CLAIM, _E.ACQUAINTANCE_CLAIM})
     ):
         return VoiceCaseResult(
             conclusion=Conclusion.INPUT_REQUIRED,
@@ -235,6 +252,7 @@ def decide_call(
             codes & _RISK_DEMANDS
             or verify.speaker_split_failed
             or unofficial
+            or link_spoken
             or _E.INSTITUTION_CLAIM in codes
             or (
                 _E.ACQUAINTANCE_CLAIM in codes
@@ -254,7 +272,7 @@ def decide_call(
         conclusion=conclusion,
         caution=caution,
         floors=floors,
-        stop_actions=_stop_actions(codes),
+        stop_actions=_stop_actions(codes, link_spoken),
         questions=questions,
         explanation=explain_call(conclusion, evidence),
         **common,

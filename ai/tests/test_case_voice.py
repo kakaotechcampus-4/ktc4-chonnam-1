@@ -173,6 +173,64 @@ def test_empty_reading_on_normal_call_is_input_required_without_failures():
     assert result.reading_status == "ok"
 
 
+def _spoken_link_case(reading: dict) -> dict:
+    return {
+        "transcript": [
+            ["A", "여보세요"],
+            ["B", "조회를 위해 주소창에 ykics24.kr 입력하세요"],
+        ],
+        "input": {},
+        "runtime": {"reading": {"other_speaker": "B", "speaker_confidence": "high", **reading}},
+    }
+
+
+@pytest.mark.parametrize(
+    "reading",
+    [
+        {"spoken_hosts": ["ykics24.kr"]},
+        {"demands": [{"kind": "visit_link", "quote": "주소창에 ykics24.kr 입력하세요"}]},
+        {
+            "demands": [{"kind": "visit_link", "quote": "주소창에 ykics24.kr 입력하세요"}],
+            "spoken_hosts": ["ykics24.kr"],
+        },
+    ],
+)
+def test_spoken_link_is_not_input_required_and_stops_click(reading):
+    case = _spoken_link_case(reading)
+
+    result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, Calls())))
+
+    assert result.conclusion == Conclusion.INCONCLUSIVE
+    assert result.stop_actions[0].value == "dont_click_link"
+    assert result.stop_actions[-1].value == "hang_up"
+    assert len(result.stop_actions) <= 3
+    assert any(
+        u.item.value == "link_spelling" and u.reason.value == "read_from_voice"
+        for u in result.unchecked
+    )
+    assert result.failures == []
+
+
+def test_spoken_link_with_info_request_keeps_order_and_cap():
+    case = _spoken_link_case(
+        {
+            "spoken_hosts": ["ykics24.kr"],
+            "demands": [
+                {"kind": "personal_info", "quote": "주소창에 ykics24.kr 입력하세요"},
+                {"kind": "money_transfer", "quote": "주소창에 ykics24.kr 입력하세요"},
+            ],
+        }
+    )
+
+    result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, Calls())))
+
+    assert [a.value for a in result.stop_actions] == [
+        "dont_click_link",
+        "dont_enter_info",
+        "hang_up",
+    ]
+
+
 def test_unlisted_org_skips_number_check():
     case = yaml.safe_load((CASES_DIR / "N3.yaml").read_text(encoding="utf-8"))
     case["transcript"][1][1] += " 문의는 02-1234-5678"
