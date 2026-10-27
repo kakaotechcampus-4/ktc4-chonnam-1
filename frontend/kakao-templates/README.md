@@ -28,7 +28,7 @@
 | (KISA 상담 주소) | B2a·B2b·C3 `KISA 상담하기` | **채움** (2026-10-27). 빈칸이던 `kisa_chatbot_url`·`kisa_chat_url`을 `https://www.kisa.or.kr/118`로 바꿨다. 관리자센터 카드에 넣은 값과 같다. B2b의 `챗봇 상담`·`채팅 상담`은 같은 페이지를 열어 `KISA 상담하기` 하나로 합쳤다. 새 A2·K6 카드도 같은 주소를 쓴다 |
 | `org_name` `official_url` | R2 · R8(`org_name`만) | `org_name`은 `message.brand`. `official_url`은 결과에 없다. 브랜드별 공식 홈페이지 주소를 BE 목록(`services/official_domains.py`, 지금은 도메인만 있음)에 더해야 한다. 문자 속 URL은 쓰지 않는다 |
 | `signal_title` `observed` `reason` `unverified` | 자세히 보기 캐러셀 | 결과의 `details.signals`(검증된 근거)만. 채우는 규칙과 신호별 문구는 `docs/designs/chatbot-copy.md` 4절 "빈칸 채우는 규칙". 128자 안 |
-| `headline` `action_guide` `message_claims` `checked` `unchecked` | R9 | BE가 분석 결과로 채운다. 규칙은 `docs/designs/chatbot-copy.md` 3절 R9 "빈칸 채우는 규칙". 문자에서 의심 정황(민감한 요구 행동)을 확인하면 `headline`·`action_guide`가 주의 갈래로 바뀐다(PR #86 멘토 리뷰). `message_claims`는 칸 제목까지 포함하고, 줄이 없으면 빈 문자열이다. 이전 `org_label`은 `action_guide` 안으로, `message_reason`은 `message_claims`로 합쳤다. 채우기 전에 배포하면 빈칸이 글자 그대로 보인다 |
+| `headline` `action_guide` `message_claims` `checked` `unchecked` | R9 | BE가 분석 결과로 채운다. 규칙은 `docs/designs/chatbot-copy.md` 3절 R9 "빈칸 채우는 규칙". 문자에서 의심 정황(민감한 요구 행동)을 확인하면 `headline`·`action_guide`가 주의 갈래로 바뀐다(PR #86 멘토 리뷰). `message_claims`는 칸 제목까지 포함하고, 줄이 없으면 빈 문자열이다. 이전 `org_label`은 `action_guide` 안으로, `message_reason`은 `message_claims`로 합쳤다. 채우기 전에 배포하면 빈칸이 글자 그대로 보인다. **지금 `r9-uncertain.json`은 옛 빈칸(`org_label`·`checked`·`unchecked`·`message_reason`) 버전이다**(2026-10-27 `73d3fc6`). BE가 렌더러를 구현할 때 `git revert 73d3fc6`으로 새 빈칸 버전을 되살린다 |
 | `guidance_text` | 자세히 보기 공식 확인 방법(C4) | BE가 `find_guidance()` 결과로 채운다(이슈 #69). 규칙은 `docs/designs/chatbot-copy.md` 4절 C4 |
 | `sent_items` `external_service` | W3 | 개인정보 정책 확인 후. 확정 전 배포 금지 (W2a는 2026-10-14부터 빈칸 없는 시험 운영 문구) |
 
