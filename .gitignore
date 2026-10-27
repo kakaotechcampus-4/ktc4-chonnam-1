@@ -79,3 +79,6 @@ target/
 
 # ── SDD 작업 공간 (git 추적 제외) ─────────────────
 .superpowers/
+
+# ── 통화 녹음 프로브 (사용자 녹음·payload, 커밋 금지) ──
+probe_logs/
