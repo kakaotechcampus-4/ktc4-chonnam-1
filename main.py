@@ -312,6 +312,46 @@ def handle_detail_carousel(job_id: str) -> dict:
 # Kakao Skill
 # ============================================================
 
+def _field_types(mapping: dict) -> dict[str, str]:
+    """민감한 값을 남기지 않고, 필드 이름과 자료형만 돌려준다."""
+    return {key: type(value).__name__ for key, value in mapping.items()}
+
+
+def _log_voice_payload_diagnostics(body: dict) -> None:
+    """카카오 음성 메시지가 SkillPayload에 어떤 모양으로 오는지 확인하기
+    위한 임시 진단 로그다 — 실제 구현(다운로드·분석·카드 렌더링) 전,
+    `userRequest.params`/`action.params`/`action.detailParams`에 음성
+    미디어 관련 필드가 있는지만 먼저 확인한다.
+
+    URL·토큰·사용자 ID·음성 내용 같은 민감한 값은 절대 남기지 않는다 —
+    필드 이름·자료형·미디어 타입·URL "존재 여부"만 기록한다. 운영에서는
+    끈다(APP_ENV가 local/test/staging일 때만 동작).
+    """
+
+    app_env = os.getenv("APP_ENV", "production").lower()
+    if app_env not in {"local", "test", "staging"}:
+        return
+
+    user_request = body.get("userRequest") or {}
+    params = user_request.get("params") or {}
+    action = body.get("action") or {}
+    action_params = action.get("params") or {}
+    detail_params = action.get("detailParams") or {}
+
+    print(f"[VOICE DIAG] userRequest.params field_types={_field_types(params)}")
+    print(f"[VOICE DIAG] action.params field_types={_field_types(action_params)}")
+    print(f"[VOICE DIAG] action.detailParams field_types={_field_types(detail_params)}")
+
+    media = params.get("media")
+    if isinstance(media, dict):
+        print(
+            f"[VOICE DIAG] userRequest.params.media "
+            f"type={media.get('type')!r} "
+            f"has_url={'url' in media} "
+            f"field_types={_field_types(media)}"
+        )
+
+
 @app.post("/kakao/skill", dependencies=[Depends(verify_skill_secret)])
 async def kakao_skill(
     request: Request,
@@ -335,6 +375,9 @@ async def kakao_skill(
         f"[CALLBACK EXISTS] "
         f"{bool(callback_url)}"
     )
+
+    # 임시 진단 로그 (음성 메시지 Payload 조사용) — 기능 결정 전 조사
+    _log_voice_payload_diagnostics(body)
     # 경로에는 1회용 콜백 토큰이 있어 호스트만 남긴다. 허용 목록을 좁힐 때 쓴다.
     print(f"[CALLBACK HOST] {callback_host(callback_url)}")
 
