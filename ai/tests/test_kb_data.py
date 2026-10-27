@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from ai.kb.normalize import normalize
-from ai.kb.search import CASES_DIR, load_cases, search_cases
+from ai.kb.search import CASES_DIR, VOICE_CASES_DIR, load_cases, search_cases
 from ai.types import CategoryCode, MessageDoubt
 
 DATASETS = Path(__file__).resolve().parents[1] / "eval" / "datasets"
@@ -375,3 +375,96 @@ def test_new_kind_rows_fill_each_cell():
         for business in ("delivery", "penalty", "overseas_payment"):
             assert cells[(kind, business)] == 4, (kind, business)
             assert splits[(kind, business)] == {"dev", "test"}, (kind, business)
+
+
+# ── 통화 사례(voice KB) ─────────────────────────────────────────
+
+VOICE_PHISHING_TYPES = {
+    "institution_impersonation", "loan_fraud", "family_impersonation", "kidnapping",
+    "account_recruitment", "other_impersonation", "other",
+}
+VOICE_NORMAL_TYPES = {
+    "bank_service", "delivery", "public_office", "loan_consult", "family", "police_real", "other_normal",
+}
+
+
+def _voice_records() -> list[tuple[Path, dict]]:
+    import yaml
+
+    records = []
+    for path in sorted(VOICE_CASES_DIR.glob("VC-*.md")):
+        match = re.match(r"\A---\r?\n(.*?)\r?\n---", path.read_text(encoding="utf-8"), re.DOTALL)
+        assert match is not None, f"{path.name}: frontmatter 없음"
+        records.append((path, yaml.safe_load(match.group(1))))
+    return records
+
+
+def test_voice_records_follow_case_format():
+    # CE 레코드 모양에 통화 유형·출처·이용 조건을 더한 형식이다. 자동 등재분이라
+    # 검토자는 등재 표시로 고정한다(스펙 D5).
+    records = _voice_records()
+    assert len(records) >= 100
+    for path, meta in records:
+        name = path.name
+        assert re.fullmatch(r"VC-\d{4}", meta["id"]) and meta["id"] == path.stem, name
+        assert meta["status"] == "curated", name
+        assert meta["reviewer"] == "auto-import-2026-10-28", name
+        assert meta["type"] in VOICE_PHISHING_TYPES, name
+        assert str(meta["source"]).strip() and str(meta["license"]).strip(), name
+        assert isinstance(meta["synthetic"], bool), name
+        assert meta["origin"] == ("synthetic" if meta["synthetic"] else "web_public"), name
+        if meta["synthetic"]:
+            assert meta["source_url"] is None, name
+        else:
+            assert re.match(r"https?://", meta["source_url"]), name
+        assert str(meta["group"]).strip() and str(meta["dataset_id"]).strip(), name
+        assert len(meta["variants"]) == 1 and str(meta["variants"][0]).strip(), name
+        assert meta["normalized"] == normalize(meta["variants"][0]), name
+        assert meta["categories"] == [], name
+
+
+def test_every_voice_record_is_indexed():
+    assert len(load_cases(VOICE_CASES_DIR)) == len(_voice_records())
+
+
+def test_voice_records_carry_no_obvious_personal_data():
+    # 대본의 사건번호·날짜(8자리)는 남긴다. 주민번호·휴대폰 번호 모양만 막는다.
+    for path, meta in _voice_records():
+        assert not RRN_RE.search(meta["variants"][0]), path.name
+        assert not PHONE_RE.search(meta["variants"][0]), path.name
+    for row in _load_jsonl("voice_rag.jsonl"):
+        assert not RRN_RE.search(row["text"]), row["id"]
+        assert not PHONE_RE.search(row["text"]), row["id"]
+
+
+def test_voice_rag_rows_are_labelled_and_split():
+    rows = _load_jsonl("voice_rag.jsonl")
+    assert len({row["id"] for row in rows}) == len(rows)
+    for row in rows:
+        assert row["split"] in {"dev", "test"}, row["id"]
+        assert row["text"].strip(), row["id"]
+        allowed = VOICE_PHISHING_TYPES if row["label"] == "phishing" else VOICE_NORMAL_TYPES
+        assert row["label"] in {"phishing", "normal"} and row["type"] in allowed, row["id"]
+    labels = Counter((row["split"], row["label"]) for row in rows)
+    for split in ("dev", "test"):
+        assert labels[(split, "phishing")] and labels[(split, "normal")], split
+
+
+def test_voice_groups_do_not_leak_between_kb_and_queries():
+    # 같은 group(같은 원본·범죄자·합성 템플릿)이 KB 와 질의에 같이 있으면
+    # 자기 묶음을 찾아 hit@3 이 부풀려진다. dev·test 사이도 같다.
+    kb_groups = {meta["group"] for _, meta in _voice_records()}
+    splits = defaultdict(set)
+    for row in _load_jsonl("voice_rag.jsonl"):
+        splits[row["group"]].add(row["split"])
+
+    assert kb_groups & set(splits) == set()
+    assert {group: values for group, values in splits.items() if len(values) > 1} == {}
+
+
+def test_voice_kb_holds_phishing_only_and_is_disjoint_from_queries():
+    kb_ids = {meta["dataset_id"] for _, meta in _voice_records()}
+    kb_normalized = {meta["normalized"] for _, meta in _voice_records()}
+    for row in _load_jsonl("voice_rag.jsonl"):
+        assert row["id"] not in kb_ids, row["id"]
+        assert normalize(row["text"]) not in kb_normalized, row["id"]

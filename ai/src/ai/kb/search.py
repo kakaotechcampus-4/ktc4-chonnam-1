@@ -22,6 +22,7 @@ from ai.types import AnalysisStatus, CaseMatch, CaseSearchResult, CategoryCode
 LOGGER = logging.getLogger(__name__)
 
 CASES_DIR = Path(__file__).resolve().parent / "case_examples"
+VOICE_CASES_DIR = Path(__file__).resolve().parent / "voice_cases"
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---", re.DOTALL)
 _LOAD_LOCK = threading.Lock()
 
@@ -29,6 +30,13 @@ _LOAD_LOCK = threading.Lock()
 NGRAM_SIZES: tuple[int, ...] = (3,)
 SUBLINEAR_TF = False
 DEFAULT_MIN_SIMILARITY = 0.2345
+
+# 통화 사례 검색 값. ai/eval/voice_rag_eval.py 의 dev 분할로 정했다(조정 기록은
+# ai/eval/reports/2026-10-28-voice-rag-tuning.md). 대본이 문자보다 훨씬 길어 유사도가
+# 낮게 나오므로 기준값도 스미싱과 따로 둔다. 바꾸면 평가를 다시 돌린다.
+VOICE_NGRAM_SIZES: tuple[int, ...] = (3,)
+VOICE_SUBLINEAR_TF = False
+VOICE_MIN_SIMILARITY = 0.0588
 
 
 @dataclass(frozen=True)
@@ -189,15 +197,27 @@ def _load_cases(cases_dir: Path) -> tuple[Case, ...]:
     return tuple(cases)
 
 
-def load_index(cases_dir: Path = CASES_DIR) -> CaseIndex:
+def load_index(
+    cases_dir: Path = CASES_DIR,
+    *,
+    ngram_sizes: tuple[int, ...] = NGRAM_SIZES,
+    sublinear_tf: bool = SUBLINEAR_TF,
+) -> CaseIndex:
     """색인도 프로세스 수명 동안 캐시합니다. load_cases 와 같은 락을 씁니다."""
     with _LOAD_LOCK:
-        return _load_index(Path(cases_dir))
+        return _load_index(Path(cases_dir), tuple(ngram_sizes), sublinear_tf)
 
 
 @lru_cache(maxsize=8)
-def _load_index(cases_dir: Path) -> CaseIndex:
-    return build_index(_load_cases(cases_dir))
+def _load_index(cases_dir: Path, ngram_sizes: tuple[int, ...], sublinear_tf: bool) -> CaseIndex:
+    return build_index(_load_cases(cases_dir), ngram_sizes=ngram_sizes, sublinear_tf=sublinear_tf)
+
+
+def _search(index: CaseIndex, text: str, top_k: int, min_similarity: float) -> CaseSearchResult:
+    if not index.cases:
+        return CaseSearchResult(status=AnalysisStatus.FALLBACK, matches=[])
+    matches = [match for match in rank(index, text) if match.similarity >= min_similarity]
+    return CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=matches[:top_k])
 
 
 def search_cases(
@@ -214,10 +234,24 @@ def search_cases(
     """
     if not masked_text.strip():
         return CaseSearchResult(status=AnalysisStatus.FALLBACK, matches=[])
+    return _search(load_index(cases_dir), masked_text, top_k, min_similarity)
 
-    index = load_index(cases_dir)
-    if not index.cases:
+
+def search_voice_cases(
+    transcript: str,
+    *,
+    cases_dir: Path = VOICE_CASES_DIR,
+    top_k: int = 3,
+    min_similarity: float | None = None,
+) -> CaseSearchResult:
+    """통화 대본으로 보이스피싱 통화 사례를 찾습니다.
+
+    search_cases 와 같은 색인·순위 코드에 KB 폴더와 VOICE_* 값만 바꿔 씁니다.
+    통화 유형은 CategoryCode 가 아니어서 matches 의 categories 는 비어 있고,
+    유형은 KB 레코드의 type 에 있습니다. 기준값은 호출할 때 모듈 값을 읽습니다.
+    """
+    if not transcript.strip():
         return CaseSearchResult(status=AnalysisStatus.FALLBACK, matches=[])
-
-    matches = [match for match in rank(index, masked_text) if match.similarity >= min_similarity]
-    return CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=matches[:top_k])
+    index = load_index(cases_dir, ngram_sizes=VOICE_NGRAM_SIZES, sublinear_tf=VOICE_SUBLINEAR_TF)
+    threshold = VOICE_MIN_SIMILARITY if min_similarity is None else min_similarity
+    return _search(index, transcript, top_k, threshold)
