@@ -19,7 +19,7 @@
 | 문자 위험 신호 제안 | 30초 | 확보한 문자 자료와 실패 사유 유지 |
 | 페이지 의미 분석 | 2초 | 확보한 HTML 관측과 실패 사유 유지 |
 | 콜백 HTTP 전송 | 10초 | 저장 결과의 조회 폴백 유지 |
-| 통화 STT·화자 분리 | 3~4분 녹음 12~16초 | 대본 없음 결과(`not_analyzable`) |
+| 통화 STT·화자 분리 | STT 30초 + 화자 분리 20초(실측 3~4분 녹음 약 12~16초) | STT 실패는 대본 없음 결과(`not_analyzable`), 화자 분리 실패는 대본을 살리고 `speaker_split_failed` |
 | 통화 주장 읽기 | 12초 | 어휘표 폴백, `failures`에 `timeout` |
 | 통화 사례 검색 | 1초 | 미확인(`similar_cases:timeout`), 읽기와 병렬 실행 |
 | 통화 분석 전체(`analyze_call`) | 40초 | 남은 단계를 건너뛰고 `unchecked`에 `timeout` |
@@ -29,7 +29,7 @@
 전송 10초는 별도 상한이며, 카카오의 실제 콜백 수락 시간을 보장하는 값은 아니다.
 여러 URL은 순서대로 수집·분석하므로 같은 45초 예산을 공유한다.
 
-통화 STT·화자 분리는 whisper-large-v3 STT와 Claude Sonnet 5.5 화자 분리로 확정했다.
+통화 STT·화자 분리는 whisper-large-v3 STT와 Claude Sonnet 5.5 화자 분리로 확정했다(`ai.case.transcript.transcribe_call`, 단계별 `asyncio.wait_for`로 STT 30초·화자 분리 20초).
 2026-10-28 FSS 녹음 10건 실측에서 화자 분리는 평균 4.9초(환각으로 벗어난 1건 제외),
 STT는 2~11초였고, 3~4분 녹음의 STT와 화자 분리 합계는 약 12~16초였다. 통화 사례 검색은
 색인 콜드 적재가 약 1.4초라 기동 시 `warm_up_voice_case_search()`로 미리 채운다.
