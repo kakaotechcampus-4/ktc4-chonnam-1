@@ -29,3 +29,18 @@ PYTHONUTF8=1 PYTHONPATH="src;.venv/Lib/site-packages" python eval/rag_eval.py --
 지표 정의, dev/test 분할, 운영 지점, 잠정 목표와 변경 규칙은
 [설계 문서](../../docs/archive/superpowers/specs/2026-10-02-rag-eval-improvement-design.md)를 따른다.
 설정값은 dev 에서만 조정하고 test 는 설정을 정한 뒤 한 번만 본다.
+
+## 통화 사례 검색 평가
+
+`ai/` 에서 실행한다. KB(`src/ai/kb/voice_cases/`)와 평가셋(`datasets/voice_rag.jsonl`)은 저장소 밖 Task 1
+데이터셋에서 만든다.
+
+```bash
+python eval/voice_rag_build.py D:/voice/dataset/voice_calls.jsonl  # KB·평가셋 다시 만들기(분할 시드 고정)
+python eval/voice_rag_eval.py --dev-only [--ngram 2,3 --tf log --chunk 800 --query-head 2000]  # 조정용 한 줄
+python eval/voice_rag_eval.py --label <방식>                         # test 까지 재고 reports/ 에 리포트를 쓴다
+```
+
+hit@3 은 보이스피싱 질의의 상위 3개(기준값 이상) 중 같은 `type` 사례가 있는 비율이다. 기준값은 dev 정상
+통화 부착률 5% 이하가 되는 가장 낮은 값이고, 정한 값을 `search.VOICE_MIN_SIMILARITY` 에 적는다.
+조정 기록은 `reports/2026-10-28-voice-rag-tuning.md`.
