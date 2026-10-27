@@ -255,3 +255,11 @@ def search_voice_cases(
     index = load_index(cases_dir, ngram_sizes=VOICE_NGRAM_SIZES, sublinear_tf=VOICE_SUBLINEAR_TF)
     threshold = VOICE_MIN_SIMILARITY if min_similarity is None else min_similarity
     return _search(index, transcript, top_k, threshold)
+
+
+def warm_up_voice_case_search() -> CaseSearchResult:
+    """통화 사례 색인을 미리 채워 첫 요청이 KB 적재(콜드 약 1.4초)를 떠안지 않게 한다.
+
+    통화 사례 검색 예산(1초)보다 적재가 길어서, 기동 때 한 번 돌려 둬야 한다.
+    """
+    return search_voice_cases("warm-up")
