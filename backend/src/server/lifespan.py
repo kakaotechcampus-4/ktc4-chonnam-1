@@ -5,8 +5,7 @@ from contextlib import asynccontextmanager
 
 from ai.pipeline import warm_up_case_search
 from ai.types import AnalysisStatus
-from backend.src.server.urlscan_service import http_client_lifespan
-from backend.src.server.shadow_tasks import shutdown_shadow_tasks
+from backend.src.server.http_client import http_client_lifespan
 
 
 def warm_up_kb() -> None:
@@ -45,7 +44,4 @@ async def app_lifespan(app):
     warm_up_kb()
 
     async with http_client_lifespan(app):
-        try:
-            yield
-        finally:
-            await shutdown_shadow_tasks()
+        yield

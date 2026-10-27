@@ -1,23 +1,19 @@
 import asyncio
 import hmac
 import os
-import time
 
 import uuid
 from datetime import datetime, timezone, timedelta
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 
-from backend.src.server.shadow_tasks import track_shadow_task
-from backend.src.server.urlscan_service import (
-    get_http_client,
-    submit_url_scan,
-    wait_for_url_scan_result,
-)
+from backend.src.server.http_client import get_http_client
 from backend.src.server.lifespan import app_lifespan
 from backend.src.server.url_utils import split_message
+from backend.src.server.callback_guard import callback_host, is_allowed_callback_url
 from backend.src.server.templates.renderer import render_r1_lookalike
-from services.official_domain_service import check_official_domain
+from services.official_domain_service import check_link_official
+from services.link_resolution import first_real_host, is_shortener
 from services.kakao_card_renderer import render_card
 from services.result_card_renderer import (
     render_result_card,
@@ -30,8 +26,8 @@ from ai.pipeline import analyze_message_part, finalize_analysis
 from ai.types import UrlAnalysis
 
 from scanner.isolation_client import collect_url_isolated
-from scanner.static_checks import check_static
-from scanner.models import UrlEvidence
+from scanner.isolation_page import to_isolated_page
+from scanner.models import CollectResult
 from urllib.parse import urlparse
 
 
@@ -47,13 +43,17 @@ def verify_skill_secret(request: Request) -> None:
 
     local/test 환경에서는 매번 비밀값을 셋업하기 번거로우므로 검사를
     생략한다 — staging/production은 카카오 관리자센터가 실제로 호출하는
-    환경이라 생략하지 않는다 (ENABLE_URL_COLLECTOR_SHADOW의 local/test/
-    staging 구분과는 다른 기준).
+    환경이라 생략하지 않는다.
 
     KAKAO_SKILL_SECRET이 비어 있으면(운영 배포에 값을 안 넣은 실수까지
     포함) 모든 요청을 거부한다 — 빈 값끼리 비교해 우연히 통과하는 것을
     막기 위함이다. KAKAO_SKILL_SECRET_PREVIOUS는 키 교체 기간에만 쓰며,
     비어 있으면 비교 대상에서 제외한다.
+
+    거부할 때마다 원인 코드만 로그에 남긴다(헤더 원문·secret·토큰은
+    절대 남기지 않는다) — 오픈빌더 실제 호출이 401로 막히는 원인이
+    서버 설정 누락인지, 헤더 자체가 안 오는지, 값이 다른지 운영
+    로그만으로 구분하기 위함이다.
     """
 
     app_env = os.getenv("APP_ENV", "production").lower()
@@ -62,6 +62,7 @@ def verify_skill_secret(request: Request) -> None:
 
     secret = os.getenv("KAKAO_SKILL_SECRET", "")
     if not secret:
+        print("[SKILL AUTH REJECTED] reason=secret_not_configured")
         raise HTTPException(status_code=401, detail="Skill secret not configured")
 
     provided = request.headers.get("X-Skill-Secret", "")
@@ -73,64 +74,12 @@ def verify_skill_secret(request: Request) -> None:
     if previous_secret and hmac.compare_digest(provided, previous_secret):
         return
 
+    if not provided:
+        print("[SKILL AUTH REJECTED] reason=header_missing")
+    else:
+        print("[SKILL AUTH REJECTED] reason=secret_mismatch")
+
     raise HTTPException(status_code=401, detail="Invalid skill secret")
-
-
-# Collector Shadow Mode는 기본적으로 비활성화한다.
-# 테스트 환경에서만 명시적으로 활성화한다.
-ENABLE_URL_COLLECTOR_SHADOW = (
-    os.getenv("ENABLE_URL_COLLECTOR_SHADOW", "false").lower() == "true"
-    and os.getenv("APP_ENV", "production").lower() in {"local", "test", "staging"}
-)
-
-async def log_collector_shadow(
-    collector_task: asyncio.Task,
-    link: str,
-    parsed_result: dict,
-    urlscan_elapsed: float,
-):
-    try:
-        collector_result = await collector_task
-
-        collector_domain = None
-
-        if collector_result.final_url:
-            collector_domain = urlparse(
-                collector_result.final_url
-            ).hostname
-
-        print("========== URL COLLECTOR SHADOW ==========")
-        print(f"[INPUT URL]             {collector_result.input_url}")
-        print(f"[URLSCAN FINAL URL]     {parsed_result.get('final_url')}")
-        print(f"[COLLECTOR FINAL URL]   {collector_result.final_url}")
-        print(
-            f"[FINAL URL MATCH]       "
-            f"{parsed_result.get('final_url') == collector_result.final_url}"
-        )
-        print(f"[URLSCAN DOMAIN]        {parsed_result.get('domain')}")
-        print(f"[COLLECTOR DOMAIN]      {collector_domain}")
-        print(
-            f"[DOMAIN MATCH]          "
-            f"{parsed_result.get('domain') == collector_domain}"
-        )
-        print(f"[URLSCAN ELAPSED]       {urlscan_elapsed:.2f}s")
-        print(f"[COLLECTOR ELAPSED]     {collector_result.elapsed_ms}ms")
-        print(f"[COLLECTOR STATUS]      {collector_result.status_code}")
-        print(f"[COLLECTOR TITLE]       {collector_result.title}")
-        print(f"[COLLECTOR REDIRECTS]   {collector_result.redirect_chain}")
-        print(f"[COLLECTOR FAILURES]    {collector_result.failures}")
-        print("==========================================")
-
-    except asyncio.CancelledError:
-        print(f"[COLLECTOR SHADOW CANCELLED] url={link}")
-        raise
-
-    except Exception as e:
-        print(
-            f"[COLLECTOR SHADOW ERROR] "
-            f"url={link} "
-            f"{type(e).__name__}: {e}"
-        )
 
 
 # TODO:
@@ -383,6 +332,13 @@ async def kakao_skill(
         f"[CALLBACK EXISTS] "
         f"{bool(callback_url)}"
     )
+    # 경로에는 1회용 콜백 토큰이 있어 호스트만 남긴다. 허용 목록을 좁힐 때 쓴다.
+    print(f"[CALLBACK HOST] {callback_host(callback_url)}")
+
+    # 내부 주소로 결과를 POST 하게 만드는 요청을 막는다 (멘토 리뷰, isolation-security §5.5).
+    if callback_url is not None and not is_allowed_callback_url(callback_url):
+        print("[CALLBACK REJECTED] 허용되지 않은 callbackUrl")
+        return render_card("r4-unavailable")
     
     intent_name = (
         body.get("intent", {}).get("name", "")
@@ -454,518 +410,118 @@ async def kakao_skill(
 async def run_analysis(
     links: list[str],
     message: str,
-    job_id: str | None = None
+    job_id: str | None = None,
 ) -> dict:
-    """
-    현재 AI-BE 연결 테스트 흐름
-
-    message
-      → AI 문자 분석
-
-    URL
-      → urlscan
-      → score 추출
-      → 문자 brand + 최종 domain 기반 official 계산
-      → UrlAnalysis 생성
-
-    최종 분석
-      → message 결과 전달
-      → 격리 페이지 수집기는 아직 미연결
-      → page=None으로 전달하여 not_run 처리
-      → finalize_analysis()
-
-    문자 AI 분석과 urlscan은 독립적인 작업이므로
-    asyncio.create_task를 이용해 병렬로 실행한다.
-
-    job_id는 결과 카드의 "자세히 보기" 버튼에 꽂혀서,
-    해당 버튼 클릭 시 어떤 분석 결과를 보여줄지 찾는 데 쓰인다
-    (Job 조회 자체는 이 함수의 책임이 아니다).
-    """
-
-    card_responses: list[dict] = []
-
-    total_start = time.monotonic()
-
-    # ========================================================
-    # 1. 문자 AI 분석 — urlscan과 독립적이므로 "시작만" 해두고
-    #    결과가 실제로 필요한 시점(2-4 이후)에 가서 기다린다.
-    # ========================================================
-
-    print("========== AI MESSAGE ANALYSIS (병렬 시작) ==========")
-    print(f"[AI MESSAGE INPUT] {message!r}")
-
-    message_start = time.monotonic()
-    message_task = asyncio.create_task(
-        analyze_message_part(message)
-    )
-    message_logged = False
-
-    # ========================================================
-    # 2. URL별 분석 (문자 분석과 동시에 진행)
-    # ========================================================
-
-    for link in links:
-        collector_task = None
-        collector_result = None
-        try:
-            input_domain = urlparse(link).hostname
-
-            input_static = check_static(
-                domain=input_domain or "",
-                brand=None,
-            )
-
-            print(
-                "[STATIC INPUT]",
-                {
-                    "domain": input_static.domain,
-                    "official_match": input_static.official_match,
-                    "is_punycode": input_static.is_punycode,
-                    "decoded_domain": input_static.decoded_domain,
-                    "kisa_listed": input_static.kisa_listed,
-                    "lookalike_of": input_static.lookalike_of,
-                    "failures": input_static.failures,
-                }
-            )
-            
-            # 자체 URL Collector를 urlscan과 병렬 실행한다.
-            # 현재는 Shadow Mode이므로 실제 분석 결과에는 사용하지 않는다.
-
-            if ENABLE_URL_COLLECTOR_SHADOW:
-                collector_task = asyncio.create_task(
-                    collect_url_isolated(link)
-                )
-                track_shadow_task(collector_task)
-            urlscan_start = time.monotonic()
-
-            # ------------------------------------------------
-            # 2-1. urlscan 요청
-            # ------------------------------------------------
-
-            submit_result = await submit_url_scan(
-                link
-            )
-
-            scan_id = submit_result.get("uuid")
-
-            if not scan_id:
-                print(
-                    f"[URLSCAN ERROR] "
-                    f"url={link} uuid 없음"
-                )
-
-                card_responses.append(
-                    render_card("r4-unavailable")
-                )
-
-                if collector_task is not None:
-                    collector_task.cancel()
-
-                continue
-
-            print(
-                f"[URLSCAN] "
-                f"url={link} "
-                f"scan_id={scan_id}"
-            )
-
-            # ------------------------------------------------
-            # 2-2. urlscan 결과 대기
-            # ------------------------------------------------
-
-            scan_result = (
-                await wait_for_url_scan_result(
-                    scan_id
-                )
-            )
-
-            if scan_result is None:
-                print(
-                    f"[URLSCAN TIMEOUT] "
-                    f"url={link}"
-                )
-
-                card_responses.append(
-                    render_card("r4-unavailable")
-                )
-                if collector_task is not None:
-                    collector_task.cancel()
-
-                continue
-
-            urlscan_elapsed = (
-                time.monotonic() - urlscan_start
-            )
-
-            print(
-                f"[TIMING] urlscan 소요: "
-                f"{urlscan_elapsed:.2f}s "
-                f"({link})"
-            )
-
-            # ------------------------------------------------
-            # 2-3. 결과 파싱
-            # ------------------------------------------------
-
-            parsed_result = parse_urlscan_result(
-                scan_result
-            )
-
-            print(
-                f"[PARSED RESULT] "
-                f"{parsed_result}"
-            )
-            # ------------------------------------------------
-            # 2-3-1. 자체 Collector Shadow 비교
-            # ------------------------------------------------
-
-            if collector_task is not None:
-                shadow_log_task = asyncio.create_task(
-                    log_collector_shadow(
-                        collector_task,
-                        link,
-                        parsed_result,
-                        urlscan_elapsed,
-                    )
-                )
-                # Shadow 로그 작업을 백그라운드 작업 목록에 등록한다.
-                track_shadow_task(shadow_log_task)
-                # Collector의 소유권을 Shadow 로그 작업으로 넘긴다.
-                # 이후 AI 분석에서 예외가 발생해도 Collector를 취소하지 않는다.
-                collector_task = None
-
-            # ------------------------------------------------
-            # 2-4. print urlscan result
-            # ------------------------------------------------
-
-            print(
-                "========== URLSCAN RESULT =========="
-            )
-            print(
-                f"[INPUT URL]   "
-                f"{parsed_result.get('url')}"
-            )
-            print(
-                f"[FINAL URL]   "
-                f"{parsed_result.get('final_url')}"
-            )
-            print(
-                f"[DOMAIN]      "
-                f"{parsed_result.get('domain')}"
-            )
-            print(
-                f"[SCORE]       "
-                f"{parsed_result.get('score')}"
-            )
-            print(
-                f"[MALICIOUS]   "
-                f"{parsed_result.get('malicious')}"
-            )
-            print(
-                f"[CATEGORIES]  "
-                f"{parsed_result.get('categories')}"
-            )
-            print(
-                f"[BRANDS]      "
-                f"{parsed_result.get('brands')}"
-            )
-            print(
-                "===================================="
-            )
-
-            # ------------------------------------------------
-            # 2-5. 병렬로 시작해둔 문자 분석 결과 대기
-            #
-            # urlscan이 문자 분석보다 훨씬 오래 걸리므로, 여기 도착할
-            # 때는 이미 message_task가 끝나 있을 가능성이 높다 —
-            # 이 await는 대부분 즉시 반환된다 (한 번 끝난 task는
-            # 몇 번을 다시 await해도 캐시된 결과를 즉시 돌려준다).
-            # ------------------------------------------------
-
-            message_wait_start = time.monotonic()
-
-            try:
-                message_result = await message_task
-
-                if not message_logged:
-                    message_elapsed = (
-                        time.monotonic() - message_start
-                    )
-
-                    print(
-                        f"[TIMING] 문자 분석 총 소요: "
-                        f"{message_elapsed:.2f}s "
-                        f"(urlscan과 겹친 시간 포함, "
-                        f"이 지점에서 실제로 기다린 시간: "
-                        f"{time.monotonic() - message_wait_start:.2f}s)"
-                    )
-
-                    print(
-                        "[AI MESSAGE RESULT]",
-                        message_result.model_dump(
-                            mode="json"
-                        )
-                    )
-
-                    message_logged = True
-
-            except Exception as e:
-                if not message_logged:
-                    print(
-                        f"[AI MESSAGE ERROR] "
-                        f"{type(e).__name__}: {e}"
-                    )
-
-                    message_logged = True
-
-                # finalize_analysis는 message=None도 처리 가능
-                message_result = None
-
-            # ============================================================
-            # BE 공식 도메인 대조
-            # ============================================================
-            
-            brand = (
-                message_result.brand
-                if message_result is not None
-                else None
-            )
-            # ============================================================
-            # BE URL scanner evidence 조합 (Shadow Mode)
-            # ============================================================
-
-            # 문자 분석이 끝났으므로 brand를 반영해 입력 도메인을 다시 검사한다.
-            input_static = check_static(
-                domain=input_domain or "",
-                brand=brand,
-            )
-
-            final_static = None
-
-            # Collector가 확인한 최종 URL이 있으면 redirect 이후 도메인도 검사한다.
-            if collector_result is not None:
-                final_domain = None
-
-                if collector_result.final_url:
-                    final_domain = urlparse(
-                        collector_result.final_url
-                    ).hostname
-
-                if final_domain:
-                    final_static = check_static(
-                        domain=final_domain,
-                        brand=brand,
-                    )
-
-                url_evidence = UrlEvidence(
-                    input_static=input_static,
-                    final_static=final_static,
-                    collector=collector_result,
-                    urlscan=parsed_result,
-                )
-
-                print(
-                    "[URL EVIDENCE]",
-                    {
-                        "input_domain": url_evidence.input_static.domain,
-                        "input_official": url_evidence.input_static.official_match,
-                        "input_lookalike": url_evidence.input_static.lookalike_of,
-                        "final_domain": (
-                            url_evidence.final_static.domain
-                            if url_evidence.final_static
-                            else None
-                        ),
-                        "final_official": (
-                            url_evidence.final_static.official_match
-                            if url_evidence.final_static
-                            else None
-                        ),
-                        "final_lookalike": (
-                            url_evidence.final_static.lookalike_of
-                            if url_evidence.final_static
-                            else None
-                        ),
-                        "collector_failures": url_evidence.collector.failures,
-                        "urlscan_score": url_evidence.urlscan.get("score"),
-                        "urlscan_malicious": url_evidence.urlscan.get("malicious"),
-                    }
-                )
-            
-            url_analysis = build_ai_url_analysis(
-                parsed_result,
-                brand
-            )
-            
-            print(
-                "[DOMAIN MATCH]",
-                {
-                    "brand": brand,
-                    "domain": url_analysis.domain,
-                    "official": url_analysis.official
-                }
-            )
-
-            # =================================================
-            # 3. AI 최종 분석
-            # =================================================
-
-            print(
-                "========== AI FINAL ANALYSIS =========="
-            )
-
-            print(
-                "[AI FINAL] "
-                f"domain_match={url_analysis.official} → "
-                "message + environment not_run"
-            )
-            
-            final_result = await finalize_analysis(
-                url=url_analysis,
-                message=message_result,
-                page=None
-            )
-
-            final_payload = final_result.model_dump(
-                mode="json"
-            )
-
-            print(
-                "[AI FINAL RESULT]",
-                final_payload
-            )
-
-            print(
-                "======================================="
-            )
-
-            # ------------------------------------------------
-            # 4. Kakao 결과 카드
-            # ------------------------------------------------
-
-            card_responses.append(
-                render_result_card(
-                    final_payload,
-                    job_id=job_id
-                )
-            )
-
-            # 이슈 #69: "자세히 보기" 클릭 시 render_detail_carousel()에
-            # 다시 넘길 수 있도록 원본 결과를 Job에 남겨 둔다.
-            if job_id is not None:
-                job = ANALYSIS_JOBS.get(job_id)
-                if job:
-                    job["final_payload"] = final_payload
-
-        except Exception as e:
-            if (
-                collector_task is not None
-                and not collector_task.done()
-            ):
-                collector_task.cancel()
-            print(
-                f"[ANALYSIS ERROR] "
-                f"url={link} "
-                f"{type(e).__name__}: {e}"
-            )
-
-            card_responses.append(
-                render_card("r4-unavailable")
-            )
-
-    # 모든 링크가 위에서 continue로 건너뛰어졌다면 message_task를
-    # 한 번도 await하지 않았을 수 있다 — 여기서 정리해서 background에
-    # 방치된 채로 남지 않게 한다 (asyncio가 아직 완료 안 된 task를
-    # 아무도 안 기다리면 경고를 남긴다).
-    if not message_task.done():
-        message_task.cancel()
-
+    """Collect each link once while message analysis runs, then save the final evidence."""
+    cards: list[dict] = []
+    message_task = asyncio.create_task(analyze_message_part(message))
     try:
-        await message_task
-    except asyncio.CancelledError:
-        pass
-    except Exception as e:
-        if not message_logged:
-            print(
-                f"[AI MESSAGE ERROR] "
-                f"{type(e).__name__}: {e}"
-            )
+        for link in links:
+            try:
+                try:
+                    collected = await collect_url_isolated(link)
+                except Exception as error:
+                    # Keep message evidence even when the collection API is unavailable.
+                    print(f"[COLLECTION FAILED] {type(error).__name__}")
+                    collected = CollectResult(
+                        link, None, (), None, None, "", None, 0, ("collection_failed",),
+                    )
 
-    # ========================================================
-    # 5. Kakao 응답
-    # ========================================================
+                try:
+                    message_result = await message_task
+                except Exception as error:
+                    print(f"[AI MESSAGE ERROR] {type(error).__name__}")
+                    message_result = None
 
-    total_elapsed = time.monotonic() - total_start
+                brand = message_result.brand if message_result is not None else None
+                url_analysis = build_ai_url_analysis(collected, brand, link)
+                page, failure = to_isolated_page(collected)
+                final_result = await finalize_analysis(
+                    url=url_analysis, message=message_result, page=page, failure=failure,
+                )
+                final_payload = final_result.model_dump(mode="json")
+                cards.append(render_result_card(final_payload, job_id=job_id))
+                if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
+                    job["final_payload"] = final_payload
+            except Exception as error:
+                print(f"[ANALYSIS ERROR] {type(error).__name__}")
+                cards.append(render_card("r4-unavailable"))
+    finally:
+        if not message_task.done() and not message_task.cancelling():
+            message_task.cancel()
+        await asyncio.gather(message_task, return_exceptions=True)
+    return merge_kakao_responses(cards)
 
-    print(
-        f"[TIMING] run_analysis 전체 소요: "
-        f"{total_elapsed:.2f}s"
-    )
 
-    return merge_kakao_responses(card_responses)
+def _http_host(url: str | None) -> str | None:
+    if not url:
+        return None
+    try:
+        parsed = urlparse(url)
+        return parsed.hostname if parsed.scheme in {"http", "https"} else None
+    except ValueError:
+        return None
 
-
-# ============================================================
-# URLSCAN → AI Adapter
-# ============================================================
 
 def build_ai_url_analysis(
-    parsed_result: dict,
-    brand: str | None
+    collected: CollectResult,
+    brand: str | None,
+    input_url: str,
 ) -> UrlAnalysis:
-    """
-    URL 분석 결과를 AI UrlAnalysis 계약으로 변환한다.
+    """Compare the received/first real host; incomplete or later movement only downgrades."""
+    browser = collected.browser
+    judged_domain = first_real_host(input_url, collected.redirect_chain)
 
-    official은 urlscan score로 추론하지 않고,
-    문자 분석에서 확인한 brand와 최종 domain을
-    BE 화이트리스트로 대조하여 결정한다.
+    # fetch.final_url may name an unvisited blocked/timeout destination.
+    final_url = (collected.final_url
+                 if collected.status_code is not None and _http_host(collected.final_url)
+                 else None)
+    if (browser and _http_host(browser.final_url)
+            and browser.final_url in browser.navigation_chain):
+        final_url = browser.final_url
 
-    urlscan score는 판정과 분리된 기록용 값이다.
-    """
+    official = check_link_official(brand, judged_domain, _http_host(final_url))
+    if official == "official":
+        # shortcut: browser commits omit HTTP redirect hops; require full request history before confirming.
+        incomplete = (browser is not None or not final_url or not collected.html
+                      or bool(collected.failures))
+        if incomplete:
+            official = "unresolved"
+        reached_real_host = False
+        for url in (input_url, *collected.redirect_chain):
+            host = _http_host(url)
+            if not reached_real_host and is_shortener(host):
+                continue
+            reached_real_host = True
+            if not host or check_link_official(brand, judged_domain, host) != "official":
+                official = "unresolved"
+                break
 
-    final_url = parsed_result.get("final_url")
-    domain = parsed_result.get("domain")
-    score = parsed_result.get("score")
-
-    if not final_url:
-        raise ValueError(
-            "urlscan 결과에 final_url이 없습니다."
-        )
-
-    if not domain:
-        raise ValueError(
-            "urlscan 결과에 domain이 없습니다."
-        )
-
-    official = check_official_domain(
-        brand=brand,
-        domain=domain
-    )
-
-    raw_url_result = {
-        "final_url": final_url,
-        "domain": domain,
-        "official": official,
-        "scan": {
-            "score": score,
-            "scanned_at": datetime.now(
-                timezone.utc
-            ).isoformat()
-        }
-    }
-
-    print(
-        "[AI URL INPUT]",
-        raw_url_result
-    )
-
-    return UrlAnalysis.model_validate(
-        raw_url_result
+    return UrlAnalysis(
+        final_url=final_url,
+        domain=judged_domain or _http_host(input_url),
+        official=official,
     )
 
 
 # ============================================================
 # Kakao callback
 # ============================================================
+
+def _safe_callback_error(error: Exception) -> str:
+    """콜백 전송 실패를 안전하게 요약한다.
+
+    httpx.HTTPStatusError·ConnectError 등은 str()에 요청 URL 전체(쿼리
+    스트링의 1회성 토큰 포함)를 담는다 — 그대로 로그나 Job에 남기면
+    간접적으로 토큰이 샌다. 여기서는 예외 유형과(있으면) HTTP 상태
+    코드만 남긴다.
+    """
+
+    status_code = getattr(getattr(error, "response", None), "status_code", None)
+    if status_code is not None:
+        return f"{type(error).__name__} (status={status_code})"
+    return type(error).__name__
+
 
 async def run_analysis_and_callback(
     links: list[str],
@@ -1072,10 +628,15 @@ async def run_analysis_and_callback(
             "[CALLBACK] 결과 전송 시작"
         )
 
+        # 입구에서 이미 걸렀지만, 다른 경로로 들어와도 내부 주소로 보내지 않게 한 번 더 본다.
+        if not is_allowed_callback_url(callback_url):
+            raise ValueError("허용되지 않은 callbackUrl")
+
         response = await get_http_client().post(
             callback_url,
             json=result,
-            timeout=10.0
+            timeout=10.0,
+            follow_redirects=False,
         )
 
         print(
@@ -1083,10 +644,10 @@ async def run_analysis_and_callback(
             f"{response.status_code}"
         )
 
-        print(
-            f"[CALLBACK RESPONSE] "
-            f"{response.text}"
-        )
+        # 응답 본문은 로그에 그대로 남기지 않는다 — 콜백 호스트가 응답에
+        # 요청 URL을 그대로 반사하면(예: 디버그 echo) 쿼리스트링의 토큰이
+        # 로그로 샐 수 있다. 실제로 필요한 결과 상태는 JSON 파싱 후
+        # [CALLBACK RESULT STATUS]로 따로 남긴다.
 
         response.raise_for_status()
 
@@ -1149,16 +710,15 @@ async def run_analysis_and_callback(
 
     except Exception as e:
         job = ANALYSIS_JOBS.get(job_id)
-    
+        safe_error = _safe_callback_error(e)
+
         if job:
             job["callback_status"] = "failed"
-            job["callback_error"] = (
-                f"{type(e).__name__}: {e}"
-            )
-    
+            job["callback_error"] = safe_error
+
         print(
             f"[CALLBACK SEND FAILED] "
-            f"{type(e).__name__}: {e}"
+            f"{safe_error}"
         )
     
         print(
@@ -1200,88 +760,6 @@ def kakao_response(
                 }
             ]
         }
-    }
-
-
-# ============================================================
-# URLSCAN Result Parser
-# ============================================================
-
-def parse_urlscan_result(
-    result: dict
-) -> dict:
-
-    task = result.get(
-        "task",
-        {}
-    )
-
-    page = result.get(
-        "page",
-        {}
-    )
-
-    verdicts = result.get(
-        "verdicts",
-        {}
-    )
-
-    urlscan = verdicts.get(
-        "urlscan",
-        {}
-    )
-
-    engines = verdicts.get(
-        "engines",
-        {}
-    )
-
-    overall = verdicts.get(
-        "overall",
-        {}
-    )
-
-    print(
-        "[URLSCAN VERDICTS]",
-        verdicts
-    )
-
-    return {
-        # 기본 URL 정보
-        "url": task.get("url"),
-        "title": page.get("title"),
-        "final_url": page.get("url"),
-        "domain": page.get("domain"),
-
-        # urlscan 자체 verdict
-        "score": urlscan.get("score"),
-        "malicious": urlscan.get(
-            "malicious"
-        ),
-        "categories": urlscan.get(
-            "categories",
-            []
-        ),
-        "brands": urlscan.get(
-            "brands",
-            []
-        ),
-
-        # 비교/디버깅용 ML 정보
-        "ml_score": engines.get(
-            "score"
-        ),
-        "ml_malicious": engines.get(
-            "malicious"
-        ),
-
-        # 비교/디버깅용 overall 정보
-        "overall_score": overall.get(
-            "score"
-        ),
-        "overall_malicious": overall.get(
-            "malicious"
-        )
     }
 
 

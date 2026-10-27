@@ -1,5 +1,15 @@
 # BE 담당자용 AI Python 연동 코드
 
+2026-10-17 구현 참고: 현재 BE 연결은 루트 `main.py`의 `run_analysis()`와
+`build_ai_url_analysis()`에 있다. urlscan 대신 격리 API의 `CollectResult`를 사용하고,
+`to_isolated_page()`의 `page, failure`를 최종 호출에 넘긴다. 실제 방문을 확인하지 못한
+`UrlAnalysis.final_url`은 `None`이며 부분 HTML은 분석 후에도 부분 수집 상태를 유지한다.
+브라우저 이동 경로는 HTTP 리다이렉트 중간 주소를 보장하지 않으므로 브라우저 단계가
+실행되면 공식 확정을 거부한다. 정상 JS 페이지도 `unresolved`가 될 수 있으며,
+첫 실제 도메인은 HTTP 수집 경로로만 정하고 미확인 시 입력 도메인을 표시한다.
+확인된 브라우저 최종 URL과 HTML 분석 근거는 보존한다.
+아래 urlscan 어댑터 설명은 이전 인계 예시다.
+
 BE는 URL을 제거한 문자 본문을 먼저 분석하고, URL 분석 결과와 격리 수집 자료를 준비한 뒤 **`await finalize_analysis(...)` 한 번으로 전체 최종 결과를 받는다.** 격리 페이지 분석과 결과 조립은 AI 함수 내부에서 수행한다. 문자 분석 결과는 재사용한다.
 
 별도 AI HTTP 서버 없이 BE의 Python 코드에서 AI 패키지를 직접 호출한다. 이 문서의 세 구간은 BE가 작성할 코드 예시이며, 기존 BE 서비스에 연동이 완료됐다는 뜻은 아니다. 반환 스키마와 전체 JSON 예시는 [결과 계약](./scheme.md), 파트별 작업은 [인계 문서](./archive/ai/Revisions-handoff.md)를 참고한다.

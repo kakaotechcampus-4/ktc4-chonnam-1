@@ -291,30 +291,30 @@ class ScanResult(InboundModel):
 
 
 class UrlAnalysis(InboundModel):
-    final_url: str = Field(min_length=1)
+    final_url: str | None = Field(min_length=1)
     domain: str = Field(min_length=1)
     official: DomainMatch
     scan: ScanResult = Field(default_factory=ScanResult)
 
     @field_validator("final_url", "domain")
     @classmethod
-    def reject_blank_value(cls, value: str) -> str:
-        if not value.strip():
+    def reject_blank_value(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
             raise ValueError("value must not be blank")
         return value
 
     @field_validator("official")
     @classmethod
     def reject_no_url(cls, value: DomainMatch) -> DomainMatch:
-        # final_url 이 있는 응답에 "URL 없음" 대조 결과는 모순입니다.
+        # URL 분석 대상이 있는 응답에 "URL 없음" 대조 결과는 모순입니다.
         if value is DomainMatch.NO_URL:
             raise ValueError("url.official cannot be no_url")
         return value
 
 
 class IsolatedPage(InboundModel):
-    brand: str
-    category: str
+    brand: str | None = None
+    category: str | None = None
     info: str
     collected_at: datetime | None = None
 

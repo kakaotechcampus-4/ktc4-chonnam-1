@@ -101,6 +101,19 @@ def test_url_analysis_ignores_extra_inbound_keys_and_requires_official():
         UrlAnalysis(final_url="https://example.com/a", domain="example.com")
 
 
+def test_unconfirmed_final_url_round_trips_as_null():
+    parsed = UrlAnalysis(final_url=None, domain="example.com", official="unresolved")
+    assert parsed.final_url is None
+    assert parsed.model_dump(mode="json")["final_url"] is None
+    assert UrlAnalysis.model_validate_json(parsed.model_dump_json()) == parsed
+
+
+def test_isolated_page_does_not_require_collector_identity():
+    page = IsolatedPage(info="<p>delivery</p>")
+    assert page.brand is None
+    assert page.category is None
+
+
 def test_scan_defaults_to_unreceived_and_bounds_score():
     assert url().scan.model_dump() == {"score": None, "scanned_at": None}
     scanned = url(scan={"score": 35, "scanned_at": "2026-09-29T10:00:30Z"})
