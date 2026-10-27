@@ -11,19 +11,39 @@ from ai.case.types import TranscriptResult
 
 # 주민 → 카드 → 계좌 순서로 적용한다. 앞 규칙이 긴 숫자열을 먼저 가져가야
 # 카드번호가 계좌번호로 잘못 가려지지 않는다.
-_RRN = re.compile(r"(?<!\d)\d{6}-?[1-4]\d{6}(?!\d)")
+# 구분자는 하이픈뿐 아니라 STT 가 넣는 공백·점도 받는다
+_RRN = re.compile(r"(?<!\d)\d{6}[ .-]?[1-4]\d{6}(?!\d)")
 # 13~16자리. 구분자는 모든 자리에서 같아야 한다(인접한 전화번호를 가로질러 잡지 않으려고)
-_CARD = re.compile(r"(?<![\d-])\d{4}([ -]?)\d{4}\1\d{4}\1\d{1,4}(?![\d-])")
-# 10~14자리 숫자열, 하이픈 허용
-_ACCOUNT = re.compile(r"(?<![\d-])\d(?:-?\d){9,13}(?![\d-])")
-# 전화번호(대표번호 포함)와 같은 모양은 근거로 써야 하므로 남긴다
-_PHONE = re.compile(r"^(?:0\d{1,2}-?\d{3,4}-?\d{4}|1\d{3}(?:-?\d{4})?)$")
+_CARD = re.compile(r"(?<![\d-])\d{4}([ .-]?)\d{4}\1\d{4}\1\d{1,4}(?![\d-])")
+# 10~14자리. 하이픈은 자리 제한 없이, 공백·점은 같은 구분자의 묶음(2~6자리)일 때만 받는다
+_ACCOUNT = re.compile(
+    r"(?<![\d-])(?:\d(?:-?\d){9,13}|\d{2,6}([ .])\d{2,6}(?:\1\d{2,6}){1,3})(?![\d-])"
+)
+# 전화번호(대표번호 포함)와 같은 모양은 근거로 써야 하므로 남긴다. 실제 접두만 인정한다:
+# 휴대 01x, 지역번호 02·03x~06x, 070, 050x, 080, 대표번호 15xx·16xx·18xx
+_PHONE_DIGITS = re.compile(
+    r"^(?:01[016-9]\d{7,8}|02\d{7,8}|0[3-6]\d\d{7,8}|070\d{8}|050\d\d{6,8}"
+    r"|080\d{7,8}|1[568]\d{2}(?:\d{4})?)$"
+)
+_SEP = re.compile(r"[ .-]")
+
+
+def _is_phone(s: str) -> bool:
+    return bool(_PHONE_DIGITS.match(_SEP.sub("", s)))
 
 
 def _mask_unless_phone(label: str):
     def repl(m: re.Match[str]) -> str:
         s = m.group(0)
-        return s if _PHONE.match(s) else label
+        if _is_phone(s):
+            return s
+        # 공백·점으로 이어 적은 인접 전화번호가 한 덩어리로 잡힌 경우: 앞쪽이 전화번호면 남긴다
+        groups = re.split(r"[ .]", s)
+        if len(groups) > 2 and any(
+            _is_phone(" ".join(groups[:k])) for k in range(2, len(groups))
+        ):
+            return s
+        return label
 
     return repl
 
