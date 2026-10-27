@@ -96,19 +96,21 @@ def _number_evidence(number_checks: list[NumberCheck]) -> list[Evidence]:
 
 def _stop_actions(codes: set[EvidenceCode]) -> list[StopAction]:
     out = [action for trigger, action in _STOP_TABLE if codes & trigger]
-    return [*out, StopAction.HANG_UP][:_MAX_STOP]
+    # 통화에서는 끊기가 가장 중요한 행동이라 상한에 잘리지 않게 둘만 고르고 끝에 붙인다
+    return [*out[: _MAX_STOP - 1], StopAction.HANG_UP]
 
 
 def _checked_unchecked(
     *,
     transcript_ok: bool,
+    read_ran: bool,
     number_checks: list[NumberCheck],
     similar: CaseSearchResult | None,
 ) -> tuple[list[CheckItem], list[Unchecked]]:
     checked: list[CheckItem] = []
     unchecked: list[Unchecked] = []
 
-    if transcript_ok:
+    if transcript_ok and read_ran:
         checked.append(CheckItem.TRANSCRIPT)
         # 받아 적은 글이 실제 통화와 같은지는 확인할 수 없다
         unchecked.append(
@@ -117,12 +119,18 @@ def _checked_unchecked(
                 reason=UncheckedReason.READ_FROM_VOICE,
             )
         )
+    elif transcript_ok:
+        # 대본은 있으나 읽기·검증이 돌지 않았다
+        unchecked.append(
+            Unchecked(item=UncheckedItem.TRANSCRIPT, reason=UncheckedReason.NOT_RUN)
+        )
     else:
         unchecked.append(
             Unchecked(item=UncheckedItem.TRANSCRIPT, reason=UncheckedReason.FAILED)
         )
 
-    if number_checks:
+    # org_not_listed 는 대조가 되지 않은 것이라 확인한 것으로 세지 않는다
+    if any(c.result in ("official", "not_official") for c in number_checks):
         checked.append(CheckItem.PHONE_NUMBER)
     else:
         unchecked.append(
@@ -173,6 +181,7 @@ def decide_call(
 ) -> VoiceCaseResult:
     checked, unchecked = _checked_unchecked(
         transcript_ok=not transcript_empty,
+        read_ran=verify is not None,
         number_checks=number_checks,
         similar=similar,
     )

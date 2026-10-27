@@ -215,7 +215,7 @@ def test_stop_actions_order_and_cap():
             E.INFO_REQUEST,
         )
     )
-    assert r.stop_actions == [S.DONT_ENTER_INFO, S.DONT_INSTALL_APP, S.DONT_SEND_MONEY]
+    assert r.stop_actions == [S.DONT_ENTER_INFO, S.DONT_INSTALL_APP, S.HANG_UP]
 
 
 def test_stop_actions_hang_up_when_room():
@@ -226,6 +226,70 @@ def test_stop_actions_hang_up_when_room():
 def test_stop_actions_never_dont_click_link():
     r = _decide(_verify(E.INSTITUTION_CLAIM))
     assert r.stop_actions == [S.HANG_UP]
+
+
+def test_n11_split_failed_keeps_hang_up_and_q1():
+    r = _decide(
+        _verify(
+            E.INSTITUTION_CLAIM, E.MONEY_REQUEST, E.CALL_REQUEST, split_failed=True
+        )
+    )
+    assert r.conclusion == Conclusion.INCONCLUSIVE and r.caution is True
+    assert r.floors == []
+    assert [q.question_id.value for q in r.questions] == ["already_acted"]
+    assert r.stop_actions == [
+        S.DONT_SEND_MONEY,
+        S.DONT_CALL_NUMBER_IN_MESSAGE,
+        S.HANG_UP,
+    ]
+
+
+def test_split_failed_nothing_accepted_is_input_required():
+    r = _decide(_verify(split_failed=True))
+    assert r.conclusion == Conclusion.INPUT_REQUIRED
+
+
+def test_no_caution_inconclusive_stop_is_hang_up_only():
+    r = _decide(_verify(E.ACQUAINTANCE_CLAIM))
+    assert r.caution is False
+    assert r.stop_actions == [S.HANG_UP]
+    assert r.questions == []
+
+
+def test_n14_lexicon_derived_is_suspected():
+    v = _verify(E.INSTITUTION_CLAIM, E.APP_INSTALL_REQUEST)
+    v = v.model_copy(
+        update={
+            "accepted": [e.model_copy(update={"derived_by": "lexicon"}) for e in v.accepted]
+        }
+    )
+    r = decide_call(
+        transcript_empty=False,
+        verify=v,
+        number_checks=[],
+        similar=None,
+        failures=[],
+        reading_status="fallback",
+    )
+    assert r.conclusion == Conclusion.SUSPECTED and r.floors == ["L-3"]
+
+
+def test_phone_number_checked_only_when_compared():
+    listed = NumberCheck(number="1", org="X", result="org_not_listed")
+    r = _decide(_verify(E.MONEY_REQUEST), numbers=[listed])
+    assert CheckItem.PHONE_NUMBER not in r.checked
+    assert UncheckedItem.PHONE_NUMBER in {u.item for u in r.unchecked}
+    off = NumberCheck(number="2", org="X", result="official")
+    r = _decide(_verify(E.MONEY_REQUEST), numbers=[listed, off])
+    assert CheckItem.PHONE_NUMBER in r.checked
+
+
+def test_verify_none_transcript_not_checked():
+    r = _decide(None)
+    assert CheckItem.TRANSCRIPT not in r.checked
+    assert (UncheckedItem.TRANSCRIPT, UncheckedReason.NOT_RUN) in {
+        (u.item, u.reason) for u in r.unchecked
+    }
 
 
 # ── Q1 ─────────────────────────────────────────────────────
