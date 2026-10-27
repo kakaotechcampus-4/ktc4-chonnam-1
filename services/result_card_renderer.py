@@ -53,6 +53,24 @@ def _truncate_evidence(evidence: str, max_length: int = _EVIDENCE_MAX_LENGTH) ->
     return evidence[: max_length - 1] + "…"
 
 
+def render_voice_result_card(result: dict) -> dict:
+    """보이스피싱 음성 분석 결과를 카카오 카드로 바꾼다.
+
+    지금은 `mock_analyze_voice_case()`의 목업 결과(`conclusion`/
+    `evidence`/`guidance`)를 그대로 받는다 — 실제 STT·AI 연동 때 결과
+    모양이 바뀌면 이 함수만 맞추면 된다(main.py의 호출부는 그대로).
+    """
+
+    evidence = result.get("evidence") or []
+    lines = [f"- {item.get('text', '')}" for item in evidence if item.get("text")]
+
+    return render_card("r-voice-result", {
+        "conclusion": result.get("conclusion") or "확인이 필요해요",
+        "evidence_lines": "\n".join(lines) if lines else "- 확인된 근거 없음",
+        "guidance": result.get("guidance") or "",
+    })
+
+
 def _r9_org_label(brand: str | None) -> str:
     if brand and brand != _UNKNOWN:
         return brand
