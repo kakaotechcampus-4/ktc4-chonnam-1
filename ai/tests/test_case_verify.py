@@ -163,6 +163,26 @@ def test_v4_negated_demand_rejected():
     assert _reasons(r) == ["negated"]
 
 
+def test_v4_only_last_clause_is_checked():
+    for q in ("걱정하지 않으셔도 되고 앱 설치하세요", "돈을 보내지 마시고 앱 설치하세요"):
+        r = _verify(
+            _source(("화자2", q)),
+            _reading(demands=[DemandClaim(kind=DemandKind.APP_INSTALL, quote=q)]),
+        )
+        assert _codes(r) == [EvidenceCode.APP_INSTALL_REQUEST], q
+        assert r.rejected == []
+
+
+def test_gift_card_evidence_counts_for_floor():
+    q = "문화상품권 사서 핀번호 보내주세요"
+    r = _verify(
+        _source(("화자2", q)),
+        _reading(demands=[DemandClaim(kind=DemandKind.GIFT_CARD, quote=q)]),
+    )
+    assert _codes(r) == [EvidenceCode.GIFT_CARD_REQUEST]
+    assert r.accepted[0].counts_for_floor is True
+
+
 def test_v1_not_in_source_and_too_short():
     r = _verify(
         _source(PROSECUTOR),
@@ -247,7 +267,9 @@ def test_v8_low_confidence_marks_split_failed():
 
 
 def test_v8_missing_or_unknown_speaker():
-    assert _verify(_source(PROSECUTOR), _reading(other_speaker="화자9")).speaker_split_failed
+    r = _verify(_source(PROSECUTOR), _reading(other_speaker="화자9"))
+    assert r.speaker_split_failed
+    assert r.other_speaker is None
     src = _source(PROSECUTOR).model_copy(update={"other_speaker": None})
     assert _verify(src, _reading(other_speaker=None)).speaker_split_failed
 

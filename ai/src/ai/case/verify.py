@@ -41,7 +41,7 @@ _DEMAND_CODE: dict[DemandKind, EvidenceCode] = {
     DemandKind.MOVE_MESSENGER: EvidenceCode.MESSENGER_MOVE,
 }
 
-# v3 §7.1 L-3 조합에 쓰이는 코드. 나머지는 보조라 하한을 세우지 않는다.
+# v3 §7.1 L-3·L-4 조합에 쓰이는 코드. 나머지는 보조라 하한을 세우지 않는다.
 _FLOOR_CODES = frozenset(
     {
         EvidenceCode.INSTITUTION_CLAIM,
@@ -52,6 +52,7 @@ _FLOOR_CODES = frozenset(
         EvidenceCode.INFO_REQUEST,
         EvidenceCode.AUTH_CODE_REQUEST,
         EvidenceCode.CASH_DELIVERY_REQUEST,
+        EvidenceCode.GIFT_CARD_REQUEST,
     }
 )
 
@@ -64,6 +65,7 @@ _NOTICE_ENDINGS = (
 _NOTICE_DOEMNIDA = re.compile(r"됩니다$")
 _TRAILING_PUNCT = re.compile(r"[.!\s]+$")
 
+_CLAUSE_BREAK = re.compile(r"(?:고|며|지만|는데|,)\s+")
 _HOST = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$")
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://")
 
@@ -94,6 +96,11 @@ def _is_notice_sentence(quote: str) -> bool:
     return bool(m) and not sentence[: m.start()].rstrip().endswith("면")
 
 
+def _last_clause_start(quote: str) -> int:
+    ends = [m.end() for m in _CLAUSE_BREAK.finditer(quote)]
+    return ends[-1] if ends else 0
+
+
 def _verify_host(raw: str) -> str | None:
     host = _SCHEME.sub("", raw.strip().lower())
     host = re.split(r"[/?#]", host, maxsplit=1)[0]
@@ -110,12 +117,13 @@ def verify_call(
     names = {seg.speaker for seg in source.segments}
 
     other = reading.other_speaker or source.other_speaker
+    if other not in names:
+        other = None
     # V-8
     split_failed = (
         source.speaker_split_failed
         or reading.speaker_confidence == "low"
         or other is None
-        or other not in names
     )
 
     def allowed(seg_speaker: str | None) -> bool:
@@ -188,8 +196,10 @@ def verify_call(
                 RejectedClaim(kind="demand", quote=demand.quote, reason="notice_sentence")
             )
             continue
-        # 인용이 부정문 전체인 경우가 많아 인용 안의 어느 낱말 뒤에서든 본다
-        if any(action_is_denied(text, pos) for pos in range(end - len(q), end + 1)):
+        # 인용이 부정문 전체인 경우가 많아 마지막 절 안의 어느 낱말 뒤에서든 본다.
+        # 앞 절의 부정("걱정하지 않으셔도 되고")이 뒤 절의 요구를 지우면 안 된다
+        start = end - len(q) + _last_clause_start(q)
+        if any(action_is_denied(text, pos) for pos in range(start, end + 1)):
             rejected.append(
                 RejectedClaim(kind="demand", quote=demand.quote, reason="negated")
             )
