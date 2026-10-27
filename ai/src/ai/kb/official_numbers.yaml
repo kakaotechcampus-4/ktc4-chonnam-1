@@ -1,0 +1,202 @@
+# 기관 대표번호 KB (v3 §6.5, 스펙 D4).
+#
+# 번호는 숫자만 남긴 정규형 문자열이다(하이픈·지역번호 괄호 없음).
+# status: curated 는 source_url 의 공식 누리집 페이지에서 번호를 직접 확인한 항목이다.
+# 확인하지 못했거나 언론·검색 요약으로만 본 항목은 draft 이고 대조에 쓰지 않는다.
+# 기관 번호가 여러 개인 곳은 누리집에 적힌 대표·고객센터 번호만 넣는다. 부서별·분실신고·
+# 카드신청 같은 용도별 번호는 넣지 않는다(사칭 전화가 쓰는 번호와 섞이지 않게).
+# 확인하지 못한 기관은 넣지 않았다: 하나카드, 우리카드(누리집이 본문을 내려주지 않음).
+
+orgs:
+  - org: 금융감독원
+    aliases: [금융감독원, 금감원]
+    numbers: ["1332", "0231455114"]
+    source_url: https://www.fss.or.kr/fss/main/contents.do?menuNo=200058
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: 금융위원회
+    aliases: [금융위원회, 금융위]
+    numbers: ["0221002500"]
+    source_url: https://www.fsc.go.kr/
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: 대검찰청
+    aliases: [대검찰청, 대검, 검찰청, 검찰, 지검, 지방검찰청, 공소청]
+    numbers: ["1301"]
+    source_url: https://www.spo.go.kr/site/spo/main.do
+    note: '확인한 누리집 화면은 공소청 개편 안내가 함께 있었다. 하단 문구는 "대표전화 : 국번없이 1301 (유료)".'
+    checked_at: 2026-10-28
+    status: curated
+
+  # 경찰청 누리집(police.go.kr)이 자동 조회를 막아(리다이렉트 반복) 번호를 직접 확인하지
+  # 못했다. 112·182 는 널리 알려졌으나 출처 페이지를 열지 못해 draft 로 둔다.
+  - org: 경찰청
+    aliases: [경찰청, 경찰, 경찰서, 사이버수사대, 사이버수사]
+    numbers: ["112", "182"]
+    source_url: https://www.police.go.kr/
+    note: '누리집 직접 확인 못함.'
+    checked_at: 2026-10-28
+    status: draft
+
+  # 1394: 2026-02 부터 통합 신고 대표번호. 이전 대표번호 1566-1188 은 보도에 따르면 당분간
+  # 병행 운영(종료 시점은 경찰청 원문으로 확인하지 못함). 긴급 피해는 112. 경찰청 원문
+  # 보도자료는 열리지 않아(본문 없음·리다이렉트) draft 로 둔다.
+  - org: 전기통신금융사기 통합대응단
+    aliases: [통합대응단, 전기통신금융사기 통합대응단, 보이스피싱 통합대응단]
+    numbers: ["1394", "15661188"]
+    source_url: https://www.police.go.kr/user/bbs/BD_selectBbs.do?q_bbsCode=1007&q_bbscttSn=20260209152732394
+    note: '1394 가 현재 대표번호, 15661188 은 이전 번호(병행 여부 미확인). 직접 확인 못함.'
+    checked_at: 2026-10-28
+    status: draft
+
+  - org: 한국인터넷진흥원
+    aliases: [한국인터넷진흥원, 인터넷진흥원, KISA, 불법스팸대응센터]
+    numbers: ["118"]
+    source_url: https://www.boho.or.kr/
+    note: '한국인터넷진흥원 운영 누리집(보호나라). 문구는 "해킹·스팸·개인정보침해 상담은 118".'
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: 대법원
+    aliases: [대법원, 법원, 지방법원, 법원행정처, 서울중앙지법, 지법]
+    numbers: ["0234801100"]
+    source_url: https://www.scourt.go.kr/portal/information/tel/index.html
+    note: '페이지 글자가 깨져 "대표전화 3480-1100,1114"(서울 02) 로 읽었다.'
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: 국세청
+    aliases: [국세청, 세무서]
+    numbers: ["126"]
+    source_url: https://www.nts.go.kr/
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: 국민건강보험공단
+    aliases: [국민건강보험공단, 건강보험공단, 건보공단, 건강보험]
+    numbers: ["15771000"]
+    source_url: https://www.nhis.or.kr/nhis/index.do
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: 국민연금공단
+    aliases: [국민연금공단, 국민연금]
+    numbers: ["1355"]
+    source_url: https://www.nps.or.kr/pbcpgdnc/ognzprsn/getOHAG0021M0.do
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: 우정사업본부
+    aliases: [우정사업본부, 우체국, 우편고객센터]
+    numbers: ["15881300"]
+    source_url: https://www.epost.go.kr/main.retrieveMainPage.comm
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: 출입국·외국인정책본부
+    aliases: [출입국·외국인정책본부, 출입국외국인정책본부, 출입국관리사무소, 출입국, 출입국·외국인청, 외국인종합안내센터, 법무부]
+    numbers: ["1345"]
+    source_url: https://www.immigration.go.kr/immigration/2057/subview.do
+    checked_at: 2026-10-28
+    status: curated
+
+  # ── 은행 ──
+  - org: KB국민은행
+    aliases: [KB국민은행, 국민은행, 케이비국민은행, KB은행]
+    numbers: ["15889999"]
+    source_url: https://www.kbstar.com/
+    note: '하단 문구는 "대표번호 1588-9999".'
+    checked_at: 2026-10-28
+    status: curated
+
+  # 신한은행·신한카드: 검색 요약에서 1599-8000·1544-7000 을 봤으나 공식 페이지 본문은
+  # 조회에 번호가 나오지 않아 draft 로 둔다.
+  - org: 신한은행
+    aliases: [신한은행]
+    numbers: ["15998000"]
+    source_url: https://bank.shinhan.com/index.jsp?cr=010305010300
+    note: '직접 확인 못함.'
+    checked_at: 2026-10-28
+    status: draft
+
+  - org: 우리은행
+    aliases: [우리은행]
+    numbers: ["15885000", "15995000", "15335000"]
+    source_url: https://www.wooribank.com/
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: 하나은행
+    aliases: [하나은행]
+    numbers: ["15881111", "15991111"]
+    source_url: https://www.hanabank.com/
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: NH농협은행
+    aliases: [NH농협은행, 농협은행, 농협]
+    numbers: ["16613000", "15223000", "16612100", "15222100", "15882100", "15442100"]
+    source_url: https://banking.nonghyup.com/servlet/content/ip/ec/IPEC0001M.thtml
+    note: '은행 전용 1661-3000·1522-3000, 농·축협 전용 1661-2100·1522-2100, 공용 1588-2100·1544-2100.'
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: IBK기업은행
+    aliases: [IBK기업은행, 기업은행]
+    numbers: ["15882588", "15662566"]
+    source_url: https://www.ibk.co.kr/main/mainCustomerMain.ibk?pageId=CM09000000
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: 카카오뱅크
+    aliases: [카카오뱅크]
+    numbers: ["15993333"]
+    source_url: https://www.kakaobank.com/
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: 토스뱅크
+    aliases: [토스뱅크]
+    numbers: ["16617654"]
+    source_url: https://www.tossbank.com/
+    checked_at: 2026-10-28
+    status: curated
+
+  # ── 카드사 ──
+  - org: KB국민카드
+    aliases: [KB국민카드, 국민카드, 케이비국민카드]
+    numbers: ["15881688"]
+    source_url: https://card.kbcard.com/home
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: 신한카드
+    aliases: [신한카드]
+    numbers: ["15447000"]
+    source_url: https://www.shinhancard.com/pconts/html/helpdesk/MOBFM651/MOBFM651R01.html
+    note: '직접 확인 못함(페이지가 오류 화면).'
+    checked_at: 2026-10-28
+    status: draft
+
+  - org: 삼성카드
+    aliases: [삼성카드]
+    numbers: ["15888700"]
+    source_url: https://www.samsungcard.com/personal/customer-service/ars/phone/UHPPCC0224M0.jsp
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: 현대카드
+    aliases: [현대카드]
+    numbers: ["15776000"]
+    source_url: https://www.hyundaicard.com/cs/ar/CSARA0101_01.hc
+    checked_at: 2026-10-28
+    status: curated
+
+  - org: NH농협카드
+    aliases: [NH농협카드, 농협카드]
+    numbers: ["16444000"]
+    source_url: https://card.nonghyup.com/servlet/IpCi0009M.act
+    checked_at: 2026-10-28
+    status: curated

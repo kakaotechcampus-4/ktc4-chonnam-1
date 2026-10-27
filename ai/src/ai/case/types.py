@@ -288,8 +288,18 @@ class ClaimView(StrictModel):
     blockers: list[str] = Field(default_factory=list)
 
 
+class NumberCheck(StrictModel):
+    """상대가 말한 번호를 내세운 기관의 공식 대표번호와 맞춰 본 결과 (v3 §6.3)."""
+
+    number: str
+    org: str
+    # org_not_listed: 대표번호 KB 에 없는 기관. 공식이 아니라는 뜻이 아니다
+    result: Literal["official", "not_official", "org_not_listed"]
+    source_url: str | None = None
+
+
 class VoiceCaseResult(StrictModel):
-    """v3 CaseFinal 중 통화에 쓰는 칸. number_checks 는 NumberCheck 가 생기는 Task 5에서 더한다."""
+    """v3 CaseFinal 중 통화에 쓰는 칸."""
 
     scenario: Scenario
     conclusion: Conclusion
@@ -301,6 +311,7 @@ class VoiceCaseResult(StrictModel):
     questions: list[AttachedQuestion] = Field(default_factory=list)
     checked: list[CheckItem] = Field(default_factory=list)
     unchecked: list[Unchecked] = Field(default_factory=list)
+    number_checks: list[NumberCheck] = Field(default_factory=list)
     similar_cases: CaseSearchResult | None = None
     rejected: list[RejectedClaim] = Field(default_factory=list)
     reading_status: Literal["ok", "fallback"] = "ok"
