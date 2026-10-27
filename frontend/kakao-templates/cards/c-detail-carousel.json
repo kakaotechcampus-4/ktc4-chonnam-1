@@ -35,9 +35,9 @@
               "buttonLayout": "vertical",
               "buttons": [
                 {
-                  "label": "신고하기",
-                  "action": "block",
-                  "blockId": "6abba220c841065f2fe49628"
+                  "label": "KISA 상담하기",
+                  "action": "webLink",
+                  "webLinkUrl": "https://www.kisa.or.kr/118"
                 },
                 {
                   "label": "다른 문자 확인하기",

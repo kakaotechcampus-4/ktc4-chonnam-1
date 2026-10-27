@@ -21,7 +21,7 @@
             {
               "label": "KISA 상담하기",
               "action": "webLink",
-              "webLinkUrl": "{{ kisa_chatbot_url }}"
+              "webLinkUrl": "https://www.kisa.or.kr/118"
             }
           ]
         }
