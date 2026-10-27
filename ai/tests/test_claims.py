@@ -109,12 +109,19 @@ async def test_refusal(src, make_parse_client):
     assert (result.status, result.failure) == ("fallback", FailureCode.REFUSED)
 
 
-@pytest.mark.parametrize("parsed", [None, ClaimReading()])
-async def test_invalid_or_empty(src, make_parse_client, parsed):
-    client, _ = make_parse_client(parsed=parsed)
+async def test_unparsed_falls_back(src, make_parse_client):
+    client, _ = make_parse_client(parsed=None)
     result = await read_claims(src, client=client)
     assert (result.status, result.failure) == ("fallback", FailureCode.INVALID_OUTPUT)
     assert result.reading is not None
+
+
+async def test_empty_reading_is_ok_not_failure(src, make_parse_client):
+    # 정상 통화는 읽을 주장이 없어 빈 결과가 나온다. 실패가 아니다 (R14)
+    client, _ = make_parse_client(parsed=ClaimReading())
+    result = await read_claims(src, client=client)
+    assert (result.status, result.failure) == ("ok", None)
+    assert result.reading == ClaimReading()
 
 
 async def test_cancelled_propagates(src, make_parse_client):

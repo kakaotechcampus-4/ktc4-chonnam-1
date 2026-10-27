@@ -38,16 +38,6 @@ def _render_segments(source: ReadingSource) -> str:
     return "\n".join(lines)
 
 
-def _is_empty(reading: ClaimReading) -> bool:
-    return not (
-        reading.identity
-        or reading.pretexts
-        or reading.demands
-        or reading.blockers
-        or reading.spoken_hosts
-    )
-
-
 def _fallback(source: ReadingSource, failure: FailureCode) -> ClaimReadingResult:
     return read_with_lexicon(source).model_copy(update={"failure": failure})
 
@@ -82,8 +72,7 @@ async def read_claims(
         if message.parsed is None:
             return _fallback(source, FailureCode.INVALID_OUTPUT)
         reading = ClaimReading.model_validate(message.parsed)
-        if _is_empty(reading):
-            return _fallback(source, FailureCode.INVALID_OUTPUT)
+        # 읽을 주장이 없는 정상 통화는 빈 결과가 맞다. 실패로 보지 않는다 (R14)
         return ClaimReadingResult(status="ok", reading=reading)
     except asyncio.CancelledError:
         raise

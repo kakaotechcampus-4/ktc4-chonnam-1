@@ -155,6 +155,24 @@ def test_number_check_only_for_other_speaker_max_two():
     assert len(result.number_checks) == 2
 
 
+def test_empty_reading_on_normal_call_is_input_required_without_failures():
+    case = {
+        "transcript": [
+            ["A", "여보세요"],
+            ["B", "국민은행입니다. 요청하신 통장 사본 발급이 완료되었습니다"],
+        ],
+        "input": {},
+        "runtime": {"reading": {"other_speaker": "B", "speaker_confidence": "high"}},
+    }
+    calls = Calls()
+
+    result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, calls)))
+
+    assert result.conclusion == Conclusion.INPUT_REQUIRED
+    assert result.failures == []
+    assert result.reading_status == "ok"
+
+
 def test_unlisted_org_skips_number_check():
     case = yaml.safe_load((CASES_DIR / "N3.yaml").read_text(encoding="utf-8"))
     case["transcript"][1][1] += " 문의는 02-1234-5678"
