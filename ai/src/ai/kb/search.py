@@ -24,7 +24,14 @@ LOGGER = logging.getLogger(__name__)
 CASES_DIR = Path(__file__).resolve().parent / "case_examples"
 VOICE_CASES_DIR = Path(__file__).resolve().parent / "voice_cases"
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---", re.DOTALL)
-_LOAD_LOCK = threading.Lock()
+# 폴더마다 락을 따로 쓴다. 통화 색인 적재가 문자 검색을 막지 않게 하려는 것이다
+_LOCKS_GUARD = threading.Lock()
+_LOAD_LOCKS: dict[Path, threading.Lock] = {}
+
+
+def _lock_for(cases_dir: Path) -> threading.Lock:
+    with _LOCKS_GUARD:
+        return _LOAD_LOCKS.setdefault(Path(cases_dir), threading.Lock())
 
 # ai/eval/rag_eval.py 의 dev 절반으로 정하는 값입니다. 바꾸면 평가를 다시 돌립니다.
 NGRAM_SIZES: tuple[int, ...] = (3,)
@@ -180,7 +187,7 @@ def load_cases(cases_dir: Path = CASES_DIR) -> tuple[Case, ...]:
     5건이 동시에 오면 GIL 경합으로 전부 1초 검색 예산을 넘겼다(측정). 락으로
     한 번만 파싱하고, 경로를 위치 인자로 넘겨 기본값 호출과 캐시를 공유한다.
     """
-    with _LOAD_LOCK:
+    with _lock_for(cases_dir):
         return _load_cases(Path(cases_dir))
 
 
@@ -203,8 +210,8 @@ def load_index(
     ngram_sizes: tuple[int, ...] = NGRAM_SIZES,
     sublinear_tf: bool = SUBLINEAR_TF,
 ) -> CaseIndex:
-    """색인도 프로세스 수명 동안 캐시합니다. load_cases 와 같은 락을 씁니다."""
-    with _LOAD_LOCK:
+    """색인도 프로세스 수명 동안 캐시합니다. 같은 폴더의 load_cases 와 락을 나눠 씁니다."""
+    with _lock_for(cases_dir):
         return _load_index(Path(cases_dir), tuple(ngram_sizes), sublinear_tf)
 
 
