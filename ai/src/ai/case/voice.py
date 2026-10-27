@@ -17,9 +17,11 @@ from ai.case.lexicon import read_with_lexicon
 from ai.case.privacy import mask_transcript
 from ai.case.types import (
     ClaimReadingResult,
+    Conclusion,
     InputKind,
     NumberCheck,
     ReadingSource,
+    Scenario,
     Side,
     TranscriptResult,
     Unchecked,
@@ -105,11 +107,11 @@ async def _read(
 
 def _check_numbers(
     runtime: VoiceRuntime, source: ReadingSource, verify: VerifyResult
-) -> list[NumberCheck]:
+) -> tuple[list[NumberCheck], bool]:
     """받아들인 기관 주장이 KB 에 있고 상대 발화에 번호가 있으면 번호마다 대조한다."""
     if verify.speaker_split_failed or verify.other_speaker is None:
         # 누구의 말인지 몰라 상대가 말한 번호라고 할 수 없다
-        return []
+        return [], False
     org = None
     for ident in verify.claims.identity:
         if ident.listed_institution:
@@ -117,17 +119,19 @@ def _check_numbers(
             if org:
                 break
     if org is None:
-        return []
+        return [], False
     other_text = " ".join(
         seg.text for seg in source.segments if seg.side == Side.OTHER
     )
     checks: list[NumberCheck] = []
+    failed = False
     for number in find_numbers(other_text)[:MAX_NUMBER_CHECKS]:
         try:
             checks.append(runtime.check_phone_number(number, org))
         except Exception as exc:
             LOGGER.warning("phone number check failed: %s", type(exc).__name__)
-    return checks
+            failed = True
+    return checks, failed
 
 
 def _fill_sides(source: ReadingSource, verify: VerifyResult) -> None:
@@ -146,7 +150,46 @@ async def analyze_call(
     runtime: VoiceRuntime | None = None,
     time_budget_s: float = DEFAULT_TIME_BUDGET_S,
 ) -> VoiceCaseResult:
-    """STT·화자 분리 결과를 분석한다. 질문으로 멈추지 않고 늘 결과를 낸다."""
+    """STT·화자 분리 결과를 분석한다. 질문으로 멈추지 않고 늘 결과를 낸다.
+
+    예기치 못한 오류가 나도 예외 대신 분석 불가 결과를 돌려준다(CancelledError 만 올린다).
+    """
+    try:
+        return await _analyze(transcript, runtime, time_budget_s)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        LOGGER.warning("voice analysis failed: %s", type(exc).__name__)
+        return VoiceCaseResult(
+            scenario=Scenario.VOICE_PHISHING,
+            conclusion=Conclusion.NOT_ANALYZABLE,
+            unchecked=[
+                Unchecked(
+                    item=UncheckedItem.TRANSCRIPT, reason=UncheckedReason.FAILED
+                )
+            ],
+            failures=[FailureCode.MISSING_RESULT],
+        )
+
+
+def _not_analyzed(failures: list[FailureCode]) -> VoiceCaseResult:
+    """대본은 있으나 처리 단계가 실패해 읽지 못한 결과."""
+    result = decide_call(
+        transcript_empty=False,
+        verify=None,
+        number_checks=[],
+        similar=None,
+        failures=[*failures, FailureCode.MISSING_RESULT],
+    )
+    _set_unchecked(result, UncheckedItem.TRANSCRIPT, UncheckedReason.FAILED)
+    return result
+
+
+async def _analyze(
+    transcript: TranscriptResult,
+    runtime: VoiceRuntime | None,
+    time_budget_s: float,
+) -> VoiceCaseResult:
     runtime = runtime or VoiceRuntime()
     started = time.monotonic()
 
@@ -167,12 +210,17 @@ async def analyze_call(
             failures=failures,
         )
 
-    masked = mask_transcript(transcript)
-    source = ReadingSource(
-        kind=InputKind.AUDIO,
-        segments=masked.segments,
-        speaker_split_failed=transcript.speaker_split_failed,
-    )
+    try:
+        masked = mask_transcript(transcript)
+        source = ReadingSource(
+            kind=InputKind.AUDIO,
+            segments=masked.segments,
+            speaker_split_failed=transcript.speaker_split_failed,
+        )
+    except Exception as exc:
+        # 가리지 못한 대본은 읽기·검색에 넘기지 않는다
+        LOGGER.warning("transcript masking failed: %s", type(exc).__name__)
+        return _not_analyzed(failures)
 
     if remaining() <= 0:
         result = decide_call(
@@ -199,15 +247,29 @@ async def analyze_call(
         reading = read_with_lexicon(source, reading.failure or FailureCode.INVALID_OUTPUT)
     if reading.failure is not None:
         failures.append(reading.failure)
-    verify = verify_call(
-        source,
-        reading.reading,
-        derived_by="lexicon" if reading.status == "fallback" else "llm",
-    )
-    _fill_sides(source, verify)
+    try:
+        verify = verify_call(
+            source,
+            reading.reading,
+            derived_by="lexicon" if reading.status == "fallback" else "llm",
+        )
+    except Exception as exc:
+        LOGGER.warning("claims verification failed: %s", type(exc).__name__)
+        result = _not_analyzed(failures)
+        if search_miss is not None:
+            _set_unchecked(result, UncheckedItem.SIMILAR_CASES, search_miss)
+        return result
 
     number_timeout = remaining() <= 0
-    number_checks = [] if number_timeout else _check_numbers(runtime, source, verify)
+    number_checks: list[NumberCheck] = []
+    number_failed = False
+    if not number_timeout:
+        try:
+            _fill_sides(source, verify)
+            number_checks, number_failed = _check_numbers(runtime, source, verify)
+        except Exception as exc:
+            LOGGER.warning("number step failed: %s", type(exc).__name__)
+            number_checks, number_failed = [], True
 
     result = decide_call(
         transcript_empty=False,
@@ -221,4 +283,8 @@ async def analyze_call(
         _set_unchecked(result, UncheckedItem.SIMILAR_CASES, search_miss)
     if number_timeout:
         _set_unchecked(result, UncheckedItem.PHONE_NUMBER, UncheckedReason.TIMEOUT)
+    elif number_failed and not any(
+        c.result in ("official", "not_official") for c in number_checks
+    ):
+        _set_unchecked(result, UncheckedItem.PHONE_NUMBER, UncheckedReason.FAILED)
     return result

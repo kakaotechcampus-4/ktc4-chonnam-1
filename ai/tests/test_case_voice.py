@@ -271,7 +271,7 @@ def test_exhausted_budget_skips_reading_with_timeout():
     assert (UncheckedItem.TRANSCRIPT, UncheckedReason.TIMEOUT) in items
 
 
-def test_budget_spent_during_reading_skips_number_check():
+def test_budget_spent_during_reading_marks_phone_number_timeout():
     case = _v1()
     calls = Calls()
     runtime = _runtime(case, calls)
@@ -314,3 +314,78 @@ def test_cancellation_propagates():
 
 def test_warm_up_voice_case_search_fills_index():
     assert warm_up_voice_case_search().status is AnalysisStatus.COMPLETED
+
+
+def test_mask_failure_returns_not_analyzable_without_reading(monkeypatch):
+    def boom(t):
+        raise RuntimeError("mask")
+
+    monkeypatch.setattr(voice, "mask_transcript", boom)
+    case = _v1()
+    calls = Calls()
+
+    result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, calls)))
+
+    assert result.conclusion is Conclusion.NOT_ANALYZABLE
+    assert FailureCode.MISSING_RESULT in result.failures
+    assert calls.reading == 0 and calls.search == 0
+    items = {(u.item, u.reason) for u in result.unchecked}
+    assert (UncheckedItem.TRANSCRIPT, UncheckedReason.FAILED) in items
+
+
+def test_verify_failure_returns_not_analyzable(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("verify")
+
+    monkeypatch.setattr(voice, "verify_call", boom)
+    case = _v1()
+
+    result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, Calls())))
+
+    assert result.conclusion is Conclusion.NOT_ANALYZABLE
+    assert FailureCode.MISSING_RESULT in result.failures
+
+
+def test_decide_call_failure_returns_minimal_result(monkeypatch):
+    def boom(**k):
+        raise RuntimeError("gate")
+
+    monkeypatch.setattr(voice, "decide_call", boom)
+    case = _v1()
+
+    result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, Calls())))
+
+    assert result.conclusion is Conclusion.NOT_ANALYZABLE
+    assert result.failures == [FailureCode.MISSING_RESULT]
+
+
+def test_fill_sides_failure_still_returns_result(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("sides")
+
+    monkeypatch.setattr(voice, "_fill_sides", boom)
+    case = _v1()
+
+    result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, Calls())))
+
+    assert result.conclusion is Conclusion.SUSPECTED
+    items = {(u.item, u.reason) for u in result.unchecked}
+    assert (UncheckedItem.PHONE_NUMBER, UncheckedReason.FAILED) in items
+
+
+def test_phone_check_error_marks_phone_number_failed():
+    case = _v1()
+    runtime = _runtime(case, Calls())
+
+    def broken(number, org):
+        raise RuntimeError("kb")
+
+    runtime.check_phone_number = broken
+
+    result = asyncio.run(analyze_call(_transcript(case), runtime=runtime))
+
+    assert result.conclusion is Conclusion.SUSPECTED
+    assert result.number_checks == []
+    items = {(u.item, u.reason) for u in result.unchecked}
+    assert (UncheckedItem.PHONE_NUMBER, UncheckedReason.FAILED) in items
+    assert (UncheckedItem.PHONE_NUMBER, UncheckedReason.NOT_APPLICABLE) not in items
