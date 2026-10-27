@@ -31,6 +31,9 @@ def test_masks_sensitive_numbers(raw, expected):
         "1588-1234",
         "https://example.com/a?b=1234567890",
         "http://sp-case.com 에 들어가세요",
+        "02-1234-5678 010-1234-5678",
+        "1332 1588-1234 02-1234-5678",
+        "010-1234-5678 02-1234-5678 1588-1234",
     ],
 )
 def test_keeps_phone_and_url(raw):
@@ -74,3 +77,24 @@ async def test_elice_masker_request_and_mapping():
     assert seen["url"] == "https://mask.example/mask"
     assert seen["auth"] == "Bearer KEY"
     assert seen["body"] == {"text": ["a", "b"]}
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (
+            "02-1234-5678 로 걸고 카드 1234-5678-9012-3456 불러",
+            "02-1234-5678 로 걸고 카드 <카드번호> 불러",
+        ),
+        (
+            "010-1234-5678 이고 계좌는 110-123-456789 입니다",
+            "010-1234-5678 이고 계좌는 <계좌번호> 입니다",
+        ),
+        (
+            "1332 또는 1588-1234, 카드 1234 5678 9012 3456",
+            "1332 또는 1588-1234, 카드 <카드번호>",
+        ),
+    ],
+)
+def test_mixed_numbers_mask_only_sensitive(raw, expected):
+    assert mask_pii(raw) == expected
