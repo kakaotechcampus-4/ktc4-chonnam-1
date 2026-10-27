@@ -287,3 +287,49 @@ def test_v8_missing_or_unknown_speaker():
 def test_v8_source_flag_stays_true():
     r = _verify(_source(PROSECUTOR, split_failed=True), _reading())
     assert r.speaker_split_failed
+
+
+def test_r15_name_not_in_transcript_is_not_trusted():
+    # 모델이 name 에 "경찰청"을 적었어도 대본의 상대 발화에 경찰이 없으면 기관 주장이 아니다
+    quote = "고객님 명의로 사건이 접수되어서요"
+    info = "주민번호 앞자리를 불러 주세요"
+    r = _verify(
+        _source(("화자2", quote), ("화자2", info)),
+        _reading(
+            identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name="경찰청", quote=quote)],
+            demands=[DemandClaim(kind=DemandKind.PERSONAL_INFO, quote=info)],
+        ),
+    )
+    assert EvidenceCode.INSTITUTION_CLAIM not in _codes(r)
+    assert EvidenceCode.INFO_REQUEST in _codes(r)
+    assert r.claims.identity[0].listed_institution is False
+
+
+def test_r15_name_in_other_speaker_text_is_trusted():
+    quote = "고객님 명의로 사건이 접수되어서요"
+    src = _source(("화자2", "경찰에서 연락드렸습니다"), ("화자2", quote))
+    r = _verify(
+        src,
+        _reading(identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name="경찰청", quote=quote)]),
+    )
+    assert EvidenceCode.INSTITUTION_CLAIM in _codes(r)
+    assert r.claims.identity[0].name == "경찰청"
+
+
+def test_r15_name_only_in_self_side_text_is_not_trusted():
+    quote = "고객님 명의로 사건이 접수되어서요"
+    src = _source(("화자1", "경찰이세요"), ("화자2", quote))
+    r = _verify(
+        src,
+        _reading(identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name="경찰청", quote=quote)]),
+    )
+    assert EvidenceCode.INSTITUTION_CLAIM not in _codes(r)
+
+
+def test_not_in_source_quote_text_is_not_kept():
+    r = _verify(
+        _source(PROSECUTOR),
+        _reading(pretexts=[PretextClaim(quote="없는 문장입니다 정말로")]),
+    )
+    assert _reasons(r) == ["not_in_source"]
+    assert r.rejected[0].quote == ""

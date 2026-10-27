@@ -140,7 +140,8 @@ def verify_call(
             return None
         found = [(seg, text) for seg, text in segments if q in text]
         if not found:
-            rejected.append(RejectedClaim(kind=kind, quote=quote, reason="not_in_source"))
+            # 원문에 없는 인용은 모델이 만든 글이라 결과에 싣지 않는다
+            rejected.append(RejectedClaim(kind=kind, quote="", reason="not_in_source"))
             return None
         for seg, text in found:
             if allowed(seg.speaker):
@@ -159,6 +160,8 @@ def verify_call(
             )
         )
 
+    allowed_text = " ".join(text for seg, text in segments if allowed(seg.speaker))
+
     claims = ClaimView()
 
     for ident in reading.identity:
@@ -167,17 +170,23 @@ def verify_call(
             continue
         q = hit[0]
         listed = False
+        name = ident.name
         if ident.kind == IdentityKind.INSTITUTION:
-            listed = bool(
-                INSTITUTION_PATTERN.search(ident.name) or INSTITUTION_PATTERN.search(q)
-            )
+            # 모델이 적은 name 은 그 기관명이 허용된 화자의 말에 실제로 나올 때만 믿는다 (R15).
+            # 아니면 인용만으로 판단하고, 이후 단계가 쓸 이름도 인용에서 찾은 낱말로 바꾼다
+            m_name = INSTITUTION_PATTERN.search(ident.name)
+            if m_name is not None and m_name.group(0) in allowed_text:
+                listed = True
+            elif (m_quote := INSTITUTION_PATTERN.search(q)) is not None:
+                listed = True
+                name = m_quote.group(0)
             if listed:
                 add(EvidenceCode.INSTITUTION_CLAIM, q)
         elif ident.kind == IdentityKind.ACQUAINTANCE:
             add(EvidenceCode.ACQUAINTANCE_CLAIM, q)
         claims.identity.append(
             ClaimViewIdentity(
-                kind=ident.kind, name=ident.name, quote=q, listed_institution=listed
+                kind=ident.kind, name=name, quote=q, listed_institution=listed
             )
         )
 
