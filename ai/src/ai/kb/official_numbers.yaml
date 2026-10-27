@@ -30,26 +30,23 @@ orgs:
     checked_at: 2026-10-28
     status: curated
 
-  # 경찰청 누리집(police.go.kr)이 자동 조회를 막아(리다이렉트 반복) 번호를 직접 확인하지
-  # 못했다. 112·182 는 널리 알려졌으나 출처 페이지를 열지 못해 draft 로 둔다.
   - org: 경찰청
     aliases: [경찰청, 경찰, 경찰서, 사이버수사대, 사이버수사]
     numbers: ["112", "182"]
-    source_url: https://www.police.go.kr/
-    note: '누리집 직접 확인 못함.'
+    source_url: https://ecrm.police.go.kr/minwon/main
+    note: '경찰청 사이버범죄 신고시스템. 문구는 "긴급신고 112(무료) … 민원상담 182(유료)", 하단 "민원대표전화 182".'
     checked_at: 2026-10-28
-    status: draft
+    status: curated
 
-  # 1394: 2026-02 부터 통합 신고 대표번호. 이전 대표번호 1566-1188 은 보도에 따르면 당분간
-  # 병행 운영(종료 시점은 경찰청 원문으로 확인하지 못함). 긴급 피해는 112. 경찰청 원문
-  # 보도자료는 열리지 않아(본문 없음·리다이렉트) draft 로 둔다.
+  # 1394: 2026-02 부터 통합 신고 대표번호. 이전 대표번호 1566-1188 은 뉴스상 병행 운영이라고
+  # 하나 공식 페이지에서는 확인하지 못해 numbers 에 넣지 않았다.
   - org: 전기통신금융사기 통합대응단
     aliases: [통합대응단, 전기통신금융사기 통합대응단, 보이스피싱 통합대응단]
-    numbers: ["1394", "15661188"]
-    source_url: https://www.police.go.kr/user/bbs/BD_selectBbs.do?q_bbsCode=1007&q_bbscttSn=20260209152732394
-    note: '1394 가 현재 대표번호, 15661188 은 이전 번호(병행 여부 미확인). 직접 확인 못함.'
+    numbers: ["1394"]
+    source_url: https://www.counterscam112.go.kr/main.do
+    note: '제목 "보이스피싱·스미싱 통합신고 1394", 하단 주소 서울 서대문구 통일로 97(경찰청), "TEL : 1394". 1566-1188 은 뉴스상 병행 운영, 공식 페이지 미확인.'
     checked_at: 2026-10-28
-    status: draft
+    status: curated
 
   - org: 한국인터넷진흥원
     aliases: [한국인터넷진흥원, 인터넷진흥원, KISA, 불법스팸대응센터]
@@ -60,7 +57,7 @@ orgs:
     status: curated
 
   - org: 대법원
-    aliases: [대법원, 법원, 지방법원, 법원행정처, 서울중앙지법, 지법]
+    aliases: [대법원, 법원, 지방법원, 법원행정처, 서울중앙지법]
     numbers: ["0234801100"]
     source_url: https://www.scourt.go.kr/portal/information/tel/index.html
     note: '페이지 글자가 깨져 "대표전화 3480-1100,1114"(서울 02) 로 읽었다.'
@@ -96,7 +93,7 @@ orgs:
     status: curated
 
   - org: 출입국·외국인정책본부
-    aliases: [출입국·외국인정책본부, 출입국외국인정책본부, 출입국관리사무소, 출입국, 출입국·외국인청, 외국인종합안내센터, 법무부]
+    aliases: [출입국·외국인정책본부, 출입국외국인정책본부, 출입국관리사무소, 출입국, 출입국·외국인청, 외국인종합안내센터]
     numbers: ["1345"]
     source_url: https://www.immigration.go.kr/immigration/2057/subview.do
     checked_at: 2026-10-28

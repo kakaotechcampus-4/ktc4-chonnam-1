@@ -47,6 +47,21 @@ def test_find_numbers_skips_amounts_and_years():
     assert find_numbers("2026년 3월에 1000원, 3,000만원을 보내세요") == []
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["150 달러 보내세요", "금액은 150입니다", "총 130 명", "100 만원", "1000 달러"],
+)
+def test_find_numbers_ignores_bare_amounts(text):
+    assert find_numbers(text) == []
+
+
+def test_find_numbers_short_with_phone_cue_or_kb_member():
+    assert find_numbers("1394번으로 전화하세요") == ["1394"]
+    assert find_numbers("문의는 1588") == ["1588"]
+    assert find_numbers("182로 전화 주세요") == ["182"]
+    assert find_numbers("112에 신고") == ["112"]
+
+
 def test_find_numbers_dedupes_and_handles_short_numbers():
     assert find_numbers("112에 신고하세요. 112 로 전화") == ["112"]
     assert find_numbers("1332번으로 문의") == ["1332"]
@@ -62,8 +77,22 @@ def test_resolve_org_by_alias_and_official_name():
 
 
 def test_resolve_org_skips_draft_entries():
-    # 경찰청은 draft 라 aliases 로도 찾지 않는다
-    assert resolve_org("경찰청") is None
+    # 신한은행은 draft 라 aliases 로도 찾지 않는다
+    assert resolve_org("신한은행") is None
+
+
+def test_resolve_org_ignores_law_names_and_moj():
+    assert resolve_org("보이스피싱방지법 위반입니다") is None
+    assert resolve_org("법무부에서 전화했습니다") is None
+    assert resolve_org("서울중앙지법 판사입니다") == "대법원"
+
+
+def test_police_and_counterscam_are_curated():
+    assert check_phone_number("112", "경찰청").result == "official"
+    assert check_phone_number("182", "경찰").result == "official"
+    assert check_phone_number("1394", "통합대응단").result == "official"
+    # 이전 번호는 공식 페이지에서 확인하지 못해 numbers 에 없다
+    assert check_phone_number("1566-1188", "통합대응단").result == "not_official"
 
 
 def test_check_official_number():
@@ -90,8 +119,7 @@ def test_check_org_not_listed():
 
 
 def test_draft_entries_are_not_used():
-    # 경찰청 112 는 draft 라 대조에 쓰지 않는다
-    assert check_phone_number("112", "경찰청").result == "org_not_listed"
+    assert check_phone_number("1599-8000", "신한은행").result == "org_not_listed"
 
 
 def test_unparseable_number_is_not_official():

@@ -33,6 +33,9 @@ _SERVICE_RE = re.compile(r"(?<![\d,])1[5-8]\d{2}[-. ]?\d{4}(?!\d)")
 _SHORT_RE = re.compile(
     r"(?<![\d,.-])1\d{2,3}(?!\d|[,.]\d|번째|[원년월일만천억%명개건분초시세살회])"
 )
+# 3~4자리는 번호 단서(앞뒤 6자 안)가 있거나 KB 에 있는 번호일 때만 전화번호로 본다
+_PHONE_CUE_RE = re.compile(r"번|번호|전화|문의|ARS", re.IGNORECASE)
+_CUE_WINDOW = 6
 _CANDIDATE_RE = re.compile("|".join(p.pattern for p in (_LONG_RE, _SERVICE_RE, _SHORT_RE)))
 
 
@@ -68,11 +71,36 @@ def find_numbers(text: str) -> list[str]:
     "일삼삼이" 같은 한국어 숫자 읽기는 다루지 않는다.
     """
     found: list[str] = []
+    known = _known_short_numbers(Path(NUMBERS_PATH))
     for match in _CANDIDATE_RE.finditer(text):
         number = normalize_number(match.group())
-        if number is not None and number not in found:
-            found.append(number)
+        if number is None or number in found:
+            continue
+        if len(number) <= 4 and number not in known:
+            # "150 달러", "130 명" 같은 금액·수량을 전화번호로 읽지 않는다
+            around = text[max(0, match.start() - _CUE_WINDOW) : match.start()] + text[
+                match.end() : match.end() + _CUE_WINDOW
+            ]
+            if not _PHONE_CUE_RE.search(around):
+                continue
+        found.append(number)
     return found
+
+
+@lru_cache(maxsize=8)
+def _known_short_numbers(path: Path) -> frozenset[str]:
+    """status 와 상관없이 KB 에 적힌 3~4자리 번호. 단서 없이도 번호로 읽는다."""
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return frozenset()
+    return frozenset(
+        n
+        for entry in (data or {}).get("orgs") or []
+        if isinstance(entry, dict)
+        for n in (normalize_number(str(x)) for x in entry.get("numbers") or [])
+        if n and len(n) <= 4
+    )
 
 
 def load_orgs(path: Path = NUMBERS_PATH) -> tuple[OfficialOrg, ...]:
