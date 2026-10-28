@@ -1,0 +1,22 @@
+id: N11
+scenario: voice_phishing
+input: {kind: audio, speaker_split_failed: true}
+transcript:
+  - [null, "여보세요"]
+  - [null, "금융감독원 수사관 김○○입니다. 고객님 명의 계좌가 범죄에 연루됐습니다"]
+  - [null, "네? 어떻게 해야 하죠"]
+  - [null, "자산 보호를 위해 안전계좌로 옮기셔야 합니다. 확인은 02-1234-5678로 하세요"]
+runtime:
+  reading:
+    other_speaker: null
+    speaker_confidence: low
+    identity: [{kind: institution, name: 금융감독원, quote: "금융감독원 수사관 김○○입니다"}]
+    demands:
+      - {kind: money_transfer, quote: "안전계좌로 옮기셔야 합니다"}
+      - {kind: call_number, quote: "확인은 02-1234-5678로 하세요"}
+expect:
+  conclusion: inconclusive
+  caution: true
+  floors: []
+  stop_actions: [dont_send_money, dont_call_number_in_message, hang_up]
+  number_checks: []

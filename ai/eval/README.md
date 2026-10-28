@@ -29,3 +29,45 @@ PYTHONUTF8=1 PYTHONPATH="src;.venv/Lib/site-packages" python eval/rag_eval.py --
 지표 정의, dev/test 분할, 운영 지점, 잠정 목표와 변경 규칙은
 [설계 문서](../../docs/archive/superpowers/specs/2026-10-02-rag-eval-improvement-design.md)를 따른다.
 설정값은 dev 에서만 조정하고 test 는 설정을 정한 뒤 한 번만 본다.
+
+## 통화 사례 검색 평가
+
+`ai/` 에서 실행한다. KB(`src/ai/kb/voice_cases/`)와 평가셋(`datasets/voice_rag.jsonl`)은 저장소 밖 Task 1
+데이터셋에서 만든다.
+
+```bash
+python eval/voice_rag_build.py D:/voice/dataset/voice_calls.jsonl  # KB·평가셋 다시 만들기(분할 시드 고정)
+python eval/voice_rag_eval.py --dev-only [--ngram 2,3 --tf log --chunk 800 --query-head 2000]  # 조정용 한 줄
+python eval/voice_rag_eval.py --label <방식>                         # test 까지 재고 reports/ 에 리포트를 쓴다
+```
+
+hit@3 은 보이스피싱 질의의 상위 3개(기준값 이상) 중 같은 `type` 사례가 있는 비율이다. 기준값은 dev 정상
+통화 부착률 5% 이하가 되는 가장 낮은 값이고, 정한 값을 `search.VOICE_MIN_SIMILARITY` 에 적는다.
+조정 기록은 `reports/2026-10-28-voice-rag-tuning.md`.
+
+플래그 없는 기본 실행이 운영 경로다. `ai.case.voice.search_gated`(지인 어휘 가점 -> 기준값 -> 관문)를 기준값 0 으로
+불러 전체 점수를 받고, `evaluate()` 가 기준값을 고른다. 질의는 운영처럼 `mask_pii` 를 거친다.
+`--similarity-only`, `--identity`, `--gate`, `--ngram/--tf/--chunk` 는 비교 실험용이며 운영과 다르다.
+`VOICE_MIN_SIMILARITY` 를 다시 고를 때는 실제 정상을 더한 기본 실행의 기준값을 쓴다
+(합성 정상만으로 고른 값은 쓰지 않는다. 실제 정상 dev 가 부착률 상한을 정한다).
+
+```bash
+python eval/voice_rag_eval.py --dev-only --extra-normals <로컬 normal_real.jsonl>   # 현재 채택 값 재현: 0.0807, hit@3 63.0%, 유형 평균 46.7%, 부착 4.9~5.0%
+```
+
+### 사례 첨부 관문
+
+`ai.case.attach_gate` 는 대본이 보이스피싱 통화와 같은지(0~1) 점수를 내고, `search.VOICE_GATE_MIN` 미만이면
+사례를 붙이지 않는다(판정은 바꾸지 않는다). 학습은 sklearn 이 있는 시스템 Python 으로 한다(운영 .venv 에 없다).
+
+```bash
+<시스템 python> eval/voice_gate_train.py                      # src/ai/kb/voice_gate.json 다시 만들기(C=10, 단계 신호 비음수, 결정적)
+python eval/voice_gate_eval.py --extra-normals <로컬 정상 jsonl> --cache <저장소 밖 캐시> [--model <json>] [--contrast]
+python eval/voice_rag_eval.py --dev-only --extra-normals <로컬 정상 jsonl>  # 운영 관문·가점 포함 한 줄(기준값 재선택은 이 줄로)
+```
+
+학습 음성은 `datasets/voice_gate_train.jsonl`(학습 전용 합성 정상, `D:/voice/scripts/gate_train.py` 가 만든다)이다.
+`voice_gate_eval.py` 의 검색 캐시는 운영 검색 함수와 마스킹을 바꾼 뒤 처음부터 다시 만든다(`--cache` 를 새 경로로).
+결과는 `reports/2026-10-28-voice-rag-minority.md` "Task 6".
+관문 모델 json 의 `feature_hash` 는 단계 신호가 쓰는 어휘 패턴의 해시다. 어휘표를 고치면 달라지므로 관문을 다시
+학습한다(`tests/test_attach_gate.py` 가 현재 값과 같은지 확인한다).

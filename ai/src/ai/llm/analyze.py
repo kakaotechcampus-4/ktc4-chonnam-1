@@ -3,7 +3,13 @@ import json
 import logging
 from pathlib import Path
 
-from openai import APIResponseValidationError, APITimeoutError, AsyncOpenAI, LengthFinishReasonError
+from openai import (
+    APIResponseValidationError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    LengthFinishReasonError,
+)
 from pydantic import ValidationError
 
 from ai.llm._client import create_client, required_env
@@ -107,6 +113,15 @@ async def analyze_message(
             LengthFinishReasonError, json.JSONDecodeError) as exc:
         LOGGER.warning("message analysis failed: %s", type(exc).__name__)
         return fallback_analysis(FailureCode.INVALID_OUTPUT)
+    except APIStatusError as exc:
+        # 예외 클래스 이름과 상태 코드만 남긴다 — exc.code/exc.type/
+        # exc.request_id/exc.message/exc.body는 제공자가 보낸 값이라 민감
+        # 정보 노출 가능성을 더 줄이기 위해 남기지 않는다.
+        LOGGER.warning(
+            "message analysis failed: %s status=%s",
+            type(exc).__name__, exc.status_code,
+        )
+        return fallback_analysis(FailureCode.LLM_ERROR)
     except Exception as exc:
         LOGGER.warning("message analysis failed: %s", type(exc).__name__)
         return fallback_analysis(FailureCode.LLM_ERROR)
