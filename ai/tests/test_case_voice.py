@@ -231,6 +231,37 @@ def test_spoken_link_with_info_request_keeps_order_and_cap():
     ]
 
 
+def test_official_contact_comes_from_kb_not_transcript():
+    calls = Calls()
+
+    result = asyncio.run(analyze_call(_transcript(_v1()), runtime=_runtime(_v1(), calls)))
+
+    # 녹음 속 02-1234-5678 이 아니라 KB 의 금감원 대표번호
+    assert result.official_contact is not None
+    assert result.official_contact.org == "금융감독원"
+    assert result.official_contact.number == "1332"
+    assert result.official_contact.source_url.startswith("https://")
+
+
+def test_official_contact_none_for_unlisted_org():
+    case = yaml.safe_load((CASES_DIR / "N3.yaml").read_text(encoding="utf-8"))
+
+    result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, Calls())))
+
+    assert result.official_contact is None
+
+
+def test_official_contact_lookup_failure_keeps_result(monkeypatch):
+    def boom(_verify):
+        raise RuntimeError("kb")
+
+    monkeypatch.setattr(voice, "_official_contact", boom)
+    result = asyncio.run(analyze_call(_transcript(_v1()), runtime=_runtime(_v1(), Calls())))
+
+    assert result.conclusion == Conclusion.SUSPECTED
+    assert result.official_contact is None
+
+
 def test_unlisted_org_skips_number_check():
     case = yaml.safe_load((CASES_DIR / "N3.yaml").read_text(encoding="utf-8"))
     case["transcript"][1][1] += " 문의는 02-1234-5678"
@@ -315,6 +346,58 @@ def test_hung_reading_falls_back_to_lexicon(monkeypatch):
     assert result.conclusion is Conclusion.SUSPECTED
     assert result.failures == [FailureCode.TIMEOUT]
     assert result.reading_status == "fallback"
+
+
+def _be_wrapper(deadline_s: float, margin_s: float, elapsed_s: float, runtime, transcript):
+    """PR #105 콜백 경로를 줄인 모양: 앞 단계가 elapsed_s 를 쓰고, 분석부터 카드 렌더링까지를
+    바깥 wait_for(deadline_s) 가 감싼다. 분석 예산은 deadline_s - margin_s - elapsed_s 다."""
+
+    async def job():
+        await asyncio.sleep(elapsed_s)  # 다운로드·STT·화자 분리
+        result = await analyze_call(
+            transcript, runtime=runtime, time_budget_s=deadline_s - margin_s - elapsed_s
+        )
+        await asyncio.sleep(0.05)  # 카드 렌더링·저장
+        return result
+
+    return asyncio.run(asyncio.wait_for(job(), timeout=deadline_s))
+
+
+def _hanging_runtime():
+    case = _v1()
+    runtime = _runtime(case, Calls())
+
+    async def hang(source):
+        await asyncio.sleep(10)
+
+    runtime.read_claims = hang
+    return case, runtime
+
+
+# 시간을 줄여 본다(상한 1.5초, 앞 단계 0.2초). analyze_call 은 예산을 넘겨도 수십 ms(실측 최대 약 45ms)라
+# 여유는 그보다 넉넉히 0.3초로 둔다. 실제 값(상한 45초, 여유 5초)에서는 차이가 더 크다.
+_DEADLINE_S = 1.5
+_ELAPSED_S = 0.2
+
+
+def test_budget_with_margin_finishes_inside_be_deadline(monkeypatch):
+    """지침의 40 - elapsed (= 상한 - 여유 - elapsed). 읽기가 멈춰도 상한 안에 카드까지 나온다."""
+    monkeypatch.setattr(voice, "READ_BUDGET_S", 12.0)  # 읽기 한도가 아니라 예산이 끝을 정하게
+    case, runtime = _hanging_runtime()
+
+    result = _be_wrapper(_DEADLINE_S, 0.3, _ELAPSED_S, runtime, _transcript(case))
+
+    assert result.conclusion is Conclusion.SUSPECTED
+    assert FailureCode.TIMEOUT in result.failures
+
+
+def test_budget_without_margin_is_cancelled_by_be_deadline(monkeypatch):
+    """45 - elapsed 로 주면 분석이 상한을 다 써서 카드 렌더링 전에 바깥 wait_for 가 취소한다."""
+    monkeypatch.setattr(voice, "READ_BUDGET_S", 12.0)
+    case, runtime = _hanging_runtime()
+
+    with pytest.raises(TimeoutError):
+        _be_wrapper(_DEADLINE_S, 0.0, _ELAPSED_S, runtime, _transcript(case))
 
 
 def test_reading_exception_falls_back_to_lexicon():

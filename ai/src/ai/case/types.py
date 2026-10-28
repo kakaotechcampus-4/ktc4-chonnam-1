@@ -102,13 +102,16 @@ class StopAction(str, Enum):
 
 
 class ResponseAction(str, Enum):
+    # call_1332 는 쓰지 않는다 (FE D17: 지급정지는 112 로 연결되고 정보 유출은 노출 등록이 할 일)
     CONTACT_GIFT_CARD_ISSUER = "contact_gift_card_issuer"
     REPORT_112 = "report_112"
     REQUEST_PAYMENT_STOP = "request_payment_stop"
     CONTACT_CARD_ISSUER = "contact_card_issuer"
     CHANGE_PASSWORD = "change_password"
     REGISTER_INFO_EXPOSURE = "register_info_exposure"
-    CALL_1332 = "call_1332"
+    # 앱을 설치했을 때 금감원 대처 안내 순서 (FE D17)
+    ISOLATE_PHONE = "isolate_phone"
+    USE_OTHER_DEVICE = "use_other_device"
     REMOVE_APP_AND_CHECK_DEVICE = "remove_app_and_check_device"
     DELETE_DOWNLOADED_FILE = "delete_downloaded_file"
 
@@ -298,6 +301,17 @@ class NumberCheck(StrictModel):
     source_url: str | None = None
 
 
+class OfficialContact(StrictModel):
+    """상대가 내세운 기관의 공식 대표번호. V1 확인 안내(`verify_line`)에 쓴다.
+
+    번호는 대표번호 KB 에서만 온다. 녹음 속 번호는 사기범 번호일 수 있어 쓰지 않는다.
+    """
+
+    org: str
+    number: str
+    source_url: str
+
+
 class VoiceCaseResult(StrictModel):
     """v3 CaseFinal 중 통화에 쓰는 칸."""
 
@@ -308,10 +322,13 @@ class VoiceCaseResult(StrictModel):
     evidence: list[Evidence] = Field(default_factory=list)
     claims: ClaimView = Field(default_factory=ClaimView)
     stop_actions: list[StopAction] = Field(default_factory=list)
+    # 분석 직후에는 비어 있다. Q1 답이 오면 apply_call_answers 가 채운다 (v3 §8)
+    response_actions: list[ResponseAction] = Field(default_factory=list)
     questions: list[AttachedQuestion] = Field(default_factory=list)
     checked: list[CheckItem] = Field(default_factory=list)
     unchecked: list[Unchecked] = Field(default_factory=list)
     number_checks: list[NumberCheck] = Field(default_factory=list)
+    official_contact: OfficialContact | None = None
     similar_cases: CaseSearchResult | None = None
     rejected: list[RejectedClaim] = Field(default_factory=list)
     reading_status: Literal["ok", "fallback"] = "ok"

@@ -146,6 +146,30 @@ def test_draft_not_loaded_from_custom_path(tmp_path):
     assert check_phone_number("2222", "나기관", path=path).result == "org_not_listed"
 
 
+def test_official_contact_uses_first_listed_number(tmp_path):
+    path = tmp_path / "n.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "orgs": [
+                    {"org": "가기관", "aliases": ["가기관", "가청"], "numbers": ["1111", "0212345678"],
+                     "source_url": "https://a.example", "status": "curated"},
+                ]
+            },
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    contact = numbers.official_contact("가청 수사관입니다", path=path)
+    assert (contact.org, contact.number, contact.source_url) == ("가기관", "1111", "https://a.example")
+    assert numbers.official_contact("나기관", path=path) is None
+
+
+def test_official_contact_fss_is_1332():
+    contact = numbers.official_contact("금감원")
+    assert (contact.org, contact.number) == ("금융감독원", "1332")
+
+
 def test_yaml_schema_every_entry():
     data = yaml.safe_load(NUMBERS_PATH.read_text(encoding="utf-8"))
     seen = set()

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from ai.case.types import NumberCheck
+from ai.case.types import NumberCheck, OfficialContact
 
 LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +45,8 @@ class OfficialOrg:
     aliases: tuple[str, ...]
     numbers: frozenset[str]
     source_url: str
+    # YAML 에 처음 적은 번호. 안내 문장에 쓰는 대표번호다
+    representative: str
 
 
 def normalize_number(raw: str) -> str | None:
@@ -125,11 +127,17 @@ def _load_orgs(path: Path) -> tuple[OfficialOrg, ...]:
         name = entry.get("org")
         if not name or not source_url:
             continue
-        numbers = frozenset(
+        ordered = [
             n for n in (normalize_number(str(x)) for x in entry.get("numbers") or []) if n
-        )
+        ]
+        if not ordered:
+            continue
         aliases = tuple(str(a) for a in entry.get("aliases") or [])
-        orgs.append(OfficialOrg(str(name), (str(name), *aliases), numbers, str(source_url)))
+        orgs.append(
+            OfficialOrg(
+                str(name), (str(name), *aliases), frozenset(ordered), str(source_url), ordered[0]
+            )
+        )
     return tuple(orgs)
 
 
@@ -153,6 +161,14 @@ def resolve_org(name_or_quote: str, *, path: Path = NUMBERS_PATH) -> str | None:
     """이름이나 문장에서 별칭이 걸리는 기관의 정식 이름. 없으면 None."""
     org = _find_org(name_or_quote, path)
     return org.org if org else None
+
+
+def official_contact(name_or_quote: str, *, path: Path = NUMBERS_PATH) -> OfficialContact | None:
+    """이름이나 문장에서 걸리는 기관의 공식 대표번호. KB 에 없으면 None."""
+    org = _find_org(name_or_quote, path)
+    if org is None:
+        return None
+    return OfficialContact(org=org.org, number=org.representative, source_url=org.source_url)
 
 
 def check_phone_number(number: str, org: str, *, path: Path = NUMBERS_PATH) -> NumberCheck:

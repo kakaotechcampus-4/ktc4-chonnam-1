@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ai.case.actions import default_response_actions, response_actions_for
+from ai.case.actions import apply_call_answers, default_response_actions, response_actions_for
 from ai.case.explain import LEADS, TEMPLATES, explain_call
 from ai.case.gate import decide_call
 from ai.case.types import (
@@ -376,19 +376,29 @@ def test_response_sent_money_variants():
 def test_response_entered_info_variants():
     assert response_actions_for(
         ["entered_info"], [_ev(E.INFO_REQUEST, "주민번호 불러 주세요")]
-    ) == [R.REGISTER_INFO_EXPOSURE, R.CALL_1332]
+    ) == [R.REGISTER_INFO_EXPOSURE]
     assert response_actions_for(["entered_info"], [_ev(E.INFO_REQUEST, "계좌 알려줘")]) == [
         R.CHANGE_PASSWORD,
-        R.CALL_1332,
+        R.REGISTER_INFO_EXPOSURE,
     ]
-    assert response_actions_for(["entered_info"], []) == [R.CHANGE_PASSWORD, R.CALL_1332]
+    assert response_actions_for(["entered_info"], []) == [
+        R.CHANGE_PASSWORD,
+        R.REGISTER_INFO_EXPOSURE,
+    ]
 
 
 def test_response_installed_app():
+    # FE D17: 지급정지를 맨 앞에, 이어서 전원 끄기 → 다른 기기 → 앱 삭제
     assert response_actions_for(["installed_app"], []) == [
-        R.REMOVE_APP_AND_CHECK_DEVICE,
         R.REQUEST_PAYMENT_STOP,
+        R.ISOLATE_PHONE,
+        R.USE_OTHER_DEVICE,
+        R.REMOVE_APP_AND_CHECK_DEVICE,
     ]
+
+
+def test_response_never_uses_1332():
+    assert "call_1332" not in {a.value for a in R}
 
 
 def test_response_merge_follows_table_order_and_dedups():
@@ -399,7 +409,9 @@ def test_response_merge_follows_table_order_and_dedups():
         R.REQUEST_PAYMENT_STOP,
         R.REPORT_112,
         R.CHANGE_PASSWORD,
-        R.CALL_1332,
+        R.REGISTER_INFO_EXPOSURE,
+        R.ISOLATE_PHONE,
+        R.USE_OTHER_DEVICE,
         R.REMOVE_APP_AND_CHECK_DEVICE,
     ]
 
@@ -418,12 +430,48 @@ def test_default_response_actions():
         R.CONTACT_GIFT_CARD_ISSUER,
         R.REPORT_112,
     ]
-    assert default_response_actions("entered_info") == [R.CHANGE_PASSWORD, R.CALL_1332]
+    assert default_response_actions("entered_info") == [
+        R.CHANGE_PASSWORD,
+        R.REGISTER_INFO_EXPOSURE,
+    ]
     assert default_response_actions("installed_app") == [
-        R.REMOVE_APP_AND_CHECK_DEVICE,
         R.REQUEST_PAYMENT_STOP,
+        R.ISOLATE_PHONE,
+        R.USE_OTHER_DEVICE,
+        R.REMOVE_APP_AND_CHECK_DEVICE,
     ]
     assert default_response_actions("not_yet") == []
+
+
+def test_apply_call_answers_fills_response_actions_only():
+    result = decide_call(
+        transcript_empty=False,
+        verify=_verify(E.INSTITUTION_CLAIM, E.MONEY_REQUEST),
+        number_checks=[],
+        similar=None,
+        failures=[],
+    )
+    assert result.response_actions == []
+
+    answered = apply_call_answers(result, ["sent_money", "not_yet"])
+
+    assert answered.response_actions == [R.REQUEST_PAYMENT_STOP, R.REPORT_112]
+    # 결론·주의·멈출 행동·질문은 답으로 바뀌지 않는다 (v3 §8)
+    assert answered.model_dump(exclude={"response_actions"}) == result.model_dump(
+        exclude={"response_actions"}
+    )
+    assert result.response_actions == []  # 원본은 그대로
+
+
+def test_apply_call_answers_ignores_unknown_options():
+    result = decide_call(
+        transcript_empty=False,
+        verify=_verify(E.INSTITUTION_CLAIM, E.MONEY_REQUEST),
+        number_checks=[],
+        similar=None,
+        failures=[],
+    )
+    assert apply_call_answers(result, ["clicked_link", "unknown"]).response_actions == []
 
 
 # ── 설명 ───────────────────────────────────────────────────

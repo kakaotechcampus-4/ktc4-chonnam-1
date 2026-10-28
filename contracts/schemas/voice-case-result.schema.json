@@ -377,6 +377,31 @@
       "title": "NumberCheck",
       "type": "object"
     },
+    "OfficialContact": {
+      "additionalProperties": false,
+      "description": "상대가 내세운 기관의 공식 대표번호. V1 확인 안내(`verify_line`)에 쓴다.\n\n번호는 대표번호 KB 에서만 온다. 녹음 속 번호는 사기범 번호일 수 있어 쓰지 않는다.",
+      "properties": {
+        "org": {
+          "title": "Org",
+          "type": "string"
+        },
+        "number": {
+          "title": "Number",
+          "type": "string"
+        },
+        "source_url": {
+          "title": "Source Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "org",
+        "number",
+        "source_url"
+      ],
+      "title": "OfficialContact",
+      "type": "object"
+    },
     "Origin": {
       "enum": [
         "message",
@@ -433,6 +458,22 @@
       ],
       "title": "RejectedClaim",
       "type": "object"
+    },
+    "ResponseAction": {
+      "enum": [
+        "contact_gift_card_issuer",
+        "report_112",
+        "request_payment_stop",
+        "contact_card_issuer",
+        "change_password",
+        "register_info_exposure",
+        "isolate_phone",
+        "use_other_device",
+        "remove_app_and_check_device",
+        "delete_downloaded_file"
+      ],
+      "title": "ResponseAction",
+      "type": "string"
     },
     "Scenario": {
       "enum": [
@@ -548,6 +589,13 @@
       "title": "Stop Actions",
       "type": "array"
     },
+    "response_actions": {
+      "items": {
+        "$ref": "#/$defs/ResponseAction"
+      },
+      "title": "Response Actions",
+      "type": "array"
+    },
     "questions": {
       "items": {
         "$ref": "#/$defs/AttachedQuestion"
@@ -575,6 +623,17 @@
       },
       "title": "Number Checks",
       "type": "array"
+    },
+    "official_contact": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OfficialContact"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "similar_cases": {
       "anyOf": [

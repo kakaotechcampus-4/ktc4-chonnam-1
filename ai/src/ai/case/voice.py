@@ -22,6 +22,7 @@ from ai.case.types import (
     IdentityKind,
     InputKind,
     NumberCheck,
+    OfficialContact,
     ReadingSource,
     Scenario,
     Side,
@@ -33,7 +34,7 @@ from ai.case.types import (
 )
 from ai.case.verify import VerifyResult, verify_call
 from ai.kb import search
-from ai.kb.numbers import check_phone_number, find_numbers, resolve_org
+from ai.kb.numbers import check_phone_number, find_numbers, official_contact, resolve_org
 from ai.kb.search import search_voice_cases
 from ai.llm.claims import TIMEOUT_SECONDS as READ_BUDGET_S
 from ai.llm.claims import read_claims
@@ -186,6 +187,20 @@ def _check_numbers(
     return checks, failed
 
 
+def _official_contact(verify: VerifyResult) -> OfficialContact | None:
+    """받아들인 기관 주장 중 대표번호 KB 에 있는 첫 기관. V1 확인 안내에 쓴다.
+
+    번호는 KB 에서만 온다. 누가 말했는지와 상관없이 공식 번호로 직접 확인하라는 안내라서
+    화자 분리 실패 때도 붙인다.
+    """
+    for ident in verify.claims.identity:
+        if ident.listed_institution:
+            contact = official_contact(ident.name) or official_contact(ident.quote)
+            if contact:
+                return contact
+    return None
+
+
 def _fill_sides(source: ReadingSource, verify: VerifyResult) -> None:
     """읽기 뒤에 세그먼트의 side 를 채운다. 화자를 모르면 unknown 으로 둔다."""
     other = verify.other_speaker
@@ -331,6 +346,11 @@ async def _analyze(
         failures=failures,
         reading_status=reading.status,
     )
+    try:
+        result.official_contact = _official_contact(verify)
+    except Exception as exc:
+        # 확인 안내는 부가 정보다. 못 찾으면 FE 가 일반 문장을 쓴다
+        LOGGER.warning("official contact lookup failed: %s", type(exc).__name__)
     if search_miss is not None:
         _set_unchecked(result, UncheckedItem.SIMILAR_CASES, search_miss)
     if number_timeout:
