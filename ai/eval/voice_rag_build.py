@@ -29,6 +29,8 @@ KB_SHARE, DEV_SHARE = 0.6, 0.2
 # Task 1 은 전화번호를 남겼다. 커밋되는 KB·평가셋에는 휴대폰 번호를 남기지 않는다.
 MOBILE_RE = re.compile(r"01[016789][-\s]?\d{3,4}[-\s]?\d{4}")
 MOBILE_MASK = "<전화번호>"
+# 있는 행에만 쓰는 선택 필드. turns 는 화자별 발화, reference_topic_url 은 "주제 참고용, 원문 대조 안 함" 링크다.
+OPTIONAL_KEYS = ("turns", "reference_topic_url")
 EVAL_KEYS = ("id", "label", "type", "group", "split", "source", "source_url", "license", "synthetic", "text")
 
 
@@ -95,6 +97,10 @@ def mask(text: str) -> str:
     return MOBILE_RE.sub(MOBILE_MASK, text)
 
 
+def _masked_turns(turns: Sequence[dict]) -> list[dict]:
+    return [{"speaker": t["speaker"], "text": mask(t["text"])} for t in turns]
+
+
 def _quoted(value: str) -> str:
     # JSON 문자열은 YAML 큰따옴표 스칼라로 그대로 읽힌다. 대본의 따옴표·콜론을 다루지 않아도 된다.
     return json.dumps(value, ensure_ascii=False)
@@ -113,6 +119,7 @@ def render_case(case_id: str, row: dict) -> str:
         f"type_source: {row['type_source']}",
         f"source: {_quoted(row['source'])}",
         f"source_url: {_quoted(row['source_url']) if row['source_url'] else 'null'}",
+        *([f"reference_topic_url: {_quoted(row['reference_topic_url'])}"] if row.get("reference_topic_url") else []),
         f"license: {_quoted(row['license'])}",
         f"synthetic: {'true' if row['synthetic'] else 'false'}",
         f"published: {row['published'] or 'null'}",
@@ -143,6 +150,7 @@ def build(rows: Sequence[dict], cases_dir: Path, dataset: Path) -> tuple[int, in
 
     eval_rows = [
         {key: mask(row[key]) if key == "text" else row.get(key) for key in EVAL_KEYS}
+        | {key: _masked_turns(row[key]) if key == "turns" else row[key] for key in OPTIONAL_KEYS if row.get(key)}
         | {"split": splits[row["group"]]}
         for row in rows
         if splits[row["group"]] != "kb"

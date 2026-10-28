@@ -151,3 +151,19 @@ def test_new_minority_templates_meet_split_floor():
         test = {r["group"] for r in dataset if r["type"] == kind and r["split"] == "test" and r["group"].startswith("synth2-")}
         assert len(kb_n) >= len(dev) + len(test) and len(dev) >= 6 and len(test) >= 6
         assert all(400 <= len(r["text"]) <= 2000 for r in dataset if r["group"] in dev | test)
+
+
+def test_new_synthetic_eval_rows_carry_turns_and_no_source_url():
+    rows = [
+        json.loads(line)
+        for line in voice_rag_build.DATASET.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    new = [row for row in rows if row["group"].startswith("synth2-")]
+    assert new
+    for row in new:
+        assert " ".join(t["text"] for t in row["turns"]) == row["text"]
+        assert {t["speaker"] for t in row["turns"]} <= {"상대", "사용자"}
+        assert row["source_url"] is None
+    # 기존 행에는 선택 필드가 붙지 않는다.
+    assert all("turns" not in row for row in rows if not row["group"].startswith("synth2-"))
