@@ -136,6 +136,43 @@ def test_concurrent_first_calls_parse_kb_once(cases_dir, monkeypatch):
     assert len(results) == 5 and all(result is results[0] for result in results)
 
 
+def test_slow_voice_index_load_does_not_block_other_kb(cases_dir, tmp_path, monkeypatch):
+    # 통화 색인 적재(콜드 약 1.4초)가 락을 쥔 동안 문자 검색이 기다리면 안 된다
+    import threading
+
+    import ai.kb.search as module
+
+    voice_dir = tmp_path / "voice"
+    voice_dir.mkdir()
+    (voice_dir / "v.md").write_text("x", encoding="utf-8")
+    started, release = threading.Event(), threading.Event()
+    real_parse = module._parse_case
+
+    def parse(path):
+        if path.parent == voice_dir:
+            started.set()
+            release.wait(timeout=2)
+            return None
+        return real_parse(path)
+
+    monkeypatch.setattr(module, "_parse_case", parse)
+    slow = threading.Thread(target=lambda: module.load_index(voice_dir))
+    slow.start()
+    started.wait(timeout=1)
+
+    done = []
+    other = threading.Thread(target=lambda: done.append(load_cases(cases_dir)))
+    other.start()
+    other.join(timeout=0.5)
+    blocked = other.is_alive()
+    release.set()
+    slow.join(timeout=2)
+    other.join(timeout=2)
+
+    assert not blocked
+    assert len(done) == 1
+
+
 def test_default_and_explicit_kb_path_share_one_cache():
     from ai.kb.search import CASES_DIR
 
