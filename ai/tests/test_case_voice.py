@@ -560,3 +560,16 @@ def test_gate_drop_does_not_change_conclusion(monkeypatch):
     assert with_cases.similar_cases.matches and without.similar_cases.matches == []
     assert with_cases.conclusion is without.conclusion
     assert with_cases.evidence == without.evidence
+
+
+def test_warm_up_fills_index_even_if_gate_model_fails(monkeypatch):
+    called = []
+    monkeypatch.setattr(voice.search, "warm_up_voice_case_search", lambda: called.append("index") or _COMPLETED)
+
+    def broken():
+        raise OSError("missing model")
+
+    monkeypatch.setattr(voice, "load_model", broken)
+
+    assert voice.warm_up_voice_case_search() == _COMPLETED
+    assert called == ["index"]

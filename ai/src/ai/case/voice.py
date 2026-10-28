@@ -75,9 +75,17 @@ def search_gated(transcript: str) -> CaseSearchResult:
 
 
 def warm_up_voice_case_search() -> CaseSearchResult:
-    """통화 사례 색인과 관문 모델을 기동 때 미리 읽는다(색인 콜드 적재 약 1.4초, 관문 약 30ms)."""
-    load_model()
-    return search.warm_up_voice_case_search()
+    """통화 사례 색인과 관문 모델을 기동 때 미리 읽는다(색인 콜드 적재 약 1.4초, 관문 약 30ms).
+
+    색인을 먼저 채운다. 관문 모델을 읽지 못해도 색인 워밍업은 끝나 있고, 관문 실패는 요청 때
+    사례 미첨부 + unchecked 로 처리된다.
+    """
+    result = search.warm_up_voice_case_search()
+    try:
+        load_model()
+    except Exception as exc:
+        LOGGER.warning("voice gate warm-up failed: %s", type(exc).__name__)
+    return result
 
 
 @dataclass

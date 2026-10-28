@@ -51,7 +51,7 @@ hit@3 은 보이스피싱 질의의 상위 3개(기준값 이상) 중 같은 `ty
 사례를 붙이지 않는다(판정은 바꾸지 않는다). 학습은 sklearn 이 있는 시스템 Python 으로 한다(운영 .venv 에 없다).
 
 ```bash
-<시스템 python> eval/voice_gate_train.py                      # src/ai/kb/voice_gate.json 다시 만들기(C=3, 결정적)
+<시스템 python> eval/voice_gate_train.py                      # src/ai/kb/voice_gate.json 다시 만들기(C=10, 단계 신호 비음수, 결정적)
 python eval/voice_gate_eval.py --extra-normals <로컬 정상 jsonl> --cache <저장소 밖 캐시> [--model <json>] [--contrast]
 python eval/voice_rag_eval.py --dev-only --identity acquaintance --identity-mode score --gate  # 운영 관문 포함 한 줄
 ```

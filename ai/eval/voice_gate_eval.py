@@ -27,7 +27,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import voice_rag_eval as vre
-from ai.case.attach_gate import load_model
+from ai.case.attach_gate import STAGE_NAMES, load_model, stage_features
 from ai.case.voice import IDENTITY_PREFERRED_TYPES
 from ai.case.lexicon import identity_kinds
 from ai.kb import search
@@ -163,6 +163,22 @@ def best_gate(rows, kb, types, scores: dict, max_rate: float, extra_block=None):
     return best
 
 
+_DEVICE = STAGE_NAMES.index("demand_device")
+
+
+def device_pass(rows, scores: dict, g: float) -> str:
+    """앱 설치·원격 제어·메신저 이동 요구가 있는 dev 보이스피싱 중 관문을 넘는 비율(유형별)."""
+    phishing = [r for r in rows if r["label"] == "phishing" and stage_features(r["text"])[_DEVICE]]
+    by_type: dict[str, list[int]] = {}
+    for r in phishing:
+        entry = by_type.setdefault(r["type"], [0, 0])
+        entry[0] += scores[_key(r)] >= g
+        entry[1] += 1
+    passed = sum(p for p, _ in by_type.values())
+    parts = ", ".join(f"{t} {p}/{n}" for t, (p, n) in sorted(by_type.items()))
+    return f"기기·앱 요구 보이스피싱 관문 통과 {passed}/{len(phishing)} ({parts})"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="통화 사례 첨부 관문 비교(dev)")
     parser.add_argument("--extra-normals", type=Path)
@@ -207,6 +223,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             g, t, hit3, macro, attach, blocked = best_gate(rows, kb, types, scores, args.max_normal_rate, extra)
             line, detail = full_line(f"관문 {path.stem} g={g:.2f}{suffix}", rows, kb, types, blocked, t)
             print(f"<!-- {detail} -->\n{line}")
+            if not suffix:
+                print(f"<!-- {device_pass(rows, scores, g)} -->")
             if args.curve and not suffix:
                 for gg in GATE_GRID[::5]:
                     tt, h, m, a = select(rows, kb, types, lambda r, gg=gg: scores[_key(r)] < gg, args.max_normal_rate)

@@ -5,7 +5,7 @@
 | `smishing.jsonl` | 실물 스미싱. KB `team_collected` 와 같은 원본에서 KB에 등재하지 않은 분량. 인터넷 크롤링분과 팀원 수신분이 섞여 건별 구분·출처 링크 없음(`ai/src/ai/kb/README.md` 의 "출처 현황") |
 | `benign.jsonl` | 정상 알림 문자. 택배·쇼핑몰 실물 5건 + 금융·공공기관·통신·보험 등 합성 16건(2026-10-09 추가, 아래 "현재 한계" 참고) |
 | `voice_rag.jsonl` | 통화 사례 검색 평가셋. 보이스피싱 249건 + 정상 117건(합성), `split` 은 dev·test. `eval/voice_rag_build.py` 가 만든다(`src/ai/kb/voice_cases/README.md`) |
-| `voice_gate_train.jsonl` | 사례 첨부 관문 학습 전용 합성 정상 통화 105건(정상 유형 6종 × 틀 12개 이상, `split: train`). 평가·KB 에 쓰지 않는다. `D:/voice/scripts/gate_train.py` 가 만든다 |
+| `voice_gate_train.jsonl` | 사례 첨부 관문 학습 전용 합성 정상 통화 131건(대화형 105건: 정상 유형 6종 × 틀 12개 이상, 독백형 26건: 틀 13개·1,500~5,000자, `kind` 로 구분, `split: train`). 평가·KB 에 쓰지 않는다. `D:/voice/scripts/gate_train.py` 가 만든다 |
 
 각 줄은 `{"text": "...", "label": "smishing" | "benign"}` 이다. `benign.jsonl` 에는
 검색용 `message` 도 있다(아래 [`text` 와 `message`](#text-와-message) 참조).

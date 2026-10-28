@@ -16,11 +16,11 @@ from voice_gate_eval import PARITY_TEXTS, TRAIN_NORMALS  # noqa: E402
 # eval/voice_gate_train.py 가 배포 모델을 만들 때 sklearn predict_proba 로 출력한 값.
 # 모델을 다시 학습하면 그 출력으로 바꾼다(이 테스트는 sklearn 없이 돈다).
 SKLEARN_SCORES = (
-    0.9944474253,
-    0.7762176866,
-    0.3202426404,
-    0.3663868652,
-    0.6577409907,
+    0.9968786966,
+    0.9118354759,
+    0.2709970159,
+    0.3041982779,
+    0.7597242729,
 )
 
 
@@ -36,6 +36,8 @@ def test_model_file_is_small_and_matches_feature_definition():
     assert tuple(data["stage_names"]) == gate.STAGE_NAMES
     # 배포 가중치는 저장소에 둘 수 있는 자료(KB 보이스피싱 + 학습 전용 합성 정상)로만 만든다.
     assert set(data["trained_on"]) == {"positives", "synthetic_normals"}
+    # 단계 신호는 모두 수법이라 정상 쪽 근거(음수 계수)가 되지 않게 학습한다.
+    assert all(value >= 0 for value in data["stage"].values())
 
 
 def test_mismatched_model_is_rejected():
@@ -79,11 +81,16 @@ def test_gate_training_normals_are_train_only_and_disjoint_from_eval_and_kb():
     groups_by_type: dict[str, set[str]] = {}
     for r in rows:
         groups_by_type.setdefault(r["type"], set()).add(r["group"])
-        assert 400 <= len(r["text"]) <= 2000
+        low, high = (1500, 5000) if r.get("kind") == "monologue" else (400, 2000)
+        assert low <= len(r["text"]) <= high
         assert "AI Hub" not in r["text"] + r["source"] + r["license"]
         assert not voice_rag_build.MOBILE_RE.search(r["text"])
     for kind in ("family", "bank_service", "delivery", "public_office", "police_real", "other_normal"):
         assert len(groups_by_type[kind]) >= 12
+    # 길고 한 사람만 말하는 독백형 정상(실제 정상 독백에 사례가 붙는 것을 줄이려고 더했다)
+    monologues = [r for r in rows if r.get("kind") == "monologue"]
+    assert len({r["group"] for r in monologues}) >= 12
+    assert all({t["speaker"] for t in r["turns"]} == {"상대"} for r in monologues)
     eval_groups = {r["group"] for r in _rows(voice_rag_build.DATASET)}
     kb_text = "".join(p.read_text(encoding="utf-8") for p in voice_rag_build.VOICE_CASES_DIR.glob("VC-*.md"))
     train_groups = {r["group"] for r in rows}

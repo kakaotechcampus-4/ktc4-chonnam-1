@@ -160,11 +160,12 @@ _MODELS: dict[Path, GateModel] = {}
 
 def load_model(path: Path = MODEL_PATH) -> GateModel:
     """프로세스 수명 동안 캐시한다. 동시에 들어온 첫 호출도 한 번만 읽는다."""
+    key = Path(path).resolve()
     with _LOCK:
-        model = _MODELS.get(path)
+        model = _MODELS.get(key)
         if model is None:
-            model = model_from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
-            _MODELS[path] = model
+            model = model_from_dict(json.loads(key.read_text(encoding="utf-8")))
+            _MODELS[key] = model
         return model
 
 
