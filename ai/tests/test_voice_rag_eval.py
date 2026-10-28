@@ -249,3 +249,17 @@ def test_prefer_types_reorders_only_above_threshold_and_keeps_no_claim_order():
     assert [m.case_id for m in filtered] == ["VC-3"]
     # 주장이 없으면 기준값 이상 후보를 기존 순서대로
     assert voice_rag_eval.prefer_types(matches, frozenset(), TYPES, 0.2, "boost", 0.1) == matches[:2]
+
+
+def test_apply_gate_drops_matches_below_gate(monkeypatch):
+    class Fake:
+        def score(self, text):
+            return 0.95 if "피싱" in text else 0.1
+
+    monkeypatch.setattr(voice_rag_eval, "load_model", lambda: Fake())
+    rows = [
+        voice_rag_eval.RowResult({"text": "피싱 대본"}, [_match("VC-1", 0.3)], 0.0),
+        voice_rag_eval.RowResult({"text": "정상 대본"}, [_match("VC-1", 0.3)], 0.0),
+    ]
+    gated = voice_rag_eval.apply_gate(rows, 0.9)
+    assert [len(r.matches) for r in gated] == [1, 0]

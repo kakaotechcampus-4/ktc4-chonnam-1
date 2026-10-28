@@ -25,6 +25,7 @@ from pathlib import Path
 import yaml
 
 import rag_metrics as metrics
+from ai.case.attach_gate import load_model
 from ai.case.lexicon import identity_kinds
 from ai.case.types import IdentityKind
 from ai.case.voice import IDENTITY_PREFERRED_TYPES
@@ -205,6 +206,15 @@ def query_text(row: dict, query_side: str = "all") -> str:
         if other:
             return "\n".join(other)
     return row["text"]
+
+
+def apply_gate(results: Sequence[RowResult], gate_min: float, query_side: str = "all") -> list[RowResult]:
+    """운영 관문(ai.case.attach_gate)과 같다. 관문 점수가 gate_min 미만인 질의는 사례를 붙이지 않는다."""
+    model = load_model()
+    return [
+        RowResult(r.row, list(r.matches) if model.score(query_text(r.row, query_side)) >= gate_min else [], r.seconds)
+        for r in results
+    ]
 
 
 def run_search(
@@ -470,6 +480,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--identity-mode", choices=("filter", "boost", "score"), default="score")
     parser.add_argument("--identity-boost", type=float, default=search.VOICE_IDENTITY_BOOST, help="boost 일 때 더할 유사도")
     parser.add_argument("--extra-normals", type=Path, help="로컬 정상 평가셋(jsonl). dev/test 정상 질의에 더한다")
+    parser.add_argument(
+        "--gate", type=float, nargs="?", const=search.VOICE_GATE_MIN, help="사례 첨부 관문 기준(값 없이 주면 운영 값)"
+    )
     parser.add_argument("--max-normal-rate", type=float, default=MAX_NORMAL_RATE)
     args = parser.parse_args(argv)
     if not args.dev_only and not args.label:
@@ -502,6 +515,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         if args.identity_mode == "score":
             fixed = None
+    if args.gate is not None:
+        # 관문이 붙일지를 바꾸므로 기준값은 다시 고른다
+        results, fixed = apply_gate(results, args.gate, args.query_side), None
     evaluation = evaluate(
         results, types, include_test=not args.dev_only, max_rate=args.max_normal_rate, threshold=fixed
     )
@@ -509,7 +525,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"문자 n-gram {ngram_sizes} TF-IDF 코사인, TF {'1+ln(tf)' if sublinear_tf else '원 빈도'}, "
         f"KB 조각 {args.chunk or '없음(대본 전체)'}, 질의 {f'앞 {args.query_head}자' if args.query_head else '대본 전체'}"
         f"{', 상대 발화만(turns 없으면 전체)' if args.query_side == 'other' else ''}"
-        f"{f', 신원 {args.identity} {args.identity_mode}' + f' +{args.identity_boost}' if args.identity else ''}, "
+        f"{f', 신원 {args.identity} {args.identity_mode}' + f' +{args.identity_boost}' if args.identity else ''}"
+        f"{f', 관문 >= {args.gate}' if args.gate is not None else ''}, "
         f"정상 부착 상한 {_pct(args.max_normal_rate)}"
     )
     if args.dev_only:

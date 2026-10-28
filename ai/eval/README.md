@@ -44,3 +44,17 @@ python eval/voice_rag_eval.py --label <방식>                         # test �
 hit@3 은 보이스피싱 질의의 상위 3개(기준값 이상) 중 같은 `type` 사례가 있는 비율이다. 기준값은 dev 정상
 통화 부착률 5% 이하가 되는 가장 낮은 값이고, 정한 값을 `search.VOICE_MIN_SIMILARITY` 에 적는다.
 조정 기록은 `reports/2026-10-28-voice-rag-tuning.md`.
+
+### 사례 첨부 관문
+
+`ai.case.attach_gate` 는 대본이 보이스피싱 통화와 같은지(0~1) 점수를 내고, `search.VOICE_GATE_MIN` 미만이면
+사례를 붙이지 않는다(판정은 바꾸지 않는다). 학습은 sklearn 이 있는 시스템 Python 으로 한다(운영 .venv 에 없다).
+
+```bash
+<시스템 python> eval/voice_gate_train.py                      # src/ai/kb/voice_gate.json 다시 만들기(C=3, 결정적)
+python eval/voice_gate_eval.py --extra-normals <로컬 정상 jsonl> --cache <저장소 밖 캐시> [--model <json>] [--contrast]
+python eval/voice_rag_eval.py --dev-only --identity acquaintance --identity-mode score --gate  # 운영 관문 포함 한 줄
+```
+
+학습 음성은 `datasets/voice_gate_train.jsonl`(학습 전용 합성 정상, `D:/voice/scripts/gate_train.py` 가 만든다)이다.
+결과는 `reports/2026-10-28-voice-rag-minority.md` "Task 6".

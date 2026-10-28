@@ -43,10 +43,14 @@ DEFAULT_MIN_SIMILARITY = 0.2345
 # 낮게 나오므로 기준값도 스미싱과 따로 둔다. 바꾸면 평가를 다시 돌린다.
 VOICE_NGRAM_SIZES: tuple[int, ...] = (3,)
 VOICE_SUBLINEAR_TF = False
-VOICE_MIN_SIMILARITY = 0.0588
+# 사례 첨부 관문(ai.case.attach_gate)과 함께 dev 에서 고른 값(실제 정상 포함, 정상 부착 5% 상한).
+# 관문이 정상 통화를 거르므로 유사도만 쓸 때(0.1122)보다 낮다. ai/eval/reports/2026-10-28-voice-rag-minority.md "Task 6".
+VOICE_MIN_SIMILARITY = 0.0723
 # 지인 사칭 어휘가 나오면 가족 사칭·납치 사례 점수에 더한다. 점수 자체에 더하므로 기준값 비교에도
 # 들어간다(순서만 바꾸는 방식은 dev 에서 이득이 0 이었다). 값은 ai/eval/reports/2026-10-28-voice-rag-minority.md.
 VOICE_IDENTITY_BOOST = 0.03
+# 관문 점수(보이스피싱 같음, 0~1)가 이 값 미만이면 사례를 붙이지 않는다. 판정에는 쓰지 않는다.
+VOICE_GATE_MIN = 0.90
 
 
 @dataclass(frozen=True)

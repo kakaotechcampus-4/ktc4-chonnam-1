@@ -23,7 +23,7 @@ from ai.case.types import (
     UncheckedReason,
 )
 from ai.kb.numbers import check_phone_number
-from ai.types import AnalysisStatus, CaseSearchResult, FailureCode
+from ai.types import AnalysisStatus, CaseMatch, CaseSearchResult, FailureCode
 
 CASES_DIR = Path(__file__).parent / "fixtures" / "cases" / "voice"
 CASE_FILES = sorted(CASES_DIR.glob("*.yaml"))
@@ -481,7 +481,82 @@ def test_search_by_identity_prefers_family_types_only_with_acquaintance_words(mo
     assert seen == [{"family_impersonation", "kidnapping"}, set(), set()]
 
 
-def test_default_runtime_search_is_identity_aware():
+def test_default_runtime_search_is_identity_aware_and_gated():
     from ai.case import voice
 
-    assert voice.VoiceRuntime().search_cases is voice.search_by_identity
+    assert voice.VoiceRuntime().search_cases is voice.search_gated
+
+
+_FOUND = CaseSearchResult(
+    status=AnalysisStatus.COMPLETED,
+    matches=[CaseMatch(case_id="VC-0001", similarity=0.2, matched_variant="대본")],
+)
+
+
+def _gate(monkeypatch, score):
+    calls = []
+
+    def fake_score(text):
+        calls.append(text)
+        if isinstance(score, Exception):
+            raise score
+        return score
+
+    monkeypatch.setattr(voice, "search_by_identity", lambda text: _FOUND)
+    monkeypatch.setattr(voice, "attach_score", fake_score)
+    return calls
+
+
+def test_gate_below_min_drops_cases_but_keeps_completed(monkeypatch):
+    _gate(monkeypatch, voice.search.VOICE_GATE_MIN - 0.01)
+
+    result = voice.search_gated("대본")
+
+    assert result.status is AnalysisStatus.COMPLETED and result.matches == []
+
+
+def test_gate_at_or_above_min_keeps_cases(monkeypatch):
+    _gate(monkeypatch, voice.search.VOICE_GATE_MIN)
+
+    assert voice.search_gated("대본") == _FOUND
+
+
+def test_gate_is_skipped_when_nothing_to_attach(monkeypatch):
+    calls = _gate(monkeypatch, 0.0)
+    monkeypatch.setattr(voice, "search_by_identity", lambda text: _COMPLETED)
+
+    assert voice.search_gated("대본") == _COMPLETED
+    assert calls == []
+
+
+def test_gate_failure_is_unchecked_failed_and_decision_unchanged(monkeypatch):
+    case = _v1()
+    baseline = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, Calls())))
+    _gate(monkeypatch, RuntimeError("model broken"))
+    runtime = _runtime(case, Calls())
+    runtime.search_cases = voice.search_gated
+
+    result = asyncio.run(analyze_call(_transcript(case), runtime=runtime))
+
+    items = {(u.item, u.reason) for u in result.unchecked}
+    assert (UncheckedItem.SIMILAR_CASES, UncheckedReason.FAILED) in items
+    assert result.similar_cases is None
+    # 관문은 붙일지만 정한다. 결론·근거는 사례 검색이 비었을 때와 같다.
+    assert result.conclusion is baseline.conclusion
+    assert result.evidence == baseline.evidence
+
+
+def test_gate_drop_does_not_change_conclusion(monkeypatch):
+    case = _v1()
+    _gate(monkeypatch, voice.search.VOICE_GATE_MIN + 0.05)
+    attached = _runtime(case, Calls())
+    attached.search_cases = voice.search_gated
+    with_cases = asyncio.run(analyze_call(_transcript(case), runtime=attached))
+    _gate(monkeypatch, voice.search.VOICE_GATE_MIN - 0.05)
+    dropped = _runtime(case, Calls())
+    dropped.search_cases = voice.search_gated
+    without = asyncio.run(analyze_call(_transcript(case), runtime=dropped))
+
+    assert with_cases.similar_cases.matches and without.similar_cases.matches == []
+    assert with_cases.conclusion is without.conclusion
+    assert with_cases.evidence == without.evidence

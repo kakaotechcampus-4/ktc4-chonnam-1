@@ -3,6 +3,7 @@ import pytest
 from ai.case.lexicon import (
     INSTITUTION_PATTERN,
     classify_demand,
+    demand_kinds,
     pick_other_speaker,
     read_with_lexicon,
 )
@@ -133,3 +134,9 @@ def test_acquaintance_pattern_ignores_lookalike_words():
         assert not ACQUAINTANCE_PATTERN.search(text), text
     for text in ("엄마 나야", "엄마, 폰 고장났어", "아빠가 사고 났대", "이모한테 말하지 마", "나 아들인데 급해", "친구 계좌로"):
         assert ACQUAINTANCE_PATTERN.search(text), text
+
+
+def test_demand_kinds_collects_each_sentence_demand():
+    found = demand_kinds("상품권 사서 보내 주세요. 인증번호도 불러 주시고요.\n현금은 안 돼요")
+    assert found == {DemandKind.GIFT_CARD, DemandKind.AUTH_CODE, DemandKind.CASH_WITHDRAWAL}
+    assert demand_kinds("안녕하세요 날씨가 좋네요") == set()

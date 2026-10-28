@@ -92,6 +92,11 @@ def classify_demand(sentence: str) -> DemandKind | None:
     return None
 
 
+def demand_kinds(text: str) -> set[DemandKind]:
+    """글의 문장마다 classify_demand 로 고른 요구 종류. 사례 첨부 관문이 수법 단계 신호로 쓴다."""
+    return {kind for s in _sentences(text) if (kind := classify_demand(s)) is not None}
+
+
 def _hit_count(text: str) -> int:
     """요구·기관·관계 어휘에 걸린 문장 수. 상대 화자를 고르는 기준이다."""
     return sum(

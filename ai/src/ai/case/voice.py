@@ -12,6 +12,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from ai.case.attach_gate import attach_score, load_model
 from ai.case.gate import decide_call
 from ai.case.lexicon import identity_kinds, read_with_lexicon
 from ai.case.privacy import mask_transcript
@@ -31,6 +32,7 @@ from ai.case.types import (
     VoiceCaseResult,
 )
 from ai.case.verify import VerifyResult, verify_call
+from ai.kb import search
 from ai.kb.numbers import check_phone_number, find_numbers, resolve_org
 from ai.kb.search import search_voice_cases
 from ai.llm.claims import TIMEOUT_SECONDS as READ_BUDGET_S
@@ -60,13 +62,31 @@ def search_by_identity(transcript: str) -> CaseSearchResult:
     return search_voice_cases(transcript, preferred_types=preferred)
 
 
+def search_gated(transcript: str) -> CaseSearchResult:
+    """신원 어휘 검색 뒤, 사례 첨부 관문 점수가 VOICE_GATE_MIN 미만이면 사례를 붙이지 않는다.
+
+    관문은 붙일지만 정한다(판정·결론·근거는 그대로). 붙을 사례가 없으면 관문을 돌리지 않는다.
+    관문 예외는 그대로 올린다. _search 가 사례 미첨부 + similar_cases unchecked(failed)로 처리한다.
+    """
+    found = search_by_identity(transcript)
+    if found.matches and attach_score(transcript) < search.VOICE_GATE_MIN:
+        return found.model_copy(update={"matches": []})
+    return found
+
+
+def warm_up_voice_case_search() -> CaseSearchResult:
+    """통화 사례 색인과 관문 모델을 기동 때 미리 읽는다(색인 콜드 적재 약 1.4초, 관문 약 30ms)."""
+    load_model()
+    return search.warm_up_voice_case_search()
+
+
 @dataclass
 class VoiceRuntime:
     """바깥 의존을 바꿔 끼우는 자리. 테스트는 가짜로 바꾼다."""
 
     read_claims: Callable[[ReadingSource], Awaitable[ClaimReadingResult]] = read_claims
     # 동기 함수라 asyncio.to_thread 로 부른다
-    search_cases: Callable[[str], CaseSearchResult] = search_by_identity
+    search_cases: Callable[[str], CaseSearchResult] = search_gated
     check_phone_number: Callable[[str, str], NumberCheck] = check_phone_number
 
 

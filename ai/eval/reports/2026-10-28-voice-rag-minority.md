@@ -105,3 +105,67 @@
 - 운영 반영: `ai.case.voice.search_by_identity` 가 대본의 지인 어휘를 보고 `search_voice_cases(preferred_types=...)` 에 가족 사칭·납치를 넘긴다. 어휘표만 쓰므로 읽기(LLM)와 나란히 돌리는 구조가 그대로다. 평가와 운영이 `search.boost_types` 를 함께 쓴다. `decide_call` 은 바꾸지 않았다.
 - 한계: 점수에 가점을 주므로 붙일지의 결정도 바뀐다(정상 부착은 기준값을 다시 골라 5% 이내로 맞췄다). 지인 어휘는 정상 대화에도 흔해(`엄마`·`친구`) dev 의 family 정상(17건)이 이미 부착률이 높다. 실제 정상 test 는 보지 않았다. 코드의 `VOICE_MIN_SIMILARITY`(0.0588)는 이번 기준값 재선택에 맞춰 바꾸지 않았다. 가족 사칭은 KB 에 28건뿐이라 dev 표본(16건)이 작다.
 - 재현: `cd ai && python eval/voice_rag_eval.py --dev-only --identity acquaintance --identity-mode score --identity-boost 0.03 [--extra-normals <로컬 정상 jsonl>]`
+
+## Task 6: 사례 첨부 관문 (보이스피싱 같음 점수)
+
+검색에 정상 사례가 없어 유사도 기준값 하나로는 실제 정상 통화(은행·민원 상담)와 보이스피싱을 가르지 못했다. 대본이 보이스피싱 통화와 같은지 점수를 내는 선형 분류기(관문)를 두고, 점수가 기준 미만이면 사례를 붙이지 않는다. 판정(`decide_call`)·결론·근거는 바꾸지 않는다.
+
+- 모델: 문자 n-gram(2~4) TF-IDF 2만 개 + 어절 TF-IDF 4천 개 + 수법 단계 신호 8개(기관·지인 신원 어휘, 요구 종류 셋[돈·비밀 정보·기기/메신저], 끊지 못하게 하는 말, 급박·비밀 유지, 구실) → 로지스틱 회귀(class_weight balanced). TF 1+ln(tf), 묶음마다 L2 정규화.
+- 배포 가중치 학습 데이터(저장소에 둘 수 있는 것만): 양성 = voice KB 보이스피싱 483건, 음성 = 학습 전용 합성 정상 105건(`datasets/voice_gate_train.jsonl`, 정상 유형 6종 × 틀 12~13개, `split: train`, KB·dev·test 와 group 겹침 0). dev/test 질의는 학습에 쓰지 않았다.
+- 학습은 sklearn(시스템 Python, `eval/voice_gate_train.py`), 운영 추론은 순수 Python(`ai.case.attach_gate`, 모델 `src/ai/kb/voice_gate.json` 1.26MB). 같은 입력에서 sklearn 점수와 소수 6자리까지 같다(테스트).
+- 선택: dev(실제 정상 포함, qa_written 제외) 정상 부착률 ≤ 5% 에서 hit@3, 다음으로 유형 평균. 관문 기준 g 를 0.01 간격으로 훑고 g 마다 유사도 기준값을 다시 골랐다. 검색은 Task 5 운영 설정(지인 score +0.03) 그대로.
+- 대조 방식(옛 Task 6): 같은 합성 정상 105건을 따로 색인해, 정상 사례가 top-1 이거나(top1) 상위 3개 중 2개 이상이면(majority) 붙이지 않는다.
+
+### dev, 실제 정상 포함 (보이스피싱 173건, 선택 정상 2,595건)
+
+| 설정 | 유사도 기준값 | hit@3 | hit@1 | MRR | 유형 평균 hit@3 | 정상 부착률 | 유형별 hit@3 |
+|---|---|---|---|---|---|---|---|
+| (a) 기준선(유사도만, Task 5) | 0.1122 | 44.5% | 42.8% | 0.436 | 35.4% | 4.9% | account_recruitment 0/16, family_impersonation 6/16, institution_impersonation 46/82, kidnapping 4/16, loan_fraud 15/28, other_impersonation 6/15 |
+| (c) 대조 top1 | 0.1119 | 44.5% | 42.8% | 0.436 | 35.4% | 5.0% | (a)와 같음 |
+| (c) 대조 majority | 0.1122 | 44.5% | 42.8% | 0.436 | 35.4% | 4.9% | (a)와 같음 |
+| (b) 관문 C=0.1, g=0.55 | 0.0802 | 57.2% | 55.5% | 0.564 | 41.4% | 5.0% | |
+| (b) 관문 C=0.3, g=0.70 | 0.0719 | 59.0% | 56.1% | 0.575 | 42.0% | 5.0% | |
+| (b) 관문 C=1, g=0.82 | 0.0723 | 60.1% | 57.2% | 0.587 | 43.2% | 5.0% | |
+| **(b) 관문 C=3, g=0.90** | **0.0723** | **61.3%** | 58.4% | 0.598 | **45.4%** | 5.0% | account_recruitment 0/16, family_impersonation 6/16, institution_impersonation 69/82, kidnapping 8/16, loan_fraud 17/28, other_impersonation 6/15 |
+| (b) 관문 C=10, g=0.89 | 0.0881 | 60.1% | 57.2% | 0.587 | 47.1% | 5.0% | account_recruitment 0/16, family_impersonation 6/16, institution_impersonation 62/82, kidnapping 6/16, loan_fraud 22/28, other_impersonation 8/15 |
+| (b) 관문 C=1, 단계 신호 없음, g=0.78 | 0.0882 | 56.1% | 53.2% | 0.546 | 38.5% | 5.0% | |
+| (d) 관문 C=3 g=0.90 + 대조 top1/majority | 0.0722~0.0723 | 61.3% | 58.4% | 0.598 | 45.4% | 5.0% | (b) C=3 와 같음 |
+
+채택 설정(C=3, g=0.90)의 정상 부착 분해: 출처 실제 5.2%(2,491) · 합성 0.0%(104) / 종류 call 1.4%(1,741) · monologue 13.9%(750) · qa_written 0.0%(509) / 유형 bank_service 1.0% · public_office 0.8% · other_normal 8.9% · family 0.0%.
+
+프로젝트 합성 정상만 쓰는 dev 줄(`voice_rag_eval.py --dev-only --identity acquaintance --identity-mode score --gate`, 관문 기준은 운영 값 0.90 고정, 유사도 기준값만 다시 고름):
+
+| 설정 | 유사도 기준값 | hit@3 | 유형 평균 hit@3 | 정상 부착률 | 유형별 hit@3 |
+|---|---|---|---|---|---|
+| 관문 없음(Task 5) | 0.0730 | 77.5% | 67.6% | 4.8% | account_recruitment 4/16, family_impersonation 8/16, institution_impersonation 73/82, kidnapping 11/16, loan_fraud 26/28, other_impersonation 12/15 |
+| 관문 0.90 | 0.0000 | 64.7% | 48.3% | 3.8% | account_recruitment 0/16, family_impersonation 6/16, institution_impersonation 73/82, kidnapping 10/16, loan_fraud 17/28, other_impersonation 6/15 |
+
+합성 정상만 보면 관문이 손해다. 관문 0.90 을 넘는 dev 보이스피싱은 118/173건(68%)뿐이다. 유형별 통과: 기관 사칭 74/82, 납치 10/16, 대출 빙자 18/28, 가족 사칭 6/16, 기타 사칭 6/15, 계좌 모집 4/16. 소수 유형은 학습 양성(KB)이 적어 점수가 낮다. 실제 정상 포함 줄에서는 유사도 기준값을 0.1122 에서 0.0723 으로 낮출 수 있어 이 손실보다 이득이 크다. 선택 기준(실제 정상 포함 dev)에 따라 채택했다.
+
+C=3 의 관문 기준별 hit@3(유사도 기준값은 g 마다 다시 고름): g 0.79~0.93 구간에서 56.6~61.3%, g=0.95 에서 45.1% 로 떨어진다. g=0.90 은 이 구간의 최고점이다.
+
+### 로컬 비교 실험: 실제 정상으로 학습한 관문 (배포 안 함)
+
+실제 정상(AI Hub·KorCCVi) dev 를 group 해시로 반씩 나눠, 한쪽(1,497건)을 음성에 더해 학습하고 다른 쪽(선택 1,268건 + 합성 104건)으로 쟀다. 같은 표본에서 배포용 관문도 함께 쟀다. 가중치는 저장소 밖에만 두었다.
+
+| 설정 (dev, 실제 정상 eval 절반) | 유사도 기준값 | hit@3 | 유형 평균 hit@3 | 정상 부착률 | 실제 / 합성 정상 부착 |
+|---|---|---|---|---|---|
+| 기준선(유사도만) | 0.1109 | 44.5% | 35.4% | 5.0% | 5.2% / 1.9% |
+| 대조 top1 | 0.1097 | 45.1% | 35.6% | 5.0% | 5.2% / 1.9% |
+| 배포용 관문 C=1, g=0.71 | 0.0872 | 60.7% | 48.6% | 5.0% | 5.4% / 0.0% |
+| 배포용 관문 C=3, g=0.80 | 0.0875 | 61.3% | 49.2% | 5.0% | 5.4% / 0.0% |
+| 배포용 관문 C=3 + 대조 top1 | 0.0871 | 61.8% | 49.4% | 5.0% | 5.4% / 0.0% |
+| 실제 정상 학습 관문 C=1, g=0.20 | 0.0381 | 94.2% | 90.9% | 5.0% | 1.7% / 45.2% |
+| 실제 정상 학습 관문 C=3, g=0.13 | 0.0381 | 94.2% | 90.9% | 5.0% | 1.3% / 50.0% |
+
+- 실제 정상으로 학습하면 같은 출처의 실제 정상은 거의 막지만(1~2%), 합성 hard negative(가족 급전 부탁·진짜 경찰 연락 등)는 절반가량 붙는다(family 15/17, police_real 8/14 부착). 정상 부착 5% 상한이 실제 정상 1,268건에 지배돼 합성 104건의 부착이 상한에 거의 반영되지 않기 때문이다. 수치가 높은 것은 학습·평가 정상이 같은 출처(AI Hub 상담 녹취)라는 점도 크다.
+- AI Hub 파생 가중치의 배포 조건은 확인되지 않았다. 배포 여부는 사용자 결정으로 넘긴다.
+
+### 판정
+
+- **관문 채택(C=3, 관문 기준 0.90, 유사도 기준값 0.0723).** 기준선 대비 hit@3 44.5% → 61.3%, 유형 평균 35.4% → 45.4%, 정상 부착 5.0% 유지. 수법 단계 신호를 빼면(C=1) 60.1% → 56.1%, 유형 평균 43.2% → 38.5% 라 단계 신호를 함께 쓴다.
+- **대조 방식 채택 안 함.** 단독으로는 기준선과 같고(합성 정상 사례가 보이스피싱 사례보다 위로 오는 실제 정상이 거의 없다), 관문에 더해도 전체 dev 에서 변화가 없다(eval 절반에서 +0.5%p, 1건). 색인을 하나 더 두는 비용에 비해 이득이 없다.
+- 운영 반영: `ai.case.voice.search_gated` 가 지인 가점 검색 뒤 붙을 사례가 있을 때만 관문을 돌려 `VOICE_GATE_MIN`(0.90) 미만이면 사례를 비운다. 관문 예외는 사례 미첨부 + `similar_cases` unchecked(failed). `VOICE_MIN_SIMILARITY` 0.0588 → 0.0723. 기동 워밍업(`ai.case.warm_up_voice_case_search`)이 관문 모델도 읽는다.
+- 지연: 관문 추론 dev 2,768건(대본 최대 약 1.5만 자) p50 1.6ms · p95 5.9ms · 최대 14.3ms, 모델 적재 약 30ms(워밍업). 사례 검색 예산 1초 안이다.
+- 한계: monologue(KorCCVi 정상 독백) 부착이 1.6% → 13.9% 로 올랐다. 학습 음성에 독백 문체가 없고 KB 의 KorCCVi 보이스피싱 대본과 문체가 같아서로 보인다(call 은 6.6% → 1.4%). 합성 정상 dev 부착 0% 는 학습 합성과 같은 문체라 낙관적인 값이다. 관문 기준 g=0.90 은 dev 최고점이라 test 에서 더 낮게 나올 수 있다. 관문이 dev 보이스피싱 32%(55/173)를 막아 합성 정상만 보는 줄은 hit@3 77.5% → 64.7% 로 떨어진다. 계좌 모집은 실제 정상 포함 줄에서 여전히 0/16 이다(합성만 줄에서도 4/16 → 0/16). test 는 Task 7 에서 한 번 잰다.
+- 재현: `python eval/voice_gate_eval.py --extra-normals <로컬 정상 jsonl> --cache <캐시> --contrast --model src/ai/kb/voice_gate.json`, `python eval/voice_rag_eval.py --dev-only --identity acquaintance --identity-mode score --gate [--extra-normals <로컬 정상 jsonl>]`.
