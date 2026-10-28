@@ -12,6 +12,7 @@ from pathlib import Path
 
 from openai import (
     APIResponseValidationError,
+    APIStatusError,
     APITimeoutError,
     AsyncOpenAI,
     LengthFinishReasonError,
@@ -133,6 +134,15 @@ async def analyze_signals(
     except (ValidationError, APIResponseValidationError, LengthFinishReasonError) as exc:
         LOGGER.warning("signal extraction failed: %s", type(exc).__name__)
         return _failure(FailureCode.INVALID_OUTPUT)
+    except APIStatusError as exc:
+        # 예외 클래스 이름과 상태 코드만 남긴다 — exc.code/exc.type/
+        # exc.request_id/exc.message/exc.body는 제공자가 보낸 값이라 민감
+        # 정보 노출 가능성을 더 줄이기 위해 남기지 않는다.
+        LOGGER.warning(
+            "signal extraction failed: %s status=%s",
+            type(exc).__name__, exc.status_code,
+        )
+        return _failure(FailureCode.LLM_ERROR)
     except Exception as exc:
         LOGGER.warning("signal extraction failed: %s", type(exc).__name__)
         return _failure(FailureCode.LLM_ERROR)
