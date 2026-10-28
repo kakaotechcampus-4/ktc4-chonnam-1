@@ -284,6 +284,42 @@ def test_whisper_request_and_both_response_shapes(body):
     assert b'filename="call.m4a"' in raw and b"Content-Type: audio/" in raw
 
 
+@pytest.mark.parametrize(
+    "base", ["https://mlapi.run/stt-id", "https://mlapi.run/stt-id/"]
+)
+def test_base_url_is_endpoint_root_without_v1(monkeypatch, base):
+    """BE 연동 지침의 형식: STT·DIARIZE_BASE_URL 은 /v1 없이 넣는다. 코드가 /v1/... 를 붙인다."""
+    monkeypatch.setenv("STT_BASE_URL", base)
+    monkeypatch.setenv("DIARIZE_BASE_URL", base.replace("stt-id", "dia-id"))
+    seen: list[httpx.Request] = []
+
+    def handler(request):
+        seen.append(request)
+        if request.url.path.endswith("/audio/transcriptions"):
+            return httpx.Response(200, json={"text": "안녕."})
+        return httpx.Response(200, text=_sse('{"lines": [{"id": 0, "speaker": "화자1"}]}'))
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    asyncio.run(transcribe_llm.transcribe_audio(b"x", "a.m4a", client=client))
+    asyncio.run(diarize_llm.pick_speakers(["가."], client=client))
+
+    assert [str(r.url) for r in seen] == [
+        "https://mlapi.run/stt-id/v1/audio/transcriptions",
+        "https://mlapi.run/dia-id/v1/messages",
+    ]
+
+
+def test_base_url_copied_from_llm_base_url_doubles_v1(monkeypatch):
+    """LLM_BASE_URL(…/v1) 값을 그대로 복사하면 /v1/v1 이 된다. 지침이 경고하는 실수다."""
+    monkeypatch.setenv("DIARIZE_BASE_URL", "https://mlapi.run/dia-id/v1")
+    seen: list[httpx.Request] = []
+    client = _diarize_client(_sse('{"lines": [{"id": 0, "speaker": "화자1"}]}'), seen=seen)
+
+    asyncio.run(diarize_llm.pick_speakers(["가."], client=client))
+
+    assert str(seen[0].url) == "https://mlapi.run/dia-id/v1/v1/messages"
+
+
 def test_whisper_empty_ok_and_bad_shape():
     def make(body):
         return httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body)))
