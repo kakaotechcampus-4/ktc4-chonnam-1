@@ -366,7 +366,7 @@ def _split_lines(name: str, entry: dict) -> str:
         f"| {name} | {entry['n']} ({entry['groups']} group) | {_pct(entry['hit1'])} | "
         f"{_pct(entry['hit3'])} ({entry['hits3']}/{entry['n']}, 95% 구간 {_pct(low)}~{_pct(high)}) | "
         f"{entry['mrr']:.3f} | {_pct(entry['majority'])} | {_pct(entry['attach'])} ({entry['normal_n']}건) | "
-        f"{entry['auc']:.3f} |"
+        f"{entry['auc']:.3f} | {_pct(entry['macro_hit3'])} |"
     )
 
 
@@ -405,8 +405,8 @@ def render_report(evaluation: dict, meta: dict) -> str:
         "",
         "## 분할별 지표",
         "",
-        "| 분할 | 보이스피싱 질의 | hit@1 | hit@3 | MRR | 다수 유형 기준선 | 정상 부착률 | AUC (top-1, 보이스피싱 대비 정상) |",
-        "|---|---|---|---|---|---|---|---|",
+        "| 분할 | 보이스피싱 질의 | hit@1 | hit@3 | MRR | 다수 유형 기준선 | 정상 부착률 | AUC (top-1, 보이스피싱 대비 정상) | 유형 평균 hit@3 |",
+        "|---|---|---|---|---|---|---|---|---|",
         _split_lines("dev", dev),
         _split_lines("test", test),
         "",
@@ -417,6 +417,13 @@ def render_report(evaluation: dict, meta: dict) -> str:
         "| 유형 | KB | dev | test |",
         "|---|---|---|---|",
         *(f"| {name} | {kb_counts.get(name, 0)} | {count(dev, name)} | {count(test, name)} |" for name in type_names),
+        "",
+        "## 정상 부착률 분해",
+        "",
+        "출처·종류·유형별 건수는 괄호 안이다. 출처·선택 부착률은 qa_written 을 뺀 선택 정상이 분모이고, 종류별·유형별은 qa_written 을 포함한 정상 전체가 분모다.",
+        "",
+        f"- dev: {dev_detail(dev)}",
+        f"- test: {dev_detail(test)}",
         "",
         "## 지연",
         "",
@@ -455,7 +462,8 @@ def dev_detail(dev: dict) -> str:
     """정상 부착률의 출처별·종류별·유형별 분해. 집계 수치만 담는다."""
     return (
         f"출처별 {_pairs(dev['attach_by_source'])} / 종류별 {_pairs(dev['attach_by_kind'])} / "
-        f"유형별 {_pairs(dev['attach_by_type'])} / qa_written 제외 선택 {dev['normal_n']}건"
+        f"유형별 {_pairs(dev['attach_by_type'])} / 분모: 출처별은 qa_written 제외 선택 {dev['normal_n']}건, "
+        f"종류별·유형별은 qa_written 포함 정상 전체 / qa_written {dev['qa_n']}건 부착 {_pct(dev['qa_attach'])}"
     )
 
 

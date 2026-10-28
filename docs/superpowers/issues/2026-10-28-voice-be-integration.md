@@ -32,7 +32,7 @@ AI 진입점 (`ai.case`)
 
 ## 기동 시
 
-`backend/src/server/lifespan.py` 에서 `warm_up_kb()` 옆에 `warm_up_voice_case_search()` 를 부릅니다. 콜드 적재가 약 1.4초라 1초 검색 예산을 넘기기 때문입니다. 실패해도 서버는 떠야 하고(기존 `warm_up_kb` 와 같은 처리), 부르지 않으면 첫 통화 요청이 적재 비용을 떠안아 `similar_cases:timeout` 이 됩니다.
+`backend/src/server/lifespan.py` 에서 `warm_up_kb()` 옆에 `warm_up_voice_case_search()` 를 부릅니다. 콜드 적재가 약 1.4초라 1초 검색 예산을 넘기기 때문입니다(같은 호출이 사례 첨부 관문 모델도 미리 읽습니다. 약 30ms, 관문 모델 적재 실패는 로그만 남기고 기동은 계속하며 그 경우 사례는 붙지 않고 `similar_cases` 는 미확인이 됩니다). 실패해도 서버는 떠야 하고(기존 `warm_up_kb` 와 같은 처리), 부르지 않으면 첫 통화 요청이 적재 비용을 떠안아 `similar_cases:timeout` 이 됩니다.
 
 ## 환경 변수
 
@@ -60,7 +60,7 @@ Render 환경 변수와 `.env.example` 에 추가해야 합니다.
 | `number_checks` | 상대가 말한 번호의 공식 대표번호 대조 줄 (`org_not_listed` 는 "공식이 아니다"가 아님) |
 | `checked` / `unchecked` (+`reason`) | 확인한 것 / 확인하지 못한 것. 둘을 섞지 않음 (`not_run` 과 `failed` 구분) |
 | `failures` | 실패 이유 문구 (`timeout`, `llm_error`, `invalid_output` 등). 화자 분리 실패는 여기가 아니라 `unchecked` 와 `inconclusive`·`caution` 으로 나타남 |
-| `similar_cases` | 비슷한 사례 (있을 때만) |
+| `similar_cases` | 비슷한 사례 (있을 때만). 사례 첨부 관문 점수가 낮으면 유사도가 높아도 비어 있을 수 있습니다 |
 | `explanation` | 부가 설명. 비어 있어도 카드는 나가야 함 |
 | `questions[0]` (Q1, `option_ids`: `entered_info`, `installed_app`, `sent_money`, `not_yet`) | 결과 아래 `이미 하신 게 있나요?` 리스트 카드. 라벨은 FE |
 
@@ -77,7 +77,7 @@ Q1 답은 쌓입니다. 답이 들어올 때마다 지금까지의 답과 저장
 - 일부 오디오 바이트가 Cloudflare 403 으로 막힙니다. voice-stt 참고 구현은 gain 0.99 -> 0.97 로 바꿔 재시도합니다. 디코딩이 필요해서 BE 쪽 일입니다 (AI는 바이트만 받음).
 - `audio_seconds` 는 wav 만 채워집니다. 그 외 형식은 `None` 입니다.
 - 지식베이스 대본의 라이선스 문제: 금감원 자료는 "무단 복제·배포 금지"입니다. 공개 저장소에 올리기 전에 해결해야 합니다.
-- 가족·지인 사칭 유형은 사례 검색이 약합니다 (결과가 `inconclusive` 로 나올 수 있음).
+- 가족·지인 사칭 유형은 사례 검색이 약합니다 (결과가 `inconclusive` 로 나올 수 있음). 사례 첨부 관문 때문에 `similar_cases` 가 빈 채로 나가는 것은 오류가 아닙니다.
 - 5초 안에 카카오 첫 응답, STT 실측은 3~4분 녹음에 12~16초입니다. 더 긴 녹음의 한도는 정해지지 않았습니다.
 
 ## 완료 조건

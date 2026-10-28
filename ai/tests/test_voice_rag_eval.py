@@ -263,3 +263,32 @@ def test_apply_gate_drops_matches_below_gate(monkeypatch):
     ]
     gated = voice_rag_eval.apply_gate(rows, 0.9)
     assert [len(r.matches) for r in gated] == [1, 0]
+
+
+def test_full_report_has_macro_hit3_and_labelled_attach_breakdown():
+    def normal(split, kind, score):
+        result = _result(split, "normal", "bank_service", [_match("VC-1", score)], f"n-{split}-{kind}")
+        result.row.update({"kind": kind, "synthetic": False})
+        return result
+
+    results = []
+    for split in ("dev", "test"):
+        results += [
+            _result(split, "phishing", "loan_fraud", [_match("VC-1", 0.5)], f"a-{split}"),
+            _result(split, "phishing", "kidnapping", [_match("VC-2", 0.5)], f"b-{split}"),
+            normal(split, "call", 0.1),
+            normal(split, "qa_written", 0.9),
+        ]
+    for result in results:
+        result.row["text"] = "대본"
+    evaluation = voice_rag_eval.evaluate(results, TYPES)
+    meta = {
+        "label": "t", "date": "2026-10-28", "commit": "abc", "kb_total": 3, "kb_counts": {"loan_fraud": 1},
+        "types": TYPES, "seed": "s", "settings": "x", "code_threshold": 0.08,
+        "latency": {"first_ms": 1.0, "p50_ms": 1.0, "p95_ms": 1.0},
+    }
+    text = voice_rag_eval.render_report(evaluation, meta)
+
+    assert "유형 평균 hit@3" in text and "50.0% |" in text
+    assert "## 정상 부착률 분해" in text
+    assert "종류별 call" in text and "qa_written 포함 정상 전체" in text
