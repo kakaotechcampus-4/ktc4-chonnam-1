@@ -58,6 +58,16 @@ ACQUAINTANCE_PATTERN = re.compile(
     r"|형(?:님|아)?(?=[\s,!.]|$)|동생|이모|삼촌|고모|친구"
 )
 
+def identity_kinds(text: str) -> set[IdentityKind]:
+    """글에 나온 신원 어휘 종류. 읽기 폴백과 같은 어휘표라 운영·평가가 함께 쓴다."""
+    kinds: set[IdentityKind] = set()
+    if INSTITUTION_PATTERN.search(text):
+        kinds.add(IdentityKind.INSTITUTION)
+    if ACQUAINTANCE_PATTERN.search(text):
+        kinds.add(IdentityKind.ACQUAINTANCE)
+    return kinds
+
+
 BLOCKER_PATTERN = re.compile(r"고장|액정|통화\s*(?:가|는)?\s*안|전화\s*(?:가|는)?\s*안|못\s*받")
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?。])\s+|\n+")

@@ -18,6 +18,7 @@ from ai.case.privacy import mask_transcript
 from ai.case.types import (
     ClaimReadingResult,
     Conclusion,
+    IdentityKind,
     InputKind,
     NumberCheck,
     ReadingSource,
@@ -31,6 +32,7 @@ from ai.case.types import (
 )
 from ai.case.verify import VerifyResult, verify_call
 from ai.kb.numbers import check_phone_number, find_numbers, resolve_org
+from ai.case.lexicon import identity_kinds
 from ai.kb.search import search_voice_cases
 from ai.llm.claims import TIMEOUT_SECONDS as READ_BUDGET_S
 from ai.llm.claims import read_claims
@@ -45,13 +47,27 @@ _READ_GRACE_S = 0.5
 MAX_NUMBER_CHECKS = 2
 
 
+# 신원 어휘 종류별로 앞세울 통화 사례 유형. 어휘표가 내는 종류만 쓴다(기관은 사례가 많아 이득이 없었다).
+IDENTITY_PREFERRED_TYPES: dict[IdentityKind, frozenset[str]] = {
+    IdentityKind.ACQUAINTANCE: frozenset({"family_impersonation", "kidnapping"}),
+}
+
+
+def search_by_identity(transcript: str) -> CaseSearchResult:
+    """대본의 신원 어휘로 사례 유형을 앞세워 검색한다. 어휘표만 쓰므로 읽기와 나란히 돌릴 수 있다."""
+    preferred = frozenset().union(
+        *(IDENTITY_PREFERRED_TYPES.get(kind, frozenset()) for kind in identity_kinds(transcript))
+    )
+    return search_voice_cases(transcript, preferred_types=preferred)
+
+
 @dataclass
 class VoiceRuntime:
     """바깥 의존을 바꿔 끼우는 자리. 테스트는 가짜로 바꾼다."""
 
     read_claims: Callable[[ReadingSource], Awaitable[ClaimReadingResult]] = read_claims
     # 동기 함수라 asyncio.to_thread 로 부른다
-    search_cases: Callable[[str], CaseSearchResult] = search_voice_cases
+    search_cases: Callable[[str], CaseSearchResult] = search_by_identity
     check_phone_number: Callable[[str, str], NumberCheck] = check_phone_number
 
 

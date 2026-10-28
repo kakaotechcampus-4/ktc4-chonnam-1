@@ -115,3 +115,12 @@ def test_caps_enforced():
     text = ". ".join(f"계좌로 송금하세요 {i}" for i in range(10))
     r = read_with_lexicon(source(seg("B", text))).reading
     assert len(r.demands) == 6
+
+
+def test_identity_kinds_from_text():
+    from ai.case.lexicon import identity_kinds
+    from ai.case.types import IdentityKind
+
+    assert identity_kinds("엄마 나 폰 고장났어") == {IdentityKind.ACQUAINTANCE}
+    assert identity_kinds("서울중앙지검 검사입니다") == {IdentityKind.INSTITUTION}
+    assert identity_kinds("오늘 날씨가 좋네요") == set()

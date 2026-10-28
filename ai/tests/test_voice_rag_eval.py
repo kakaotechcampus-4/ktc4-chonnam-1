@@ -227,3 +227,25 @@ def test_query_text_other_uses_only_counterpart_turns_else_full_text():
     assert voice_rag_eval.query_text(row, "all") == "전체 대본"
     assert voice_rag_eval.query_text({"text": "전체 대본"}, "other") == "전체 대본"
     assert voice_rag_eval.query_text({"text": "전체", "turns": [{"speaker": "사용자", "text": "x"}]}, "other") == "전체"
+
+
+def test_identity_preferred_types_follow_lexicon_kinds():
+    from ai.case.types import IdentityKind
+
+    kinds = tuple(voice_rag_eval.IDENTITY_TYPES)
+    assert voice_rag_eval.preferred_types("엄마 나 폰 고장났어", kinds) == {"family_impersonation", "kidnapping"}
+    assert voice_rag_eval.preferred_types("검찰 수사관입니다", (IdentityKind.ACQUAINTANCE,)) == frozenset()
+    assert voice_rag_eval.preferred_types("계좌를 만들어 주세요", kinds) == frozenset()
+
+
+def test_prefer_types_reorders_only_above_threshold_and_keeps_no_claim_order():
+    matches = [_match("VC-2", 0.5), _match("VC-3", 0.45), _match("VC-1", 0.1)]
+    family = frozenset({"kidnapping", "loan_fraud"})
+
+    boosted = voice_rag_eval.prefer_types(matches, family, TYPES, 0.2, "boost", 0.1)
+    assert [m.case_id for m in boosted] == ["VC-3", "VC-2"]  # 기준값 밑 VC-1 은 올라오지 않는다
+    assert [m.similarity for m in boosted] == [0.45, 0.5]  # 원점수는 그대로
+    filtered = voice_rag_eval.prefer_types(matches, family, TYPES, 0.2, "filter", 0.0)
+    assert [m.case_id for m in filtered] == ["VC-3"]
+    # 주장이 없으면 기준값 이상 후보를 기존 순서대로
+    assert voice_rag_eval.prefer_types(matches, frozenset(), TYPES, 0.2, "boost", 0.1) == matches[:2]

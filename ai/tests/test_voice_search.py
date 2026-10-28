@@ -104,3 +104,20 @@ def test_voice_search_reads_voice_kb_by_default():
     assert result.status is AnalysisStatus.COMPLETED
     assert result.matches
     assert all(match.case_id.startswith("VC-") for match in result.matches)
+
+
+def test_boost_types_reorders_and_keeps_order_without_preference():
+    from ai.kb.search import boost_types
+    from ai.types import CaseMatch
+
+    def m(case_id, score):
+        return CaseMatch(case_id=case_id, similarity=score, matched_variant="v")
+
+    matches = [m("A", 0.10), m("B", 0.09), m("C", 0.05)]
+    types = {"A": "loan_fraud", "B": "family_impersonation", "C": "kidnapping"}
+    preferred = {"family_impersonation", "kidnapping"}
+
+    boosted = boost_types(matches, types, preferred, 0.03)
+    assert [x.case_id for x in boosted] == ["B", "A", "C"]
+    assert boosted[0].similarity == 0.12 and boosted[2].similarity == 0.08
+    assert boost_types(matches, types, set(), 0.03) == matches

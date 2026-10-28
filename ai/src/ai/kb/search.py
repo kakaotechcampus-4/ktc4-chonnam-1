@@ -9,7 +9,7 @@ import math
 import re
 import threading
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -44,6 +44,9 @@ DEFAULT_MIN_SIMILARITY = 0.2345
 VOICE_NGRAM_SIZES: tuple[int, ...] = (3,)
 VOICE_SUBLINEAR_TF = False
 VOICE_MIN_SIMILARITY = 0.0588
+# 지인 사칭 어휘가 나오면 가족 사칭·납치 사례 점수에 더한다. 점수 자체에 더하므로 기준값 비교에도
+# 들어간다(순서만 바꾸는 방식은 dev 에서 이득이 0 이었다). 값은 ai/eval/reports/2026-10-28-voice-rag-minority.md.
+VOICE_IDENTITY_BOOST = 0.03
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,8 @@ class Case:
     variants: tuple[str, ...]
     normalized: tuple[str, ...]
     categories: tuple[CategoryCode, ...]
+    # 통화 사례 유형(KB 레코드의 type). 문자 사례에는 없다.
+    case_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -174,6 +179,7 @@ def _parse_case(path: Path) -> Case | None:
         variants=tuple(variants),
         normalized=tuple(normalize(item) for item in variants),
         categories=tuple(categories),
+        case_type=str(meta.get("type") or ""),
     )
 
 
@@ -220,10 +226,37 @@ def _load_index(cases_dir: Path, ngram_sizes: tuple[int, ...], sublinear_tf: boo
     return build_index(_load_cases(cases_dir), ngram_sizes=ngram_sizes, sublinear_tf=sublinear_tf)
 
 
-def _search(index: CaseIndex, text: str, top_k: int, min_similarity: float) -> CaseSearchResult:
+def boost_types(
+    matches: Sequence[CaseMatch], types: Mapping[str, str], preferred: Collection[str], boost: float
+) -> list[CaseMatch]:
+    """앞세울 유형 사례의 유사도에 boost 를 더해 다시 정렬한다. preferred 가 비면 그대로다."""
+    if not preferred:
+        return list(matches)
+    boosted = [
+        match.model_copy(update={"similarity": round(min(match.similarity + boost, 1.0), 4)})
+        if types.get(match.case_id) in preferred
+        else match
+        for match in matches
+    ]
+    boosted.sort(key=lambda item: item.similarity, reverse=True)
+    return boosted
+
+
+def _search(
+    index: CaseIndex,
+    text: str,
+    top_k: int,
+    min_similarity: float,
+    preferred_types: Collection[str] = (),
+    boost: float = 0.0,
+) -> CaseSearchResult:
     if not index.cases:
         return CaseSearchResult(status=AnalysisStatus.FALLBACK, matches=[])
-    matches = [match for match in rank(index, text) if match.similarity >= min_similarity]
+    ranked = rank(index, text)
+    if preferred_types:
+        types = {case.case_id: case.case_type for case in index.cases}
+        ranked = boost_types(ranked, types, preferred_types, boost)
+    matches = [match for match in ranked if match.similarity >= min_similarity]
     return CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=matches[:top_k])
 
 
@@ -250,18 +283,20 @@ def search_voice_cases(
     cases_dir: Path = VOICE_CASES_DIR,
     top_k: int = 3,
     min_similarity: float | None = None,
+    preferred_types: Collection[str] = (),
 ) -> CaseSearchResult:
     """통화 대본으로 보이스피싱 통화 사례를 찾습니다.
 
     search_cases 와 같은 색인·순위 코드에 KB 폴더와 VOICE_* 값만 바꿔 씁니다.
     통화 유형은 CategoryCode 가 아니어서 matches 의 categories 는 비어 있고,
     유형은 KB 레코드의 type 에 있습니다. 기준값은 호출할 때 모듈 값을 읽습니다.
+    preferred_types 의 유형 사례에는 VOICE_IDENTITY_BOOST 를 더해 순위와 기준값 비교에 반영합니다.
     """
     if not transcript.strip():
         return CaseSearchResult(status=AnalysisStatus.FALLBACK, matches=[])
     index = load_index(cases_dir, ngram_sizes=VOICE_NGRAM_SIZES, sublinear_tf=VOICE_SUBLINEAR_TF)
     threshold = VOICE_MIN_SIMILARITY if min_similarity is None else min_similarity
-    return _search(index, transcript, top_k, threshold)
+    return _search(index, transcript, top_k, threshold, preferred_types, VOICE_IDENTITY_BOOST)
 
 
 def warm_up_voice_case_search() -> CaseSearchResult:

@@ -25,6 +25,8 @@ from pathlib import Path
 import yaml
 
 import rag_metrics as metrics
+from ai.case.lexicon import identity_kinds
+from ai.case.types import IdentityKind
 from ai.kb import search
 from ai.kb.normalize import normalize
 from ai.kb.search import Case, build_index, load_cases, rank, search_voice_cases
@@ -102,8 +104,85 @@ def chunked(cases: Sequence[Case], size: int) -> list[Case]:
     return result
 
 
+# 신원 주장 종류별로 앞세울 사례 유형. 신원 어휘표는 기관·지인만 낸다.
+IDENTITY_TYPES: dict[IdentityKind, frozenset[str]] = {
+    IdentityKind.ACQUAINTANCE: frozenset({"family_impersonation", "kidnapping"}),
+    IdentityKind.INSTITUTION: frozenset({"institution_impersonation", "loan_fraud"}),
+}
+IDENTITY_SETS = {
+    "all": tuple(IDENTITY_TYPES),
+    "acquaintance": (IdentityKind.ACQUAINTANCE,),
+}
+FULL_RANK_K = 10_000
+
+
+def preferred_types(text: str, kinds: Sequence[IdentityKind]) -> frozenset[str]:
+    found = identity_kinds(text)
+    return frozenset().union(*(IDENTITY_TYPES[k] for k in kinds if k in found))
+
+
+def prefer_types(
+    matches: Sequence[CaseMatch],
+    preferred: frozenset[str],
+    types: Mapping[str, str],
+    threshold: float,
+    mode: str,
+    boost: float,
+) -> list[CaseMatch]:
+    """기준값 이상 후보 안에서만 순서를 바꾼다. 붙일지는 원점수 1위로 이미 정해져 있다."""
+    if mode == "score":
+        # 운영과 같은 함수. 점수 자체에 가점을 줘 붙일지 결정에도 영향을 준다(기준값은 다시 고른다)
+        return search.boost_types(matches, types, preferred, boost)
+    candidates = [m for m in matches if m.similarity >= threshold]
+    if not preferred or not candidates:
+        return candidates
+    if mode == "filter":
+        chosen = [m for m in candidates if types.get(m.case_id) in preferred]
+        return chosen or candidates
+    return sorted(
+        candidates,
+        key=lambda m: m.similarity + (boost if types.get(m.case_id) in preferred else 0.0),
+        reverse=True,
+    )
+
+
+def apply_identity(
+    results: Sequence[RowResult],
+    types: Mapping[str, str],
+    kinds: Sequence[IdentityKind],
+    threshold: float,
+    mode: str,
+    boost: float,
+    query_side: str = "all",
+) -> list[RowResult]:
+    return [
+        RowResult(
+            r.row,
+            prefer_types(
+                r.matches, preferred_types(query_text(r.row, query_side), kinds), types, threshold, mode, boost
+            )[:TOP_K],
+            r.seconds,
+        )
+        for r in results
+    ]
+
+
 def default_searcher(text: str) -> list[CaseMatch]:
     return search_voice_cases(text, min_similarity=0.0, top_k=TOP_K).matches
+
+
+_RANK_CACHE: dict = {}
+
+
+def rank_all(text: str, tuned: bool, ngram_sizes: tuple[int, ...], sublinear_tf: bool, chunk_size: int) -> list[CaseMatch]:
+    """모든 사례를 점수순으로. --identity 가 기준값 이상 후보 안에서 순서를 바꾼다."""
+    if not tuned:
+        return search_voice_cases(text, min_similarity=0.0, top_k=FULL_RANK_K).matches
+    if "s" not in _RANK_CACHE:
+        cases = load_cases(search.VOICE_CASES_DIR)
+        cases = chunked(cases, chunk_size) if chunk_size else cases
+        _RANK_CACHE["s"] = build_index(cases, ngram_sizes=ngram_sizes, sublinear_tf=sublinear_tf)
+    return rank(_RANK_CACHE["s"], text)
 
 
 def make_searcher(
@@ -229,14 +308,16 @@ def evaluate(
     *,
     include_test: bool = True,
     max_rate: float = MAX_NORMAL_RATE,
+    threshold: float | None = None,
 ) -> dict:
     dev = [result for result in results if result.row["split"] == "dev"]
     test = [result for result in results if result.row["split"] == "test"]
-    threshold = metrics.pick_threshold(
-        [result.matches for result in _selection_normal(dev)],
-        max_rate,
-        [metrics.top1(result.matches) for result in dev],
-    )
+    if threshold is None:
+        threshold = metrics.pick_threshold(
+            [result.matches for result in _selection_normal(dev)],
+            max_rate,
+            [metrics.top1(result.matches) for result in dev],
+        )
     evaluation = {"threshold": threshold, "dev": summarize(dev, types, threshold)}
     if include_test:
         evaluation["test"] = summarize(test, types, threshold)
@@ -382,6 +463,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--query-side", choices=("all", "other"), default="all", help="other: turns 가 있는 질의는 상대 발화만 쓴다"
     )
+    parser.add_argument(
+        "--identity", choices=tuple(IDENTITY_SETS), help="신원 어휘가 나오면 해당 유형 사례를 앞세운다(어휘표, LLM 없음)"
+    )
+    parser.add_argument("--identity-mode", choices=("filter", "boost", "score"), default="score")
+    parser.add_argument("--identity-boost", type=float, default=search.VOICE_IDENTITY_BOOST, help="boost 일 때 더할 유사도")
     parser.add_argument("--extra-normals", type=Path, help="로컬 정상 평가셋(jsonl). dev/test 정상 질의에 더한다")
     parser.add_argument("--max-normal-rate", type=float, default=MAX_NORMAL_RATE)
     args = parser.parse_args(argv)
@@ -395,7 +481,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         rows += load_extra_normals(args.extra_normals)
     types = kb_types()
     tuned = args.ngram is not None or args.tf is not None or args.chunk
-    if tuned:
+    if args.identity:
+        # 기준값은 원점수 1위로 정해지므로 순서를 바꿔도 같다. 전체 순위를 받아 기준값을 정한 뒤 바꾼다.
+        searcher = lambda text: rank_all(text, tuned, ngram_sizes, sublinear_tf, args.chunk)  # noqa: E731
+    elif tuned:
         searcher = make_searcher(load_cases(search.VOICE_CASES_DIR), ngram_sizes, sublinear_tf, args.chunk)
     else:
         # 운영 경로다. 첫 검색에 KB 로드와 색인 생성이 들어간다.
@@ -403,11 +492,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.dev_only:
         rows = [row for row in rows if row["split"] == "dev"]
     results = run_search(rows, searcher, args.query_head, args.query_side)
-    evaluation = evaluate(results, types, include_test=not args.dev_only, max_rate=args.max_normal_rate)
+    fixed = None
+    if args.identity:
+        base = [RowResult(r.row, r.matches[:TOP_K], r.seconds) for r in results]
+        fixed = evaluate(base, types, include_test=False, max_rate=args.max_normal_rate)["threshold"]
+        results = apply_identity(
+            results, types, IDENTITY_SETS[args.identity], fixed, args.identity_mode, args.identity_boost, args.query_side
+        )
+        if args.identity_mode == "score":
+            fixed = None
+    evaluation = evaluate(
+        results, types, include_test=not args.dev_only, max_rate=args.max_normal_rate, threshold=fixed
+    )
     settings = (
         f"문자 n-gram {ngram_sizes} TF-IDF 코사인, TF {'1+ln(tf)' if sublinear_tf else '원 빈도'}, "
         f"KB 조각 {args.chunk or '없음(대본 전체)'}, 질의 {f'앞 {args.query_head}자' if args.query_head else '대본 전체'}"
-        f"{', 상대 발화만(turns 없으면 전체)' if args.query_side == 'other' else ''}, "
+        f"{', 상대 발화만(turns 없으면 전체)' if args.query_side == 'other' else ''}"
+        f"{f', 신원 {args.identity} {args.identity_mode}' + (f' +{args.identity_boost}' if args.identity_mode == 'boost' else '') if args.identity else ''}, "
         f"정상 부착 상한 {_pct(args.max_normal_rate)}"
     )
     if args.dev_only:
