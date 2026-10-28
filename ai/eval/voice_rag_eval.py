@@ -38,6 +38,7 @@ TOP_K = 3
 FAILURE_LIMIT = 10
 MAX_NORMAL_RATE = 0.05
 TARGET_HIT_AT_3 = 0.60
+QA_KIND = "qa_written"
 SYNTHETIC_WARNING = "정상 통화는 모두 합성 대본이다. 정상 부착률을 실제 오탐률로 인용하지 않는다."
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---", re.DOTALL)
 
@@ -143,8 +144,34 @@ def _normal(results: Sequence[RowResult]) -> list[RowResult]:
     return [result for result in results if result.row["label"] == "normal"]
 
 
+def _selection_normal(results: Sequence[RowResult]) -> list[RowResult]:
+    # 기준값 선택·부착률 상한에 쓰는 정상. 필기 질의응답(qa_written)은 통화 문체가 아니라 뺀다.
+    return [r for r in _normal(results) if r.row.get("kind") != QA_KIND]
+
+
+def _source(row: dict) -> str:
+    return "합성" if row.get("synthetic", True) else "실제"
+
+
+def _attach_by(normal: Sequence[RowResult], key: Callable[[dict], str], threshold: float) -> dict:
+    groups: dict[str, list[RowResult]] = {}
+    for result in normal:
+        groups.setdefault(key(result.row), []).append(result)
+    return {
+        name: (sum(metrics.attached(r.matches, threshold) for r in group), len(group))
+        for name, group in sorted(groups.items())
+    }
+
+
+def load_extra_normals(path: Path) -> list[dict]:
+    """로컬 정상 평가셋의 dev/test 행만 읽는다. 원문은 메모리에서만 쓴다."""
+    rows = load_rows(path)
+    return [row for row in rows if row.get("label") == "normal" and row.get("split") in ("dev", "test")]
+
+
 def summarize(results: Sequence[RowResult], types: Mapping[str, str], threshold: float) -> dict:
-    phishing, normal = _phishing(results), _normal(results)
+    phishing, all_normal = _phishing(results), _normal(results)
+    normal = _selection_normal(results)
     ranks = [first_hit_rank(r.matches, r.row["type"], types, threshold) for r in phishing]
     type_counts = Counter(result.row["type"] for result in phishing)
     majority_type, majority = type_counts.most_common(1)[0]
@@ -168,6 +195,16 @@ def summarize(results: Sequence[RowResult], types: Mapping[str, str], threshold:
             [metrics.top1(r.matches) for r in phishing], [metrics.top1(r.matches) for r in normal]
         ),
         "per_type": per_type,
+        "macro_hit3": statistics.fmean(hits / n for hits, n in per_type.values()),
+        "qa_n": len(all_normal) - len(normal),
+        "qa_attach": (
+            metrics.attach_rate([r.matches for r in all_normal if r.row.get("kind") == QA_KIND], threshold)
+            if len(all_normal) > len(normal)
+            else 0.0
+        ),
+        "attach_by_source": _attach_by(normal, _source, threshold),
+        "attach_by_kind": _attach_by(all_normal, lambda row: row.get("kind", "project"), threshold),
+        "attach_by_type": _attach_by(all_normal, lambda row: row["type"], threshold),
     }
 
 
@@ -181,7 +218,7 @@ def evaluate(
     dev = [result for result in results if result.row["split"] == "dev"]
     test = [result for result in results if result.row["split"] == "test"]
     threshold = metrics.pick_threshold(
-        [result.matches for result in _normal(dev)],
+        [result.matches for result in _selection_normal(dev)],
         max_rate,
         [metrics.top1(result.matches) for result in dev],
     )
@@ -303,6 +340,18 @@ def _commit() -> str:
     return git("rev-parse", "--short", "HEAD") + ("+dirty" if git("status", "--porcelain") else "")
 
 
+def _pairs(entries: Mapping[str, tuple[int, int]]) -> str:
+    return ", ".join(f"{name} {_pct(hits / n)}({n})" for name, (hits, n) in entries.items())
+
+
+def dev_detail(dev: dict) -> str:
+    """정상 부착률의 출처별·종류별·유형별 분해. 집계 수치만 담는다."""
+    return (
+        f"출처별 {_pairs(dev['attach_by_source'])} / 종류별 {_pairs(dev['attach_by_kind'])} / "
+        f"유형별 {_pairs(dev['attach_by_type'])} / qa_written 제외 선택 {dev['normal_n']}건"
+    )
+
+
 def _ngram(value: str) -> tuple[int, ...]:
     return tuple(sorted({int(part) for part in value.split(",")}))
 
@@ -315,6 +364,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--tf", choices=("raw", "log"), help="TF 가중: 원 빈도 또는 1+ln(tf)")
     parser.add_argument("--chunk", type=int, default=0, help="KB 대본을 이 글자 수 조각으로 나눈다(절반 겹침)")
     parser.add_argument("--query-head", type=int, default=0, help="질의 대본의 앞 N 자만 쓴다")
+    parser.add_argument("--extra-normals", type=Path, help="로컬 정상 평가셋(jsonl). dev/test 정상 질의에 더한다")
     parser.add_argument("--max-normal-rate", type=float, default=MAX_NORMAL_RATE)
     args = parser.parse_args(argv)
     if not args.dev_only and not args.label:
@@ -323,6 +373,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ngram_sizes = args.ngram or search.VOICE_NGRAM_SIZES
     sublinear_tf = search.VOICE_SUBLINEAR_TF if args.tf is None else args.tf == "log"
     rows = load_rows()
+    if args.extra_normals:
+        rows += load_extra_normals(args.extra_normals)
     types = kb_types()
     tuned = args.ngram is not None or args.tf is not None or args.chunk
     if tuned:
@@ -341,9 +393,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if args.dev_only:
         dev = evaluation["dev"]
+        print(f"<!-- {dev_detail(dev)} -->")
         print(
             f"| {settings} | {evaluation['threshold']:.4f} | {_pct(dev['hit3'])} | {_pct(dev['hit1'])} | "
-            f"{dev['mrr']:.3f} | {_pct(dev['attach'])} | "
+            f"{dev['mrr']:.3f} | {_pct(dev['macro_hit3'])} | {_pct(dev['attach'])} | "
             + ", ".join(f"{name} {hits}/{n}" for name, (hits, n) in dev["per_type"].items())
             + " |"
         )

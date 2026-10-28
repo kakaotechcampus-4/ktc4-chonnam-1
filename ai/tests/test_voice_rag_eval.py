@@ -167,3 +167,47 @@ def test_new_synthetic_eval_rows_carry_turns_and_no_source_url():
         assert row["source_url"] is None
     # 기존 행에는 선택 필드가 붙지 않는다.
     assert all("turns" not in row for row in rows if not row["group"].startswith("synth2-"))
+
+
+def test_extra_normals_loaded_by_split_and_qa_written_excluded_from_selection(tmp_path):
+    path = tmp_path / "extra.jsonl"
+    base = {"label": "normal", "type": "bank_service", "synthetic": False}
+    rows = [
+        {**base, "id": "r1", "group": "r1", "split": "dev", "kind": "call", "text": "가"},
+        {**base, "id": "r2", "group": "r2", "split": "dev", "kind": "qa_written", "text": "나"},
+        {**base, "id": "r3", "group": "r3", "split": "train", "kind": "call", "text": "다"},
+    ]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+
+    loaded = voice_rag_eval.load_extra_normals(path)
+
+    assert [r["id"] for r in loaded] == ["r1", "r2"]
+
+
+def test_threshold_ignores_qa_written_and_attach_is_split_by_source_kind_type():
+    def normal(kind, score, synthetic, ntype="bank_service", group="n"):
+        result = _result("dev", "normal", ntype, [_match("VC-1", score)], group)
+        result.row.update({"kind": kind, "synthetic": synthetic})
+        return result
+
+    results = [
+        _result("dev", "phishing", "loan_fraud", [_match("VC-1", 0.5)], "a"),
+        _result("dev", "phishing", "kidnapping", [_match("VC-2", 0.5)], "b"),
+        normal("call", 0.1, False, group="c"),
+        normal("monologue", 0.2, False, "family", "d"),
+        normal("qa_written", 0.9, False, group="e"),
+        normal(None, 0.3, True, group="f"),
+    ]
+    results[-1].row.pop("kind")
+
+    evaluation = voice_rag_eval.evaluate(results, TYPES, include_test=False, max_rate=0.0)
+    dev = evaluation["dev"]
+
+    # qa_written(0.9) 는 기준값 선택에 쓰지 않는다. 선택 정상 최댓값은 0.3 이라 부착 0 이 되는 가장 낮은 후보 0.5 를 고른다.
+    assert evaluation["threshold"] == 0.5
+    assert dev["normal_n"] == 3 and dev["qa_n"] == 1 and dev["qa_attach"] == 1.0
+    assert dev["attach"] == 0.0
+    assert dev["macro_hit3"] == (1.0 + 0.0) / 2
+    assert dev["attach_by_source"] == {"실제": (0, 2), "합성": (0, 1)}
+    assert dev["attach_by_kind"]["qa_written"] == (1, 1)
+    assert dev["attach_by_type"] == {"bank_service": (1, 3), "family": (0, 1)}
