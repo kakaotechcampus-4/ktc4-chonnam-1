@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import math
 import re
 import threading
@@ -27,12 +29,14 @@ from pathlib import Path
 from ai.case.lexicon import (
     ACQUAINTANCE_PATTERN,
     BLOCKER_PATTERN,
+    DEMAND_LEXICON,
     INSTITUTION_PATTERN,
     demand_kinds,
 )
 from ai.case.types import DemandKind
 from ai.kb.normalize import normalize
 
+LOGGER = logging.getLogger(__name__)
 MODEL_PATH = Path(__file__).resolve().parents[1] / "kb" / "voice_gate.json"
 CHAR_NGRAM_SIZES: tuple[int, ...] = (2, 3, 4)
 _WORD_RE = re.compile(r"[0-9a-z가-힣]+")
@@ -59,6 +63,19 @@ STAGE_NAMES: tuple[str, ...] = (
     "pressure",
     "pretext",
 )
+
+
+def feature_hash() -> str:
+    """단계 신호가 기대는 어휘 패턴 원문의 해시. 어휘표를 고치면 달라져 재학습이 필요하다는 표시가 된다."""
+    sources = [
+        INSTITUTION_PATTERN.pattern,
+        ACQUAINTANCE_PATTERN.pattern,
+        BLOCKER_PATTERN.pattern,
+        PRESSURE_PATTERN.pattern,
+        PRETEXT_PATTERN.pattern,
+        *(f"{kind.value}:{pattern.pattern}" for kind, pattern in DEMAND_LEXICON),
+    ]
+    return hashlib.sha256("\n".join(sources).encode("utf-8")).hexdigest()[:16]
 
 
 def stage_features(text: str) -> tuple[float, ...]:
@@ -126,6 +143,10 @@ class GateModel:
 def model_from_dict(data: Mapping) -> GateModel:
     if tuple(data["stage_names"]) != STAGE_NAMES or tuple(data["char_ngram_sizes"]) != CHAR_NGRAM_SIZES:
         raise ValueError("voice gate model does not match feature definition")
+    stored = data.get("feature_hash")
+    if stored != feature_hash():
+        # 어휘표가 바뀐 채 학습 가중치를 쓰면 단계 신호 입력이 달라진다. 응답을 막진 않고 알린다.
+        LOGGER.warning("voice gate was trained on a different lexicon; retrain (stored=%s)", stored)
     return GateModel(
         char_idf={t: v[0] for t, v in data["char"].items()},
         char_coef={t: v[1] for t, v in data["char"].items()},
@@ -147,6 +168,7 @@ def model_to_dict(
         **meta,
         "char_ngram_sizes": list(CHAR_NGRAM_SIZES),
         "stage_names": list(STAGE_NAMES),
+        "feature_hash": feature_hash(),
         "intercept": intercept,
         "stage": dict(zip(STAGE_NAMES, stage)),
         "char": {t: list(v) for t, v in char.items()},

@@ -5,7 +5,8 @@ ai/ 에서 실행한다(운영 .venv 로 충분하다. 관문 추론은 순수 P
     python eval/voice_gate_eval.py --extra-normals <로컬 정상 jsonl> --cache <캐시 json> \
         [--model <관문 json> ...] [--contrast] [--eval-half]
 
-검색은 운영과 같다(지인 어휘 가점 VOICE_IDENTITY_BOOST 포함, 상위 10개). 검색 결과는 --cache 에
+검색은 운영 함수 ai.case.voice.search_by_identity 를 그대로 부른다(지인 어휘 가점 포함, 기준값 0, 상위 10개).
+질의는 운영처럼 mask_pii 를 거친다(vre.query_text). 검색 결과는 --cache 에
 한 번 저장하고 다시 쓴다(실제 정상 포함 dev 검색은 몇 분 걸린다). 캐시에는 질의 id·사례 id·점수만 있다.
 
 비교하는 방식(모두 사례를 "붙일지"만 바꾼다. 판정은 바꾸지 않는다):
@@ -28,11 +29,10 @@ from pathlib import Path
 
 import voice_rag_eval as vre
 from ai.case.attach_gate import STAGE_NAMES, load_model, stage_features
-from ai.case.voice import IDENTITY_PREFERRED_TYPES
-from ai.case.lexicon import identity_kinds
+from ai.case.voice import search_by_identity
 from ai.kb import search
 from ai.kb.normalize import normalize
-from ai.kb.search import Case, build_index, rank, search_voice_cases
+from ai.kb.search import Case, build_index, rank
 from ai.types import CaseMatch
 
 TRAIN_NORMALS = vre.EVAL_DIR / "datasets" / "voice_gate_train.jsonl"
@@ -70,8 +70,8 @@ def _key(row: dict) -> str:
 
 
 def _search(text: str) -> list[CaseMatch]:
-    preferred = frozenset().union(*(IDENTITY_PREFERRED_TYPES.get(k, frozenset()) for k in identity_kinds(text)))
-    return search_voice_cases(text, min_similarity=0.0, top_k=CACHE_K, preferred_types=preferred).matches
+    # 운영 검색(ai.case.voice.search_by_identity)을 기준값 0 으로 부른다. 관문은 아래에서 g 별로 건다.
+    return search_by_identity(text, top_k=CACHE_K, min_similarity=0.0).matches
 
 
 def normal_index():
@@ -84,12 +84,12 @@ def cached_search(rows: Sequence[dict], cache_path: Path, contrast: bool) -> dic
     cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {"kb": {}, "normal": {}}
     missing = [r for r in rows if _key(r) not in cache["kb"]]
     for row in missing:
-        cache["kb"][_key(row)] = [[m.case_id, m.similarity] for m in _search(row["text"])]
+        cache["kb"][_key(row)] = [[m.case_id, m.similarity] for m in _search(vre.query_text(row))]
     missing_n = [r for r in rows if _key(r) not in cache["normal"]] if contrast else []
     if missing_n:
         index = normal_index()
         for row in missing_n:
-            cache["normal"][_key(row)] = [m.similarity for m in rank(index, row["text"])[:3]]
+            cache["normal"][_key(row)] = [m.similarity for m in rank(index, vre.query_text(row))[:3]]
     if missing or missing_n:
         cache_path.write_text(json.dumps(cache), encoding="utf-8")
     return cache
@@ -168,7 +168,7 @@ _DEVICE = STAGE_NAMES.index("demand_device")
 
 def device_pass(rows, scores: dict, g: float) -> str:
     """앱 설치·원격 제어·메신저 이동 요구가 있는 dev 보이스피싱 중 관문을 넘는 비율(유형별)."""
-    phishing = [r for r in rows if r["label"] == "phishing" and stage_features(r["text"])[_DEVICE]]
+    phishing = [r for r in rows if r["label"] == "phishing" and stage_features(vre.query_text(r))[_DEVICE]]
     by_type: dict[str, list[int]] = {}
     for r in phishing:
         entry = by_type.setdefault(r["type"], [0, 0])
@@ -217,7 +217,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     for path in args.model:
         model = load_model(path)
-        scores = {_key(r): model.score(r["text"]) for r in rows}
+        scores = {_key(r): model.score(vre.query_text(r)) for r in rows}
         variants = [("", None)] + [(f" + 대조 {k}", b) for k, b in contrast_rules.items()]
         for suffix, extra in variants:
             g, t, hit3, macro, attach, blocked = best_gate(rows, kb, types, scores, args.max_normal_rate, extra)

@@ -292,3 +292,37 @@ def test_full_report_has_macro_hit3_and_labelled_attach_breakdown():
     assert "유형 평균 hit@3" in text and "50.0% |" in text
     assert "## 정상 부착률 분해" in text
     assert "종류별 call" in text and "qa_written 포함 정상 전체" in text
+
+
+def test_default_eval_chain_matches_production_search_gated():
+    # 평가 기본 경로가 운영(voice.search_gated)과 같은 사례를 같은 순서로 내야 기준값을 믿고 다시 고를 수 있다.
+    from ai.case import voice
+    from ai.kb import search
+
+    rows = voice_rag_eval.load_rows()
+    picked = []
+    for label, kind in (("phishing", "family_impersonation"), ("phishing", "kidnapping"), ("phishing", "institution_impersonation"), ("normal", None)):
+        picked += [r for r in rows if r["label"] == label and (kind is None or r["type"] == kind)][:4]
+    assert len(picked) >= 12
+    attached = 0
+    for row in picked:
+        text = voice_rag_eval.query_text(row)
+        eval_ids = [
+            m.case_id for m in voice_rag_eval.default_searcher(text) if m.similarity >= search.VOICE_MIN_SIMILARITY
+        ]
+        prod = voice.search_gated(text)
+        assert eval_ids == [m.case_id for m in prod.matches], row["id"]
+        attached += bool(eval_ids)
+    assert attached  # 빈 목록끼리 비교하는 헛 통과를 막는다
+
+
+def test_query_text_applies_pii_masking_like_production():
+    row = {"text": "주민번호 900101-1234567 로 계좌 123-456-789012 확인"}
+    masked = voice_rag_eval.query_text(row)
+    assert "900101-1234567" not in masked and "<주민번호>" in masked
+
+
+def test_report_notes_real_normals_instead_of_all_synthetic():
+    assert voice_rag_eval.normal_note({"real_normals": False}) == voice_rag_eval.SYNTHETIC_WARNING
+    note = voice_rag_eval.normal_note({"real_normals": True})
+    assert "실제 대본이 섞여" in note and "모두 합성" not in note

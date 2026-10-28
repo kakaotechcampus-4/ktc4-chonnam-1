@@ -28,7 +28,8 @@ import rag_metrics as metrics
 from ai.case.attach_gate import load_model
 from ai.case.lexicon import identity_kinds
 from ai.case.types import IdentityKind
-from ai.case.voice import IDENTITY_PREFERRED_TYPES
+from ai.case.privacy import mask_pii
+from ai.case.voice import IDENTITY_PREFERRED_TYPES, search_gated
 from ai.kb import search
 from ai.kb.normalize import normalize
 from ai.kb.search import Case, build_index, load_cases, rank, search_voice_cases
@@ -44,6 +45,10 @@ MAX_NORMAL_RATE = 0.05
 TARGET_HIT_AT_3 = 0.60
 QA_KIND = "qa_written"
 SYNTHETIC_WARNING = "정상 통화는 모두 합성 대본이다. 정상 부착률을 실제 오탐률로 인용하지 않는다."
+REAL_NORMAL_NOTE = (
+    "정상 통화에 실제 대본이 섞여 있다(출처별 건수는 아래 분해). 합성분 부착률만 합성 기준이고, "
+    "실제 정상 부착률도 표본 한 곳의 값이라 실제 오탐률로 인용하지 않는다."
+)
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---", re.DOTALL)
 
 Searcher = Callable[[str], list[CaseMatch]]
@@ -170,6 +175,16 @@ def apply_identity(
 
 
 def default_searcher(text: str) -> list[CaseMatch]:
+    """운영 경로(ai.case.voice.search_gated: 신원 가점 -> 기준값 -> 관문)를 기준값 0 으로 부른다.
+
+    기준값은 evaluate() 가 고르므로 여기서는 0 으로 둔다. 같은 점수순이라 운영 기준값을 적용한 결과와
+    같은 사례가 앞에 온다(tests/test_voice_rag_eval.py 가 확인한다). 관문이 막으면 빈 목록이다.
+    """
+    return search_gated(text, top_k=TOP_K, min_similarity=0.0).matches
+
+
+def similarity_only_searcher(text: str) -> list[CaseMatch]:
+    """실험용(--similarity-only): 신원 가점·관문 없이 유사도만. 운영 경로가 아니다."""
     return search_voice_cases(text, min_similarity=0.0, top_k=TOP_K).matches
 
 
@@ -200,12 +215,16 @@ OTHER_SPEAKER = "상대"
 
 
 def query_text(row: dict, query_side: str = "all") -> str:
-    """질의 글. other 이면 turns 의 상대 발화만 쓴다. turns 가 없거나 상대 발화가 없으면 전체."""
+    """질의 글. other 이면 turns 의 상대 발화만 쓴다. turns 가 없거나 상대 발화가 없으면 전체.
+
+    운영처럼 mask_pii 를 거친다(평가셋은 휴대전화 번호만 가려 두었다). 운영은 STT 세그먼트를 줄바꿈으로
+    잇고 평가셋 text 는 공백으로 이어져 있어, 문장 나눔이 조금 다를 수 있다.
+    """
     if query_side == "other":
         other = [t["text"] for t in row.get("turns") or [] if t.get("speaker") == OTHER_SPEAKER]
         if other:
-            return "\n".join(other)
-    return row["text"]
+            return mask_pii("\n".join(other))
+    return mask_pii(row["text"])
 
 
 def apply_gate(results: Sequence[RowResult], gate_min: float, query_side: str = "all") -> list[RowResult]:
@@ -370,6 +389,10 @@ def _split_lines(name: str, entry: dict) -> str:
     )
 
 
+def normal_note(meta: dict) -> str:
+    return REAL_NORMAL_NOTE if meta.get("real_normals") else SYNTHETIC_WARNING
+
+
 def render_report(evaluation: dict, meta: dict) -> str:
     dev, test = evaluation["dev"], evaluation["test"]
     low, high = metrics.wilson(test["hits3"], test["n"])
@@ -393,9 +416,9 @@ def render_report(evaluation: dict, meta: dict) -> str:
         "",
         f"설정: {meta['settings']}",
         "",
-        "질의: 평가셋 각 행의 `text`(대본 전체). 화자 분리 정보가 없어 상대 화자 발화만으로는 재지 못했다.",
+        f"질의: 평가셋 각 행의 `text`(mask_pii 적용){', 상대 발화만(turns 가 없으면 전체)' if meta.get('query_side') == 'other' else ', 대본 전체'}.",
         "",
-        f"> {SYNTHETIC_WARNING}",
+        f"> {normal_note(meta)}",
         "",
         "## 운영 지점",
         "",
@@ -451,7 +474,10 @@ def _commit() -> str:
             ["git", *args], capture_output=True, text=True, cwd=EVAL_DIR
         ).stdout.strip()
 
-    return git("rev-parse", "--short", "HEAD") + ("+dirty" if git("status", "--porcelain") else "")
+    # 추적 파일 변경만 dirty 로 친다(추적하지 않는 파일은 결과에 영향이 없다)
+    return git("rev-parse", "--short", "HEAD") + (
+        "+dirty" if git("status", "--porcelain", "--untracked-files=no") else ""
+    )
 
 
 def _pairs(entries: Mapping[str, tuple[int, int]]) -> str:
@@ -491,6 +517,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--gate", type=float, nargs="?", const=search.VOICE_GATE_MIN, help="사례 첨부 관문 기준(값 없이 주면 운영 값)"
     )
+    parser.add_argument(
+        "--similarity-only", action="store_true", help="실험용: 신원 가점·관문 없이 유사도만(기본은 운영 경로)"
+    )
     parser.add_argument("--max-normal-rate", type=float, default=MAX_NORMAL_RATE)
     args = parser.parse_args(argv)
     if not args.dev_only and not args.label:
@@ -508,8 +537,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         searcher = lambda text: rank_all(text, tuned, ngram_sizes, sublinear_tf, args.chunk)  # noqa: E731
     elif tuned:
         searcher = make_searcher(load_cases(search.VOICE_CASES_DIR), ngram_sizes, sublinear_tf, args.chunk)
+    elif args.similarity_only or args.gate is not None:
+        searcher = similarity_only_searcher
     else:
-        # 운영 경로다. 첫 검색에 KB 로드와 색인 생성이 들어간다.
+        # 운영 경로(search_gated: 신원 가점 + 관문). 첫 검색에 KB 로드와 색인 생성이 들어간다.
         searcher = default_searcher
     if args.dev_only:
         rows = [row for row in rows if row["split"] == "dev"]
@@ -535,6 +566,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{', 상대 발화만(turns 없으면 전체)' if args.query_side == 'other' else ''}"
         f"{f', 신원 {args.identity} {args.identity_mode}' + f' +{args.identity_boost}' if args.identity else ''}"
         f"{f', 관문 >= {args.gate}' if args.gate is not None else ''}, "
+        f"{', 운영 경로(search_gated, 관문 >= ' + str(search.VOICE_GATE_MIN) + ')' if searcher is default_searcher else ''}, "
         f"정상 부착 상한 {_pct(args.max_normal_rate)}"
     )
     if args.dev_only:
@@ -558,6 +590,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "seed": SEED,
         "settings": settings,
         "code_threshold": search.VOICE_MIN_SIMILARITY,
+        "real_normals": any(not r.get("synthetic", True) for r in rows if r["label"] == "normal"),
+        "query_side": args.query_side,
         "latency": latency(results),
     }
     path = REPORTS / f"{meta['date']}-voice-rag-{args.label}.md"

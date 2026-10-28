@@ -96,3 +96,18 @@ def test_gate_training_normals_are_train_only_and_disjoint_from_eval_and_kb():
     train_groups = {r["group"] for r in rows}
     assert train_groups.isdisjoint(eval_groups)
     assert not any(f'group: "{g}"' in kb_text for g in train_groups)
+
+
+def test_stored_feature_hash_matches_current_lexicon():
+    # 어휘표(신원·끊지 말라는 말·요구 패턴)를 고치면 단계 신호 입력이 달라진다. 그땐 관문을 다시 학습하고
+    # voice_gate_train.py 가 새 해시를 모델 json 에 적는다.
+    data = json.loads(gate.MODEL_PATH.read_text(encoding="utf-8"))
+    assert data["feature_hash"] == gate.feature_hash()
+
+
+def test_model_from_dict_warns_on_lexicon_hash_mismatch(caplog):
+    data = json.loads(gate.MODEL_PATH.read_text(encoding="utf-8"))
+    data["feature_hash"] = "stale"
+    with caplog.at_level("WARNING", logger=gate.LOGGER.name):
+        gate.model_from_dict(data)
+    assert "different lexicon" in caplog.text

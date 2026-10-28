@@ -10,7 +10,7 @@ AI 진입점 (`ai.case`)
 | --- | --- |
 | `transcribe_call(audio: bytes, filename: str, *, runtime=None) -> TranscriptResult` | whisper STT + Sonnet 5.5 화자 분리. 내부 한도 STT 30초 + 분리 20초 |
 | `analyze_call(transcript, *, runtime=None, time_budget_s=40.0) -> VoiceCaseResult` | 주장 읽기 + 사례 검색 + 결정적 판정 |
-| `warm_up_voice_case_search()` | 사례 색인 미리 적재 |
+| `warm_up_voice_case_search()` | 사례 색인 미리 적재 (`from ai.case import warm_up_voice_case_search`. `ai.kb.search` 의 같은 이름 함수는 색인만 채우고 관문 모델은 읽지 않는다) |
 | `response_actions_for(answers, evidence)` (`ai.case.actions`) | Q1 답 -> 피해 대응 목록 |
 
 결과 형태: `contracts/schemas/voice-case-result.schema.json` (`VoiceCaseResult` 에서 생성, 어긋나면 AI 테스트가 실패합니다).
@@ -60,7 +60,7 @@ Render 환경 변수와 `.env.example` 에 추가해야 합니다.
 | `number_checks` | 상대가 말한 번호의 공식 대표번호 대조 줄 (`org_not_listed` 는 "공식이 아니다"가 아님) |
 | `checked` / `unchecked` (+`reason`) | 확인한 것 / 확인하지 못한 것. 둘을 섞지 않음 (`not_run` 과 `failed` 구분) |
 | `failures` | 실패 이유 문구 (`timeout`, `llm_error`, `invalid_output` 등). 화자 분리 실패는 여기가 아니라 `unchecked` 와 `inconclusive`·`caution` 으로 나타남 |
-| `similar_cases` | 비슷한 사례 (있을 때만). 사례 첨부 관문 점수가 낮으면 유사도가 높아도 비어 있을 수 있습니다 |
+| `similar_cases` | 비슷한 사례 (있을 때만). 사례 첨부 관문 점수가 낮으면 유사도가 높아도 비어 있을 수 있습니다. 가족·납치 유형 사례의 `similarity` 에는 지인 어휘 가점(+0.03)이 포함돼 원점수보다 조금 높습니다. 악성 확률로 표시하지 마세요 |
 | `explanation` | 부가 설명. 비어 있어도 카드는 나가야 함 |
 | `questions[0]` (Q1, `option_ids`: `entered_info`, `installed_app`, `sent_money`, `not_yet`) | 결과 아래 `이미 하신 게 있나요?` 리스트 카드. 라벨은 FE |
 

@@ -54,21 +54,30 @@ IDENTITY_PREFERRED_TYPES: dict[IdentityKind, frozenset[str]] = {
 }
 
 
-def search_by_identity(transcript: str) -> CaseSearchResult:
-    """대본의 신원 어휘로 사례 유형을 앞세워 검색한다. 어휘표만 쓰므로 읽기와 나란히 돌릴 수 있다."""
+def search_by_identity(
+    transcript: str, *, top_k: int = 3, min_similarity: float | None = None
+) -> CaseSearchResult:
+    """대본의 신원 어휘로 사례 유형을 앞세워 검색한다. 어휘표만 쓰므로 읽기와 나란히 돌릴 수 있다.
+
+    top_k·min_similarity 는 평가가 기준값을 훑을 때만 바꾼다. 운영은 기본값이다.
+    """
     preferred = frozenset().union(
         *(IDENTITY_PREFERRED_TYPES.get(kind, frozenset()) for kind in identity_kinds(transcript))
     )
-    return search_voice_cases(transcript, preferred_types=preferred)
+    return search_voice_cases(
+        transcript, top_k=top_k, min_similarity=min_similarity, preferred_types=preferred
+    )
 
 
-def search_gated(transcript: str) -> CaseSearchResult:
+def search_gated(
+    transcript: str, *, top_k: int = 3, min_similarity: float | None = None
+) -> CaseSearchResult:
     """신원 어휘 검색 뒤, 사례 첨부 관문 점수가 VOICE_GATE_MIN 미만이면 사례를 붙이지 않는다.
 
     관문은 붙일지만 정한다(판정·결론·근거는 그대로). 붙을 사례가 없으면 관문을 돌리지 않는다.
     관문 예외는 그대로 올린다. _search 가 사례 미첨부 + similar_cases unchecked(failed)로 처리한다.
     """
-    found = search_by_identity(transcript)
+    found = search_by_identity(transcript, top_k=top_k, min_similarity=min_similarity)
     if found.matches and attach_score(transcript) < search.VOICE_GATE_MIN:
         return found.model_copy(update={"matches": []})
     return found

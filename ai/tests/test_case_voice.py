@@ -472,7 +472,7 @@ def test_search_by_identity_prefers_family_types_only_with_acquaintance_words(mo
 
     seen = []
     monkeypatch.setattr(
-        voice, "search_voice_cases", lambda text, preferred_types=(): seen.append(set(preferred_types))
+        voice, "search_voice_cases", lambda text, preferred_types=(), **_: seen.append(set(preferred_types))
     )
     voice.search_by_identity("엄마 나 폰 고장나서 문자해")
     voice.search_by_identity("안녕하세요 택배입니다")
@@ -502,7 +502,7 @@ def _gate(monkeypatch, score):
             raise score
         return score
 
-    monkeypatch.setattr(voice, "search_by_identity", lambda text: _FOUND)
+    monkeypatch.setattr(voice, "search_by_identity", lambda text, **_: _FOUND)
     monkeypatch.setattr(voice, "attach_score", fake_score)
     return calls
 
@@ -523,7 +523,7 @@ def test_gate_at_or_above_min_keeps_cases(monkeypatch):
 
 def test_gate_is_skipped_when_nothing_to_attach(monkeypatch):
     calls = _gate(monkeypatch, 0.0)
-    monkeypatch.setattr(voice, "search_by_identity", lambda text: _COMPLETED)
+    monkeypatch.setattr(voice, "search_by_identity", lambda text, **_: _COMPLETED)
 
     assert voice.search_gated("대본") == _COMPLETED
     assert calls == []
@@ -546,8 +546,9 @@ def test_gate_failure_is_unchecked_failed_and_decision_unchanged(monkeypatch):
     assert result.evidence == baseline.evidence
 
 
-def test_gate_drop_does_not_change_conclusion(monkeypatch):
-    case = _v1()
+@pytest.mark.parametrize("path", CASE_FILES, ids=lambda p: p.stem)
+def test_gate_drop_does_not_change_conclusion(monkeypatch, path):
+    case = yaml.safe_load(path.read_text(encoding="utf-8"))
     _gate(monkeypatch, voice.search.VOICE_GATE_MIN + 0.05)
     attached = _runtime(case, Calls())
     attached.search_cases = voice.search_gated
@@ -557,7 +558,7 @@ def test_gate_drop_does_not_change_conclusion(monkeypatch):
     dropped.search_cases = voice.search_gated
     without = asyncio.run(analyze_call(_transcript(case), runtime=dropped))
 
-    assert with_cases.similar_cases.matches and without.similar_cases.matches == []
+    assert getattr(without.similar_cases, "matches", []) == []  # 검색을 안 하는 입력도 있다
     assert with_cases.conclusion is without.conclusion
     assert with_cases.evidence == without.evidence
 

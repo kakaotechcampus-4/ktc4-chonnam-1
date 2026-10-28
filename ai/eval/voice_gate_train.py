@@ -141,7 +141,7 @@ def main(argv=None) -> int:
     meta = {
         "trained_on": meta,
         "c": args.c,
-        "stage": not args.no_stage,
+        "use_stage": not args.no_stage,
         "nonneg_stage": not args.signed_stage,
         "stage_dropped": [n for n, on in zip(gate.STAGE_NAMES, active) if not on and not args.no_stage],
     }
