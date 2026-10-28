@@ -211,3 +211,19 @@ def test_threshold_ignores_qa_written_and_attach_is_split_by_source_kind_type():
     assert dev["attach_by_source"] == {"실제": (0, 2), "합성": (0, 1)}
     assert dev["attach_by_kind"]["qa_written"] == (1, 1)
     assert dev["attach_by_type"] == {"bank_service": (1, 3), "family": (0, 1)}
+
+
+def test_query_text_other_uses_only_counterpart_turns_else_full_text():
+    row = {
+        "text": "전체 대본",
+        "turns": [
+            {"speaker": "상대", "text": "계좌를 알려주세요"},
+            {"speaker": "사용자", "text": "네 알겠습니다"},
+            {"speaker": "상대", "text": "송금하세요"},
+        ],
+    }
+
+    assert voice_rag_eval.query_text(row, "other") == "계좌를 알려주세요\n송금하세요"
+    assert voice_rag_eval.query_text(row, "all") == "전체 대본"
+    assert voice_rag_eval.query_text({"text": "전체 대본"}, "other") == "전체 대본"
+    assert voice_rag_eval.query_text({"text": "전체", "turns": [{"speaker": "사용자", "text": "x"}]}, "other") == "전체"

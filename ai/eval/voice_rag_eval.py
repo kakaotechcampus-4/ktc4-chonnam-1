@@ -115,10 +115,25 @@ def make_searcher(
     return lambda text: rank(index, text)[:TOP_K]
 
 
-def run_search(rows: Sequence[dict], searcher: Searcher, query_head: int = 0) -> list[RowResult]:
+OTHER_SPEAKER = "상대"
+
+
+def query_text(row: dict, query_side: str = "all") -> str:
+    """질의 글. other 이면 turns 의 상대 발화만 쓴다. turns 가 없거나 상대 발화가 없으면 전체."""
+    if query_side == "other":
+        other = [t["text"] for t in row.get("turns") or [] if t.get("speaker") == OTHER_SPEAKER]
+        if other:
+            return "\n".join(other)
+    return row["text"]
+
+
+def run_search(
+    rows: Sequence[dict], searcher: Searcher, query_head: int = 0, query_side: str = "all"
+) -> list[RowResult]:
     results = []
     for row in rows:
-        text = row["text"][:query_head] if query_head else row["text"]
+        text = query_text(row, query_side)
+        text = text[:query_head] if query_head else text
         start = time.perf_counter()
         matches = searcher(text)
         results.append(RowResult(row, matches, time.perf_counter() - start))
@@ -364,6 +379,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--tf", choices=("raw", "log"), help="TF 가중: 원 빈도 또는 1+ln(tf)")
     parser.add_argument("--chunk", type=int, default=0, help="KB 대본을 이 글자 수 조각으로 나눈다(절반 겹침)")
     parser.add_argument("--query-head", type=int, default=0, help="질의 대본의 앞 N 자만 쓴다")
+    parser.add_argument(
+        "--query-side", choices=("all", "other"), default="all", help="other: turns 가 있는 질의는 상대 발화만 쓴다"
+    )
     parser.add_argument("--extra-normals", type=Path, help="로컬 정상 평가셋(jsonl). dev/test 정상 질의에 더한다")
     parser.add_argument("--max-normal-rate", type=float, default=MAX_NORMAL_RATE)
     args = parser.parse_args(argv)
@@ -384,11 +402,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         searcher = default_searcher
     if args.dev_only:
         rows = [row for row in rows if row["split"] == "dev"]
-    results = run_search(rows, searcher, args.query_head)
+    results = run_search(rows, searcher, args.query_head, args.query_side)
     evaluation = evaluate(results, types, include_test=not args.dev_only, max_rate=args.max_normal_rate)
     settings = (
         f"문자 n-gram {ngram_sizes} TF-IDF 코사인, TF {'1+ln(tf)' if sublinear_tf else '원 빈도'}, "
-        f"KB 조각 {args.chunk or '없음(대본 전체)'}, 질의 {f'앞 {args.query_head}자' if args.query_head else '대본 전체'}, "
+        f"KB 조각 {args.chunk or '없음(대본 전체)'}, 질의 {f'앞 {args.query_head}자' if args.query_head else '대본 전체'}"
+        f"{', 상대 발화만(turns 없으면 전체)' if args.query_side == 'other' else ''}, "
         f"정상 부착 상한 {_pct(args.max_normal_rate)}"
     )
     if args.dev_only:
