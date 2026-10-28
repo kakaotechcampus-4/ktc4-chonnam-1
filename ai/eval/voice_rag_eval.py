@@ -11,7 +11,6 @@ test 는 설정을 정한 뒤 한 번만 본다.
 """
 
 import argparse
-import json
 import re
 import statistics
 import subprocess
@@ -32,9 +31,9 @@ from ai.case.privacy import mask_pii
 from ai.case.voice import IDENTITY_PREFERRED_TYPES, search_gated
 from ai.kb import search
 from ai.kb.normalize import normalize
-from ai.kb.search import Case, build_index, load_cases, rank, search_voice_cases
+from ai.kb.search import Case, build_index, case_paths, load_cases, rank, search_voice_cases
 from ai.types import CaseMatch
-from voice_rag_build import SEED
+from voice_rag_build import SEED, load_dataset
 
 EVAL_DIR = Path(__file__).resolve().parent
 DATASET = EVAL_DIR / "datasets" / "voice_rag.jsonl"
@@ -62,17 +61,14 @@ class RowResult:
 
 
 def load_rows(path: Path = DATASET) -> list[dict]:
-    return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    # 옆에 *_licensed.jsonl 이 있으면 함께 읽는다. 공개 클론에서는 합성 행만 남는다.
+    return load_dataset(path)
 
 
 def kb_types(cases_dir: Path = search.VOICE_CASES_DIR) -> dict[str, str]:
     # 통화 유형은 CaseMatch.categories(문자 주제)에 없어서 레코드 frontmatter 에서 읽는다.
     types = {}
-    for path in sorted(cases_dir.glob("VC-*.md")):
+    for path in case_paths(cases_dir):
         match = _FRONTMATTER_RE.match(path.read_text(encoding="utf-8"))
         if match is not None:
             meta = yaml.safe_load(match.group(1))
@@ -374,6 +370,11 @@ def _pct(value: float) -> str:
     return f"{value * 100:.1f}%"
 
 
+def _excerpt(row: Mapping) -> str:
+    # 리포트는 저장소에 올라간다. 재배포 허락이 없는 실제 대본은 앞부분도 싣지 않는다.
+    return _cell(row["text"]) if row.get("synthetic") else "(실제 대본, 비공개)"
+
+
 def _cell(text: str, limit: int = 80) -> str:
     text = text.replace("\r", " ").replace("\n", " ").replace("|", "\\|")
     return text if len(text) <= limit else text[:limit] + "…"
@@ -463,7 +464,7 @@ def render_report(evaluation: dict, meta: dict) -> str:
         top = result.matches[0] if result.matches else None
         case = f"{top.case_id} ({meta['types'].get(top.case_id, '?')})" if top else "—"
         lines.append(
-            f"| {result.row['id']} | {result.row['type']} | {metrics.top1(result.matches):.4f} | {case} | {_cell(result.row['text'])} |"
+            f"| {result.row['id']} | {result.row['type']} | {metrics.top1(result.matches):.4f} | {case} | {_excerpt(result.row)} |"
         )
     return "\n".join([*lines, ""])
 

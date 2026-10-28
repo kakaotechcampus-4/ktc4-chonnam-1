@@ -13,6 +13,9 @@ Task 1 데이터셋 `D:\voice\dataset\voice_calls.jsonl`(저장소 밖)을 `ai/e
 - KB 에는 보이스피싱만 둔다. 정상 통화와 dev·test 는 `ai/eval/datasets/voice_rag.jsonl` 에 있다.
 - 휴대폰 번호 모양은 `<전화번호>` 로 바꿨다. 주민번호·카드·계좌 번호는 Task 1 에서 이미 가렸다.
 - 검수 없이 자동 등재했다(스펙 D5). `status: curated`, `reviewer: auto-import-2026-10-28`.
+- 실제 대본(금감원 게시판·KorCCVi, 합성 아님)은 `licensed/` 하위 폴더와 `ai/eval/datasets/voice_rag_licensed.jsonl` 에
+  둔다. 재배포 허락이 없어 `.gitignore` 로 저장소에서 뺐다. 공개 클론에는 합성 레코드만 있어 검색 결과가 로컬과 다르다.
+  `search.case_paths()` 가 두 폴더를 파일 이름 순으로 함께 읽는다.
 
 데이터셋을 바꾸면 빌드 스크립트로 KB 와 평가셋을 함께 다시 만들고 `voice_rag_eval.py` 로 기준값을 다시 정한다.
 레코드를 손으로 고치지 않는다.

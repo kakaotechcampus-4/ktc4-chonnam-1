@@ -79,3 +79,8 @@ target/
 
 # ── SDD 작업 공간 (git 추적 제외) ─────────────────
 .superpowers/
+
+# ── 재배포 허락이 없는 통화 대본 (금감원·KorCCVi 원문) ──────────
+# 로컬에서만 쓴다. D:\voice 데이터셋에서 ai/eval/voice_rag_build.py 로 다시 만든다.
+ai/src/ai/kb/voice_cases/licensed/
+ai/eval/datasets/voice_rag_licensed.jsonl

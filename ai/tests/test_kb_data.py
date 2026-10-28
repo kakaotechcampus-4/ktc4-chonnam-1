@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from ai.kb.normalize import normalize
-from ai.kb.search import CASES_DIR, VOICE_CASES_DIR, load_cases, search_cases
+from ai.kb.search import CASES_DIR, LICENSED_SUBDIR, VOICE_CASES_DIR, case_paths, load_cases, search_cases
 from ai.types import CategoryCode, MessageDoubt
 
 DATASETS = Path(__file__).resolve().parents[1] / "eval" / "datasets"
@@ -388,11 +388,17 @@ VOICE_NORMAL_TYPES = {
 }
 
 
+def _voice_rag_rows() -> list[dict]:
+    # 실제 대본 행은 공개 저장소 밖(voice_rag_licensed.jsonl)에 있다. 있으면 함께 검사한다.
+    licensed = DATASETS / "voice_rag_licensed.jsonl"
+    return (_load_jsonl(licensed.name) if licensed.exists() else []) + _load_jsonl("voice_rag.jsonl")
+
+
 def _voice_records() -> list[tuple[Path, dict]]:
     import yaml
 
     records = []
-    for path in sorted(VOICE_CASES_DIR.glob("VC-*.md")):
+    for path in case_paths(VOICE_CASES_DIR):
         match = re.match(r"\A---\r?\n(.*?)\r?\n---", path.read_text(encoding="utf-8"), re.DOTALL)
         assert match is not None, f"{path.name}: frontmatter 없음"
         records.append((path, yaml.safe_load(match.group(1))))
@@ -423,6 +429,13 @@ def test_voice_records_follow_case_format():
         assert meta["categories"] == [], name
 
 
+def test_public_voice_files_hold_synthetic_only():
+    # 재배포 허락이 없는 실제 대본은 licensed 폴더·파일에만 둔다. 그 밖은 저장소에 올라간다.
+    for path, meta in _voice_records():
+        assert meta["synthetic"] is (path.parent.name != LICENSED_SUBDIR), path.name
+    assert all(row["synthetic"] for row in _load_jsonl("voice_rag.jsonl"))
+
+
 def test_every_voice_record_is_indexed():
     assert len(load_cases(VOICE_CASES_DIR)) == len(_voice_records())
 
@@ -432,13 +445,13 @@ def test_voice_records_carry_no_obvious_personal_data():
     for path, meta in _voice_records():
         assert not RRN_RE.search(meta["variants"][0]), path.name
         assert not PHONE_RE.search(meta["variants"][0]), path.name
-    for row in _load_jsonl("voice_rag.jsonl"):
+    for row in _voice_rag_rows():
         assert not RRN_RE.search(row["text"]), row["id"]
         assert not PHONE_RE.search(row["text"]), row["id"]
 
 
 def test_voice_rag_rows_are_labelled_and_split():
-    rows = _load_jsonl("voice_rag.jsonl")
+    rows = _voice_rag_rows()
     assert len({row["id"] for row in rows}) == len(rows)
     for row in rows:
         assert row["split"] in {"dev", "test"}, row["id"]
@@ -455,7 +468,7 @@ def test_voice_groups_do_not_leak_between_kb_and_queries():
     # 자기 묶음을 찾아 hit@3 이 부풀려진다. dev·test 사이도 같다.
     kb_groups = {meta["group"] for _, meta in _voice_records()}
     splits = defaultdict(set)
-    for row in _load_jsonl("voice_rag.jsonl"):
+    for row in _voice_rag_rows():
         splits[row["group"]].add(row["split"])
 
     assert kb_groups & set(splits) == set()
@@ -465,6 +478,6 @@ def test_voice_groups_do_not_leak_between_kb_and_queries():
 def test_voice_kb_holds_phishing_only_and_is_disjoint_from_queries():
     kb_ids = {meta["dataset_id"] for _, meta in _voice_records()}
     kb_normalized = {meta["normalized"] for _, meta in _voice_records()}
-    for row in _load_jsonl("voice_rag.jsonl"):
+    for row in _voice_rag_rows():
         assert row["id"] not in kb_ids, row["id"]
         assert normalize(row["text"]) not in kb_normalized, row["id"]

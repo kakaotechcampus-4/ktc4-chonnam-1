@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ai.kb.normalize import normalize
-from ai.kb.search import VOICE_CASES_DIR
+from ai.kb.search import LICENSED_SUBDIR, VOICE_CASES_DIR, case_paths
 
 EVAL_DIR = Path(__file__).resolve().parent
 DATASET = EVAL_DIR / "datasets" / "voice_rag.jsonl"
@@ -137,16 +137,22 @@ def render_case(case_id: str, row: dict) -> str:
     return "\n".join(lines)
 
 
+def licensed_dataset(dataset: Path) -> Path:
+    return dataset.with_name(dataset.stem + "_licensed" + dataset.suffix)
+
+
 def build(rows: Sequence[dict], cases_dir: Path, dataset: Path) -> tuple[int, int]:
     splits = assign_splits(rows)
-    for old in cases_dir.glob("VC-*.md"):
+    for old in case_paths(cases_dir):
         old.unlink()
     cases_dir.mkdir(parents=True, exist_ok=True)
+    (cases_dir / LICENSED_SUBDIR).mkdir(exist_ok=True)
 
     kb_rows = [row for row in rows if splits[row["group"]] == "kb"]
     for number, row in enumerate(kb_rows, start=1):
         case_id = f"VC-{number:04d}"
-        (cases_dir / f"{case_id}.md").write_text(render_case(case_id, row), encoding="utf-8")
+        folder = cases_dir if row["synthetic"] else cases_dir / LICENSED_SUBDIR
+        (folder / f"{case_id}.md").write_text(render_case(case_id, row), encoding="utf-8")
 
     eval_rows = [
         {key: mask(row[key]) if key == "text" else row.get(key) for key in EVAL_KEYS}
@@ -155,10 +161,21 @@ def build(rows: Sequence[dict], cases_dir: Path, dataset: Path) -> tuple[int, in
         for row in rows
         if splits[row["group"]] != "kb"
     ]
-    dataset.write_text(
-        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in eval_rows), encoding="utf-8"
-    )
+    for path, public in ((dataset, True), (licensed_dataset(dataset), False)):
+        path.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in eval_rows if bool(row["synthetic"]) is public),
+            encoding="utf-8",
+        )
     return len(kb_rows), len(eval_rows)
+
+
+def load_dataset(dataset: Path = DATASET) -> list[dict]:
+    """licensed 평가셋(있으면)과 공개 평가셋을 합쳐 읽는다. 빌드 때와 같은 순서다(실제 대본이 앞)."""
+    rows = []
+    for path in (licensed_dataset(dataset), dataset):
+        if path.exists():
+            rows += [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return rows
 
 
 def main(argv: Sequence[str] | None = None) -> int:

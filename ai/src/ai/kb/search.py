@@ -23,6 +23,8 @@ LOGGER = logging.getLogger(__name__)
 
 CASES_DIR = Path(__file__).resolve().parent / "case_examples"
 VOICE_CASES_DIR = Path(__file__).resolve().parent / "voice_cases"
+# 재배포 허락이 없는 실제 통화 대본은 이 하위 폴더에 둔다. 공개 저장소에는 올리지 않는다(.gitignore).
+LICENSED_SUBDIR = "licensed"
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---", re.DOTALL)
 # 폴더마다 락을 따로 쓴다. 통화 색인 적재가 문자 검색을 막지 않게 하려는 것이다
 _LOCKS_GUARD = threading.Lock()
@@ -201,13 +203,23 @@ def load_cases(cases_dir: Path = CASES_DIR) -> tuple[Case, ...]:
         return _load_cases(Path(cases_dir))
 
 
+def case_paths(cases_dir: Path, pattern: str = "VC-*.md") -> list[Path]:
+    """KB 폴더와 licensed 하위 폴더의 레코드를 파일 이름 순으로 돌려줍니다.
+
+    licensed 폴더가 없는 공개 클론에서는 공개 레코드만 나옵니다.
+    """
+    cases_dir = Path(cases_dir)
+    paths = [*cases_dir.glob(pattern), *(cases_dir / LICENSED_SUBDIR).glob(pattern)]
+    return sorted(paths, key=lambda path: path.name)
+
+
 @lru_cache(maxsize=8)
 def _load_cases(cases_dir: Path) -> tuple[Case, ...]:
     if not cases_dir.is_dir():
         return ()
 
     cases = []
-    for path in sorted(cases_dir.glob("*.md")):
+    for path in case_paths(cases_dir, "*.md"):
         case = _parse_case(path)
         if case is not None:
             cases.append(case)

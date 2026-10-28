@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from ai.case import attach_gate as gate
+from ai.kb.search import case_paths
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "eval"))
 
@@ -91,8 +92,8 @@ def test_gate_training_normals_are_train_only_and_disjoint_from_eval_and_kb():
     monologues = [r for r in rows if r.get("kind") == "monologue"]
     assert len({r["group"] for r in monologues}) >= 12
     assert all({t["speaker"] for t in r["turns"]} == {"상대"} for r in monologues)
-    eval_groups = {r["group"] for r in _rows(voice_rag_build.DATASET)}
-    kb_text = "".join(p.read_text(encoding="utf-8") for p in voice_rag_build.VOICE_CASES_DIR.glob("VC-*.md"))
+    eval_groups = {r["group"] for r in voice_rag_build.load_dataset()}
+    kb_text = "".join(p.read_text(encoding="utf-8") for p in case_paths(voice_rag_build.VOICE_CASES_DIR))
     train_groups = {r["group"] for r in rows}
     assert train_groups.isdisjoint(eval_groups)
     assert not any(f'group: "{g}"' in kb_text for g in train_groups)

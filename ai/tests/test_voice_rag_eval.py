@@ -103,10 +103,10 @@ def test_new_synthetic_groups_split_apart_from_existing_ones():
 def _kb_rows():
     import re
 
-    from ai.kb.search import VOICE_CASES_DIR
+    from ai.kb.search import VOICE_CASES_DIR, case_paths
 
     rows = []
-    for path in sorted(VOICE_CASES_DIR.glob("VC-*.md")):
+    for path in case_paths(VOICE_CASES_DIR):
         text = path.read_text(encoding="utf-8")
         rows.append(
             {
@@ -119,11 +119,7 @@ def _kb_rows():
 
 
 def test_committed_voice_data_has_no_overlap_no_normal_in_kb_and_no_restricted_source():
-    dataset = [
-        json.loads(line)
-        for line in voice_rag_build.DATASET.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    dataset = voice_rag_build.load_dataset()
     kb = _kb_rows()
 
     kb_groups = {row["group"] for row in kb}
@@ -140,11 +136,7 @@ def test_committed_voice_data_has_no_overlap_no_normal_in_kb_and_no_restricted_s
 
 def test_new_minority_templates_meet_split_floor():
     kb = _kb_rows()
-    dataset = [
-        json.loads(line)
-        for line in voice_rag_build.DATASET.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    dataset = voice_rag_build.load_dataset()
     for kind in ("family_impersonation", "kidnapping", "account_recruitment", "other_impersonation"):
         kb_n = {r["group"] for r in kb if r["type"] == kind and r["group"].startswith("synth2-")}
         dev = {r["group"] for r in dataset if r["type"] == kind and r["split"] == "dev" and r["group"].startswith("synth2-")}
@@ -154,11 +146,7 @@ def test_new_minority_templates_meet_split_floor():
 
 
 def test_new_synthetic_eval_rows_carry_turns_and_no_source_url():
-    rows = [
-        json.loads(line)
-        for line in voice_rag_build.DATASET.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    rows = voice_rag_build.load_dataset()
     new = [row for row in rows if row["group"].startswith("synth2-")]
     assert new
     for row in new:
