@@ -27,6 +27,7 @@ import yaml
 import rag_metrics as metrics
 from ai.case.lexicon import identity_kinds
 from ai.case.types import IdentityKind
+from ai.case.voice import IDENTITY_PREFERRED_TYPES
 from ai.kb import search
 from ai.kb.normalize import normalize
 from ai.kb.search import Case, build_index, load_cases, rank, search_voice_cases
@@ -106,8 +107,8 @@ def chunked(cases: Sequence[Case], size: int) -> list[Case]:
 
 # 신원 주장 종류별로 앞세울 사례 유형. 신원 어휘표는 기관·지인만 낸다.
 IDENTITY_TYPES: dict[IdentityKind, frozenset[str]] = {
-    IdentityKind.ACQUAINTANCE: frozenset({"family_impersonation", "kidnapping"}),
-    IdentityKind.INSTITUTION: frozenset({"institution_impersonation", "loan_fraud"}),
+    **IDENTITY_PREFERRED_TYPES,  # 운영 대응표
+    IdentityKind.INSTITUTION: frozenset({"institution_impersonation", "loan_fraud"}),  # 실험용, 채택 안 함
 }
 IDENTITY_SETS = {
     "all": tuple(IDENTITY_TYPES),
@@ -508,7 +509,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"문자 n-gram {ngram_sizes} TF-IDF 코사인, TF {'1+ln(tf)' if sublinear_tf else '원 빈도'}, "
         f"KB 조각 {args.chunk or '없음(대본 전체)'}, 질의 {f'앞 {args.query_head}자' if args.query_head else '대본 전체'}"
         f"{', 상대 발화만(turns 없으면 전체)' if args.query_side == 'other' else ''}"
-        f"{f', 신원 {args.identity} {args.identity_mode}' + (f' +{args.identity_boost}' if args.identity_mode == 'boost' else '') if args.identity else ''}, "
+        f"{f', 신원 {args.identity} {args.identity_mode}' + f' +{args.identity_boost}' if args.identity else ''}, "
         f"정상 부착 상한 {_pct(args.max_normal_rate)}"
     )
     if args.dev_only:

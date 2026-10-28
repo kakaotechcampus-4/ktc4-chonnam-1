@@ -229,7 +229,10 @@ def _load_index(cases_dir: Path, ngram_sizes: tuple[int, ...], sublinear_tf: boo
 def boost_types(
     matches: Sequence[CaseMatch], types: Mapping[str, str], preferred: Collection[str], boost: float
 ) -> list[CaseMatch]:
-    """앞세울 유형 사례의 유사도에 boost 를 더해 다시 정렬한다. preferred 가 비면 그대로다."""
+    """앞세울 유형 사례의 유사도에 boost 를 더해 다시 정렬한다. preferred 가 비면 그대로다.
+
+    가점이 붙은 사례의 similarity 에는 boost 가 포함된다(원점수가 아니다).
+    """
     if not preferred:
         return list(matches)
     boosted = [

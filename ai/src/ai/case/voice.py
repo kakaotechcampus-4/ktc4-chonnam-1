@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from ai.case.gate import decide_call
-from ai.case.lexicon import read_with_lexicon
+from ai.case.lexicon import identity_kinds, read_with_lexicon
 from ai.case.privacy import mask_transcript
 from ai.case.types import (
     ClaimReadingResult,
@@ -32,7 +32,6 @@ from ai.case.types import (
 )
 from ai.case.verify import VerifyResult, verify_call
 from ai.kb.numbers import check_phone_number, find_numbers, resolve_org
-from ai.case.lexicon import identity_kinds
 from ai.kb.search import search_voice_cases
 from ai.llm.claims import TIMEOUT_SECONDS as READ_BUDGET_S
 from ai.llm.claims import read_claims

@@ -467,7 +467,7 @@ def test_phone_check_error_marks_phone_number_failed():
     assert (UncheckedItem.PHONE_NUMBER, UncheckedReason.NOT_APPLICABLE) not in items
 
 
-def test_search_by_identity_prefers_family_types_only_with_claim(monkeypatch):
+def test_search_by_identity_prefers_family_types_only_with_acquaintance_words(monkeypatch):
     from ai.case import voice
 
     seen = []
@@ -479,3 +479,9 @@ def test_search_by_identity_prefers_family_types_only_with_claim(monkeypatch):
     voice.search_by_identity("서울지검 검사입니다")
 
     assert seen == [{"family_impersonation", "kidnapping"}, set(), set()]
+
+
+def test_default_runtime_search_is_identity_aware():
+    from ai.case import voice
+
+    assert voice.VoiceRuntime().search_cases is voice.search_by_identity

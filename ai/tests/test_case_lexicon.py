@@ -124,3 +124,12 @@ def test_identity_kinds_from_text():
     assert identity_kinds("엄마 나 폰 고장났어") == {IdentityKind.ACQUAINTANCE}
     assert identity_kinds("서울중앙지검 검사입니다") == {IdentityKind.INSTITUTION}
     assert identity_kinds("오늘 날씨가 좋네요") == set()
+
+
+def test_acquaintance_pattern_ignores_lookalike_words():
+    from ai.case.lexicon import ACQUAINTANCE_PATTERN
+
+    for text in ("이모티콘 보내드려요", "엄마손파이 세트", "어머니회 모임", "친구 추천 이벤트", "아버지뻘 되시는"):
+        assert not ACQUAINTANCE_PATTERN.search(text), text
+    for text in ("엄마 나야", "엄마, 폰 고장났어", "아빠가 사고 났대", "이모한테 말하지 마", "나 아들인데 급해", "친구 계좌로"):
+        assert ACQUAINTANCE_PATTERN.search(text), text
