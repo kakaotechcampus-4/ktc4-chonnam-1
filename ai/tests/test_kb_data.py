@@ -414,7 +414,8 @@ def test_voice_records_follow_case_format():
         assert isinstance(meta["synthetic"], bool), name
         assert meta["origin"] == ("synthetic" if meta["synthetic"] else "web_public"), name
         if meta["synthetic"]:
-            assert meta["source_url"] is None, name
+            # 합성 대본은 없거나, 틀을 만들 때 참고한 국내 수법 안내·보도 주소다.
+            assert meta["source_url"] is None or re.match(r"https?://", meta["source_url"]), name
         else:
             assert re.match(r"https?://", meta["source_url"]), name
         assert str(meta["group"]).strip() and str(meta["dataset_id"]).strip(), name

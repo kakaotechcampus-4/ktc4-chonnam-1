@@ -36,16 +36,11 @@ def _order(group: str) -> str:
     return hashlib.sha256(f"{SEED}:{group}".encode()).hexdigest()
 
 
-def assign_splits(rows: Sequence[dict]) -> dict[str, str]:
-    """group 을 kb·dev·test 에 나눈다. 같은 group 은 한 분할에만 간다.
+NEW_PREFIX = "synth2-"  # D:/voice/scripts/synth_v2.py 가 만든 소수 유형 보강 틀
+NEW_MIN_EVAL = 6  # 새 틀은 유형마다 dev·test 에 이만큼 이상 둔다. 나머지(절반 이상)는 KB.
 
-    유형마다 따로 나눈다. 묶어서 해시로만 자르면 group 이 몇 개뿐인 유형(가족 사칭
-    3개)이 KB 나 test 에서 빠질 수 있다. 정상 통화는 KB 에 넣지 않고 dev·test 에 반씩 둔다.
-    """
-    groups = defaultdict(set)
-    for row in rows:
-        groups[(row["label"], row["type"])].add(row["group"])
 
+def _split_old(groups: dict[tuple[str, str], set[str]]) -> dict[str, str]:
     splits = {}
     for (label, _), members in groups.items():
         ordered = sorted(members, key=_order)
@@ -62,6 +57,38 @@ def assign_splits(rows: Sequence[dict]) -> dict[str, str]:
         for i, group in enumerate(ordered):
             splits[group] = "kb" if i < kb else "dev" if i < kb + dev else "test"
     return splits
+
+
+def _split_new(groups: dict[tuple[str, str], set[str]]) -> dict[str, str]:
+    splits = {}
+    for (label, _), members in groups.items():
+        ordered = sorted(members, key=_order)
+        n = len(ordered)
+        if label == "normal":
+            dev = (n + 1) // 2
+            for i, group in enumerate(ordered):
+                splits[group] = "dev" if i < dev else "test"
+            continue
+        # KB 가 절반 아래로 내려가지 않는 한도에서 dev·test 를 NEW_MIN_EVAL 이상 둔다.
+        each = max(NEW_MIN_EVAL, round(DEV_SHARE * n))
+        each = min(each, n // 4)
+        for i, group in enumerate(ordered):
+            splits[group] = "kb" if i < n - 2 * each else "dev" if i < n - each else "test"
+    return splits
+
+
+def assign_splits(rows: Sequence[dict]) -> dict[str, str]:
+    """group 을 kb·dev·test 에 나눈다. 같은 group 은 한 분할에만 간다.
+
+    유형마다 따로 나눈다. 묶어서 해시로만 자르면 group 이 몇 개뿐인 유형(가족 사칭
+    3개)이 KB 나 test 에서 빠질 수 있다. 정상 통화는 KB 에 넣지 않고 dev·test 에 반씩 둔다.
+    새 합성 틀(synth2-)은 기존 group 과 따로 나눈다. 새 틀이 늘어도 기존 레코드의 분할이 바뀌지 않게 한다.
+    """
+    old, new = defaultdict(set), defaultdict(set)
+    for row in rows:
+        target = new if row["group"].startswith(NEW_PREFIX) else old
+        target[(row["label"], row["type"])].add(row["group"])
+    return _split_old(old) | _split_new(new)
 
 
 def mask(text: str) -> str:
