@@ -4,7 +4,7 @@
     "outputs": [
       {
         "textCard": {
-          "description": "다시 전화가 와도 받지 말고 번호를 차단하세요.\n{{ stop_line }}\n\n신고·상담은 피싱 통합 상담 1394에서\n24시간 받을 수 있어요.\n\n나중에 무언가 했다면 아래 목록에서 다시 골라 주세요.",
+          "description": "다시 전화가 와도 받지 말고 번호를 차단하세요.\n{{ stop_line }}\n\n신고·상담은 피싱 통합 상담 1394에서\n24시간 받을 수 있어요.\n\n나중에 무언가 했다면 위 목록에서 다시 골라 주세요.",
           "buttonLayout": "vertical",
           "buttons": [
             {
