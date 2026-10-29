@@ -1,0 +1,26 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "{{ headline }}",
+          "description": "{{ stop_line }}\n{{ verify_line }}\n\n{{ call_claims }}확인한 것\n{{ checked }}\n\n확인하지 못한 것\n{{ unchecked }}",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "112 신고",
+              "action": "phone",
+              "phoneNumber": "112"
+            },
+            {
+              "label": "자세히 보기",
+              "action": "block",
+              "blockId": "6aad3abfe745d3358bd90c8d"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
