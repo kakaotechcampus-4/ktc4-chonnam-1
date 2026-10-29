@@ -395,4 +395,4 @@ VE3을 R4로 합칠지는 4절 Q-4.
 | B2 신고 상담 | 수정 | `basicCard` → `listCard`, 항목 4개 |
 | R4·R5·K1·K4·K5 | 수정 | 문자·녹음 공용 문구 |
 
-관리자센터에 아직 없는 블록은 빈칸으로 두었다: `block_v0`, `block_v0a_iphone`, `block_v0a_galaxy`, `block_b2c`, `block_b2d`, `block_answer`, `block_voice_consent`.
+관리자센터 블록 ID는 2026-10-29 채웠다(`frontend/kakao-templates/README.md` "블록 ID" 표). Q1 답변 스킬 블록(`block_answer`)도 채웠다.

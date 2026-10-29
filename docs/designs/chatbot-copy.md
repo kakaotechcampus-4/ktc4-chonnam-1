@@ -1048,7 +1048,7 @@ R2(공식 주소 일치)와 링크 없는 `판단하기 어려워요`(R6b·V1)�
 | `sent_money` | `돈이나 상품권을 보냈어요` | `돈이나 상품권을 보냈어요` | K6 |
 | `not_yet` | `아직 안 했어요` | `아직 안 했어요` | A2 |
 
-- 항목은 `action: "block"`, `blockId: {{ block_answer }}`, `extra: {case_id, question_id: "already_acted", option_id}`이다.
+- 항목은 `action: "block"`, `blockId`: Q1 답변 스킬 블록 `6ae336cd25d4bc48e2bb8f2a`(2026-10-29), `extra: {case_id, question_id: "already_acted", option_id}`이다.
   답변 블록은 관리자센터에 새로 만들고 `/kakao/skill` 스킬을 연결한다(§10 FE1).
 - 녹음 결과에는 링크가 없어서 `링크만 눌렀어요`를 뺀다. 통화에서는 입력이 아니라 말로 알려 주므로 `정보를 알려 줬어요`로 쓴다.
 - 설계 문서의 `unknown`(모르겠어요)은 넣지 않는다. 대응이 없는 답이라 `아직 안 했어요`와 하는 일이 같고, 항목이 5개를 넘는다.

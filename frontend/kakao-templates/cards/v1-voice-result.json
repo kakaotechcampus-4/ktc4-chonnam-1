@@ -16,7 +16,7 @@
             {
               "label": "다른 녹음 확인하기",
               "action": "block",
-              "blockId": "{{ block_v0 }}"
+              "blockId": "6ae3302425d4bc48e2bb8a61"
             }
           ]
         }

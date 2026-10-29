@@ -21,12 +21,12 @@
             {
               "title": "전화만 받았어요",
               "action": "block",
-              "blockId": "{{ block_b2c }}"
+              "blockId": "6ae330ff25d4bc48e2bb8c57"
             },
             {
               "title": "통화 중 돈·정보를 줬어요",
               "action": "block",
-              "blockId": "{{ block_b2d }}"
+              "blockId": "6ae331f080857534c13f8390"
             }
           ]
         }

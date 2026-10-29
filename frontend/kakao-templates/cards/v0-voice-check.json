@@ -11,12 +11,12 @@
             {
               "label": "아이폰에서 보내는 법",
               "action": "block",
-              "blockId": "{{ block_v0a_iphone }}"
+              "blockId": "6ae3305d80857534c13f81ea"
             },
             {
               "label": "갤럭시에서 보내는 법",
               "action": "block",
-              "blockId": "{{ block_v0a_galaxy }}"
+              "blockId": "6ae330850100875ffb658da9"
             }
           ]
         }

@@ -11,7 +11,7 @@
             {
               "label": "동의하고 확인하기",
               "action": "block",
-              "blockId": "{{ block_voice_consent }}"
+              "blockId": "6ae335a8b074221a79bea79f"
             },
             {
               "label": "개인정보 처리 안내",
