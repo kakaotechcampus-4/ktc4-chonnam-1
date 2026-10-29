@@ -30,6 +30,14 @@
 | `signal_title` `observed` `reason` `unverified` | 자세히 보기 캐러셀 | 결과의 `details.signals`(검증된 근거)만. 채우는 규칙과 신호별 문구는 `docs/designs/chatbot-copy.md` 4절 "빈칸 채우는 규칙". 128자 안 |
 | `headline` `action_guide` `message_claims` `checked` `unchecked` | R9 | BE가 분석 결과로 채운다. 규칙은 `docs/designs/chatbot-copy.md` 3절 R9 "빈칸 채우는 규칙". 문자에서 의심 정황(민감한 요구 행동)을 확인하면 `headline`·`action_guide`가 주의 갈래로 바뀐다(PR #86 멘토 리뷰). `message_claims`는 칸 제목까지 포함하고, 줄이 없으면 빈 문자열이다. 이전 `org_label`은 `action_guide` 안으로, `message_reason`은 `message_claims`로 합쳤다. 채우기 전에 배포하면 빈칸이 글자 그대로 보인다. **지금 `r9-uncertain.json`은 옛 빈칸(`org_label`·`checked`·`unchecked`·`message_reason`) 버전이다**(2026-10-27 `73d3fc6`). BE가 렌더러를 구현할 때 `git revert 73d3fc6`으로 새 빈칸 버전을 되살린다 |
 | `guidance_text` | 자세히 보기 공식 확인 방법(C4) | BE가 `find_guidance()` 결과로 채운다(이슈 #69). 규칙은 `docs/designs/chatbot-copy.md` 4절 C4 |
+| `block_v0` `block_v0a_iphone` `block_v0a_galaxy` `block_b2c` `block_b2d` | 보이스피싱 카드 버튼·B2 항목 | 관리자센터에 블록을 만든 뒤 아래 "블록 ID" 표에 더하고 채운다 (2026-10-29, `docs/designs/voice-phishing-flow.md` 6절) |
+| `block_answer` `items` | Q1 (`q1-already-acted.json`) | `items`는 문자열 통째 빈칸이라 렌더러가 리스트로 바꾼다. BE가 `option_ids` 순서로 `{title, action: "block", blockId: block_answer, extra: {case_id, question_id: "already_acted", option_id}}`를 만든다. 라벨은 `chatbot-copy.md` 3절 Q1 표 |
+| `response_lines` `contact_line` `buttons` | K6 (`k6-response.json`, 문자·녹음 공용) | `buttons`는 통째 빈칸(버튼 객체 목록, 없으면 빈 목록). 녹음 버튼은 `chatbot-copy.md` D18 표, 문자는 D17. `contact_line`은 전화 버튼이 있을 때만, 없으면 빈 문자열이고 남는 빈 줄은 BE가 정리한다 |
+| `headline` `stop_line` `verify_line` `call_claims` `checked` `unchecked` | V1 (`v1-voice-result.json`) | `verify_line`은 `official_contact`, `call_claims`는 `claims`. `number_checks`는 `checked`·`unchecked` 줄로 넣는다. 규칙은 `chatbot-copy.md` 3절 V1·"확인한 것·확인하지 못한 것" |
+| `claim_lines` `unchecked` `verify_line` | 녹음 캐러셀 (`c-detail-carousel-voice.json`) | V1과 같은 값. `claim_lines`는 `call_claims`에서 칸 제목을 뺀 줄들 |
+| `stop_line` | A2 녹음 (`a2-not-yet-voice.json`) | `hang_up`을 뺀 멈출 행동 문장. 없으면 빈 문자열 |
+| `reason_line` | VE2 | 크기·형식·길이 중 걸린 이유 한 줄 |
+| `external_service` `block_voice_consent` | W3v | STT 서비스와 동의 블록이 정해진 뒤. 확정 전 배포 금지 |
 | `sent_items` `external_service` | W3 | 개인정보 정책 확인 후. 확정 전 배포 금지 (W2a는 2026-10-14부터 빈칸 없는 시험 운영 문구) |
 
 ### 블록 ID

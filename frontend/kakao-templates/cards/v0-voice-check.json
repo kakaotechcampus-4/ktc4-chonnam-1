@@ -1,0 +1,26 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "🎙️ 확인할 통화 녹음을 보내주세요",
+          "description": "의심스러운 통화의 녹음 파일을 보내 주세요.\n※ 확인 전에 돈을 보내거나 앱을 설치하지 마세요.\n※ 파일 1개, 25MB 이하 (m4a, mp3, wav)\n\n결과가 오지 않으면 「결과 확인」을 보내 주세요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "아이폰에서 보내는 법",
+              "action": "block",
+              "blockId": "{{ block_v0a_iphone }}"
+            },
+            {
+              "label": "갤럭시에서 보내는 법",
+              "action": "block",
+              "blockId": "{{ block_v0a_galaxy }}"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -5,13 +5,18 @@
       {
         "textCard": {
           "title": "📭 확인 결과를 찾지 못했어요",
-          "description": "확인할 문자를 다시 붙여넣어 보내주세요.",
+          "description": "확인할 문자나 통화 녹음을 다시 보내 주세요.",
           "buttonLayout": "vertical",
           "buttons": [
             {
-              "label": "다시 보내기",
+              "label": "문자 다시 보내기",
               "action": "block",
               "blockId": "6aa6a4436d537a3eabb81ad5"
+            },
+            {
+              "label": "녹음 다시 보내기",
+              "action": "block",
+              "blockId": "{{ block_v0 }}"
             }
           ]
         }

@@ -1,0 +1,26 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "🎙️ 통화 녹음 파일만 확인할 수 있어요",
+          "description": "m4a, mp3, wav 파일을 보내 주세요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "아이폰에서 보내는 법",
+              "action": "block",
+              "blockId": "{{ block_v0a_iphone }}"
+            },
+            {
+              "label": "갤럭시에서 보내는 법",
+              "action": "block",
+              "blockId": "{{ block_v0a_galaxy }}"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

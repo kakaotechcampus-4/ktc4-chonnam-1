@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "🎙️ 녹음 내용을 알아듣지 못했어요",
+          "description": "말소리가 작거나 잡음이 많으면 그럴 수 있어요.\n확인하지 못했을 뿐, 안전하다는 뜻은 아니에요.\n\n돈을 보내거나 앱을 설치하지 마세요.\n상대가 말한 기관의 대표번호를 직접 찾아 전화해 확인하세요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "녹음 다시 보내기",
+              "action": "block",
+              "blockId": "{{ block_v0 }}"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
