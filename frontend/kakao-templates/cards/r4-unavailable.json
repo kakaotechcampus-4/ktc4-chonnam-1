@@ -5,7 +5,7 @@
       {
         "basicCard": {
           "title": "🙏 이번에는 확인하지 못했어요",
-          "description": "결과를 드릴 수 없어 확인을 멈췄어요.\n문자를 잘못 보내신 게 아니에요.\n\n잠시 뒤 문자를 다시 보내 주세요.\n\n※ 확인 전까지 링크는 누르지 마세요.",
+          "description": "결과를 드릴 수 없어 확인을 멈췄어요.\n잘못 보내신 게 아니에요.\n\n잠시 뒤 다시 보내 주세요.\n\n※ 확인 전까지 링크·송금·앱 설치는 하지 마세요.",
           "thumbnail": {
             "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/r4-unavailable.png",
             "altText": "사진, 문서, 끊어진 링크 화면과 물음표 옆에서 난처해하는 기니피그",

@@ -1,0 +1,26 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "🎙️ 의심할 말을 찾지 못했어요",
+          "description": "상대가 기관이나 가족을 내세우거나\n돈·정보·앱 설치를 요구한 말이 없었어요.\n찾지 못했을 뿐, 안전하다는 뜻은 아니에요.\n\n통화의 일부만 녹음됐다면\n전체 녹음을 다시 보내 주세요.\n\n다시 전화가 와서 돈을 보내거나\n앱을 설치하라고 하면 따르지 마세요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "녹음 다시 보내기",
+              "action": "block",
+              "blockId": "6ae3302425d4bc48e2bb8a61"
+            },
+            {
+              "label": "1394 상담",
+              "action": "phone",
+              "phoneNumber": "1394"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
