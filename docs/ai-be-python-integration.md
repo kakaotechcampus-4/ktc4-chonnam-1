@@ -16,6 +16,7 @@ BE는 URL을 제거한 문자 본문을 먼저 분석하고, URL 분석 결과�
 
 | 구간 | BE가 작성할 구문 | 반환 |
 |---|---|---|
+| 0. 원문 전달·링크 받기 | `await read_message(utterance)` | `MessageReading` |
 | 1. 문자 전달 | `await analyze_message_part(message_text)` | `MessagePart` |
 | 2. URL 결과 준비 | `UrlAnalysis.model_validate(raw_url_result)` | 최종 호출에 전달할 `UrlAnalysis` |
 | 3. 전체 최종 결과 수신 | `await finalize_analysis(url, message, page, failure=...)` | `AnalysisResponse` |
@@ -34,6 +35,44 @@ python -m pip install ./ai
 
 아래 짧은 예제의 `await` 구문은 BE의 async 함수 안에 넣는다. 마지막 절에는 세 구간을 연결하는 완전한 async 함수 예제가 있다.
 
+## 0. BE → AI: 원문을 넘기고 링크를 받는다 (`split_message` 대체)
+
+링크는 요구 분석 LLM 이 문자를 읽으면서 함께 뽑는다([ADR 0007](./adr/0007-llm-link-extraction.md)).
+BE 는 [split_message()](../backend/src/server/url_utils.py) 대신 원문을 넘긴다.
+
+```python
+from ai.pipeline import analyze_message_part, read_message
+from ai.types import AnalysisStatus
+
+# utterance: 개인정보 마스킹을 마친 원문. 링크는 떼지 않는다
+reading = await read_message(utterance)
+if reading.extracted.analysis_status is not AnalysisStatus.COMPLETED:
+    ...  # LLM 실패. 링크가 있는지 모른다. "링크 없음"(R6)이 아니라 분석 불가(R4)로 안내한다
+links = [link.url for link in reading.links]  # split_message 의 links 자리
+# 같은 읽기를 넘기면 추출 LLM 을 다시 부르지 않는다
+message_task = asyncio.create_task(
+    analyze_message_part(reading.message, extracted=reading.extracted))
+```
+
+| `split_message()` | `read_message()` |
+|---|---|
+| 동기, 즉시 끝난다 | `await`. 요구 분석 LLM 한 번(상한 30초) |
+| `links: list[str]` | `reading.links: tuple[LinkCandidate, ...]`. `url`(정규형), `domain`, `origin="message"` |
+| `message` | `reading.message`. 링크 구간을 뗀 본문 |
+| 없음 | `reading.extracted`. 같은 호출의 요구 분석 |
+
+- `read_message` 는 수 초가 걸린다. 첫 응답(5초) 전에 부르지 말고, 지금의 "링크 없으면 R6 즉답" 분기를
+  콜백 뒤로 옮긴다. 첫 응답은 링크가 있든 없든 R5 다.
+- `extracted.analysis_status` 가 `completed` 인데 `links` 가 비었으면 링크가 없는 문자다.
+- 링크 수집은 `read_message` 가 끝난 뒤 시작한다. `analyze_message_part` 는 지금처럼 수집과 함께 돌린다.
+  바꿀 때 [지연 예산](./latency-budget.md)의 실행 순서를 고친다.
+- 마스킹이 링크 글자를 바꾸면 그 링크는 원문 대조에서 빠진다. 링크 구간은 가리지 않는다.
+- 정규형이 같은 링크는 하나로 합치고 원문 순서로 준다. 개수 상한은 지금처럼 두지 않았다.
+- `http://1.2.3.4/…` 처럼 스킴이 있는 IPv4 링크도 온다. `split_message` 는 IP 를 링크로 보지 않았다.
+
+통화 결과(`VoiceCaseResult`)의 `links` 에는 상대가 말로 불러 준 주소가 `origin="spoken"` 으로 온다.
+철자를 확인할 수 없으므로 수집하더라도 공식 확인(`r2-official`) 근거로 쓰지 않는다(v3 U-3).
+
 ## 1. BE → AI: URL을 제외한 문자 본문
 
 ```python
@@ -43,7 +82,8 @@ from ai.pipeline import analyze_message_part
 message_result = await analyze_message_part(message_text)
 ```
 
-BE의 기존 [split_message()](../backend/src/server/url_utils.py)는 URL 목록과 URL을 제거한 본문을 분리한다. 개인정보 마스킹은 BE가 준비해야 한다. URL 분석 결과·원문 전체·페이지 HTML을 본문에 섞지 않는다. 예를 들어 URL 제거 후 본문이 `[CJ대한통운] 배송 현황을 확인하세요`이면 그 문자열을 전달한다.
+§0 으로 바꾸면 `message_text` 는 `reading.message` 이고 `extracted=reading.extracted` 를 함께 넘긴다.
+바꾸기 전까지는 BE의 기존 [split_message()](../backend/src/server/url_utils.py)가 URL 목록과 URL을 제거한 본문을 분리한다. 개인정보 마스킹은 BE가 준비해야 한다. URL 분석 결과·원문 전체·페이지 HTML을 본문에 섞지 않는다. 예를 들어 URL 제거 후 본문이 `[CJ대한통운] 배송 현황을 확인하세요`이면 그 문자열을 전달한다.
 
 반환된 `message_result`는 해당 요청의 최종 호출까지 보관한다. BE에서 분류나 `answer`를 다시 계산하지 않는다. 빈 입력은 `answer="failed"`, 일부 분석 실패는 `answer="partial"`과 `details.reason.failures`로 반환된다. `answer="risk_found"`는 분석을 완료하고 검증된 위험 근거(`details.signals`)를 확인한 경우다. 규칙은 [결과 계약 §4](./scheme.md#4-answer-결정-규칙)를 따른다.
 
