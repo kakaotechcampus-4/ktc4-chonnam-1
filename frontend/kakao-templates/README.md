@@ -32,7 +32,7 @@
 | `guidance_text` | 자세히 보기 공식 확인 방법(C4) | BE가 `find_guidance()` 결과로 채운다(이슈 #69). 규칙은 `docs/designs/chatbot-copy.md` 4절 C4 |
 | `block_v0` `block_v0a_iphone` `block_v0a_galaxy` `block_b2c` `block_b2d` | 보이스피싱 카드 버튼·B2 항목 | **채움** (2026-10-29). 아래 "블록 ID" 표 |
 | `block_answer` `items` | Q1 (`q1-already-acted.json`) | `block_answer`는 **채움**(2026-10-29, 아래 "블록 ID" 표). `items`는 문자열 통째 빈칸이라 렌더러가 리스트로 바꾼다. BE가 `option_ids` 순서로 `{title, action: "block", blockId: block_answer, extra: {case_id, question_id: "already_acted", option_id}}`를 만든다. 라벨은 `chatbot-copy.md` 3절 Q1 표 |
-| `response_lines` `contact_line` `buttons` | K6 (`k6-response.json`, 문자·녹음 공용) | `buttons`는 통째 빈칸(버튼 객체 목록, 없으면 빈 목록). 녹음 버튼은 `chatbot-copy.md` D18 표, 문자는 D17. `contact_line`은 전화 버튼이 있을 때만, 없으면 빈 문자열이고 남는 빈 줄은 BE가 정리한다 |
+| `response_lines` `contact_line` `buttons` | K6 (`k6-response.json`, 문자·녹음 공용) | `buttons`는 통째 빈칸(버튼 객체 목록, 없으면 빈 목록). 버튼은 `chatbot-copy.md` D17. `contact_line`은 전화 버튼이 있을 때만, 없으면 빈 문자열이고 남는 빈 줄은 BE가 정리한다 |
 | `headline` `stop_line` `verify_line` `call_claims` `checked` `unchecked` | V1 (`v1-voice-result.json`) | `verify_line`은 `official_contact`, `call_claims`는 `claims`. `number_checks`는 `checked`·`unchecked` 줄로 넣는다. 규칙은 `chatbot-copy.md` 3절 V1·"확인한 것·확인하지 못한 것" |
 | `claim_lines` `unchecked` `verify_line` | 녹음 캐러셀 (`c-detail-carousel-voice.json`) | V1과 같은 값. `claim_lines`는 `call_claims`에서 칸 제목을 뺀 줄들 |
 | `stop_line` | A2 녹음 (`a2-not-yet-voice.json`) | `hang_up`을 뺀 멈출 행동 문장. 없으면 빈 문자열 |
