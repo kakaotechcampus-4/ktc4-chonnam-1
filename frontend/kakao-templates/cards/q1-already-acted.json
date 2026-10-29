@@ -5,7 +5,7 @@
       {
         "listCard": {
           "header": {
-            "title": "이미 하신 게 있나요?"
+            "title": "🙋 이미 하신 게 있나요?"
           },
           "items": "{{ items }}"
         }
