@@ -8,15 +8,18 @@ from contextlib import AsyncExitStack
 from openai import APITimeoutError, AsyncOpenAI
 
 from ai.kb.search import search_cases
+from ai.links import message_links, remove_spans
 from ai.llm._client import create_client
-from ai.llm.analyze import analyze_message, fallback_analysis
+from ai.llm.analyze import TIMEOUT_SECONDS as EXTRACTION_TIMEOUT_SECONDS
+from ai.llm.analyze import analyze_message, fallback_analysis, ground_analysis
 from ai.llm.page import analyze_page
 from ai.llm.signals import analyze_signals
 from ai.page import PageInspection, inspect_html
 from ai.pipeline.results import build_environment_part, build_message_part
 from ai.types import (
     AnalysisStatus, CaseSearchResult, EnvironmentPart, FailureCode,
-    IsolatedPage, MessagePart, PageAnalysis, SignalAnalysis,
+    IsolatedPage, MessageAnalysis, MessagePart, MessageReading, PageAnalysis,
+    SignalAnalysis,
 )
 
 
@@ -51,11 +54,59 @@ def _failure_code(error: Exception) -> FailureCode:
         else FailureCode.LLM_ERROR)
 
 
-async def analyze_message_part(
+async def read_message(
     text: str, *, client: AsyncOpenAI | None = None, model: str | None = None,
+) -> MessageReading:
+    """Read the original message once for its requests and links (ADR 0007).
+
+    Replaces BE's `split_message`: the extraction model lists the links and
+    code keeps only those written whole in `text`. There is no regex fallback,
+    so a failed extraction returns no links with a fallback status.
+    """
+    failure = (FailureCode.EMPTY_INPUT if not text.strip()
+        else FailureCode.INPUT_TOO_LARGE if len(text) > MAX_MESSAGE_CHARS else None)
+    if failure is not None:
+        extracted = fallback_analysis(failure)
+    else:
+        try:
+            async with AsyncExitStack() as stack:
+                llm = client
+                if llm is None:
+                    llm = await stack.enter_async_context(
+                        create_client(EXTRACTION_TIMEOUT_SECONDS))
+                extracted = await analyze_message(text, client=llm, model=model)
+        except Exception as error:
+            extracted = fallback_analysis(_failure_code(error))
+    found = message_links(text, extracted.urls)
+    message = remove_spans(text, [span for span, _ in found])
+    # Links now live in `links`; later steps read only the body without them.
+    grounded = ground_analysis(message, extracted.model_copy(update={"urls": []}))
+    return MessageReading(
+        links=tuple({link.url: link for _, link in found}.values()),
+        message=message,
+        extracted=grounded,
+    )
+
+
+async def _extract(
+    text: str, given: MessageAnalysis | None, client: AsyncOpenAI, model: str | None,
+) -> MessageAnalysis:
+    # A reading from read_message already ran the extraction model.
+    if given is not None:
+        return given
+    return await analyze_message(text, client=client, model=model)
+
+
+async def analyze_message_part(
+    text: str, *, extracted: MessageAnalysis | None = None,
+    client: AsyncOpenAI | None = None, model: str | None = None,
 ) -> MessagePart:
-    """Analyze a body whose URLs were already removed by the caller."""
-    extracted = fallback_analysis()
+    """Analyze a body whose URLs were already removed by the caller.
+
+    Pass `read_message`'s `message` as `text` and its `extracted` to reuse that
+    reading instead of calling the extraction model again.
+    """
+    given, extracted = extracted, fallback_analysis()
     cases = CaseSearchResult(status=AnalysisStatus.FALLBACK)
     signals: SignalAnalysis | None = None
     failure = None
@@ -72,7 +123,7 @@ async def analyze_message_part(
             if llm is None:
                 llm = await stack.enter_async_context(create_client(30.0))
             tasks = (
-                asyncio.create_task(analyze_message(text, client=llm, model=model)),
+                asyncio.create_task(_extract(text, given, llm, model)),
                 asyncio.create_task(_search_with_budget(text)),
             )
             try:

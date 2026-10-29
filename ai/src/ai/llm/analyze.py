@@ -30,6 +30,7 @@ def fallback_analysis(failure: FailureCode | None = None) -> MessageAnalysis:
         claimed_purpose=EvidenceField(),
         requested_actions=[],
         persuasion_signals=[],
+        urls=[],
     )
 
 
@@ -65,6 +66,18 @@ def _sanitize_extracted(
             for item in extracted.persuasion_signals
             if _has_evidence(masked_text, item.evidence)
         ],
+        urls=list(dict.fromkeys(
+            url for url in extracted.urls if _has_evidence(masked_text, url)
+        )),
+    )
+
+
+def ground_analysis(text: str, analysis: MessageAnalysis) -> MessageAnalysis:
+    """인용이 `text` 에 그대로 있는 칸만 남긴다. 링크를 뗀 본문에 다시 맞출 때 쓴다."""
+    return MessageAnalysis(
+        analysis_status=analysis.analysis_status,
+        failure=analysis.failure,
+        **_sanitize_extracted(text, analysis).model_dump(),
     )
 
 
