@@ -290,6 +290,186 @@ class TestVoiceMessageSyncPath:
         assert response.json() == main.render_card("r4-unavailable")
 
 
+class TestV1CallClaimsFieldMapping:
+    """V1 `call_claims` 매핑(이슈 #115): 기관=identity[].quote, 상대가 한
+    말=첫 demands[].quote, 내세운 사정=blockers(있으면) 또는 pretexts,
+    요구한 것=demands[].kind 라벨(최대 3개)."""
+
+    def test_institution_line_uses_identity_quotes(self):
+        result = _voice_result(
+            claims=ClaimView(
+                identity=[ClaimViewIdentity(
+                    kind=IdentityKind.INSTITUTION, name="금융감독원",
+                    quote="금융감독원 조사국입니다", listed_institution=True,
+                )],
+            ),
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = card["template"]["outputs"][0]["textCard"]["description"]
+
+        assert "상대가 내세운 기관: '금융감독원 조사국입니다'" in description
+
+    def test_what_they_said_line_uses_first_demand_quote_not_pretext(self):
+        """이슈 원문: "상대가 한 말 = 첫 demands[].quote" — pretexts가
+        아니라 demands에서 가져온다."""
+
+        result = _voice_result(
+            claims=ClaimView(
+                demands=[ClaimViewDemand(kind=DemandKind.MONEY_TRANSFER, quote="지금 바로 입금하세요")],
+            ),
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = card["template"]["outputs"][0]["textCard"]["description"]
+
+        assert "상대가 한 말: '지금 바로 입금하세요'" in description
+
+    def test_pretext_line_is_used_when_no_blockers(self):
+        result = _voice_result(
+            claims=ClaimView(pretexts=["계좌가 범죄에 연루됐습니다"]),
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = card["template"]["outputs"][0]["textCard"]["description"]
+
+        assert "내세운 사정: '계좌가 범죄에 연루됐습니다'" in description
+
+    def test_blocker_line_takes_priority_over_pretext(self):
+        result = _voice_result(
+            claims=ClaimView(blockers=["다른 사람에게 말하지 마세요"], pretexts=["계좌가 범죄에 연루됐습니다"]),
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = card["template"]["outputs"][0]["textCard"]["description"]
+
+        assert "내세운 사정: '다른 사람에게 말하지 마세요'" in description
+        assert "계좌가 범죄에 연루됐습니다" not in description
+
+    def test_demand_labels_are_joined_up_to_three(self):
+        result = _voice_result(
+            claims=ClaimView(demands=[
+                ClaimViewDemand(kind=DemandKind.MONEY_TRANSFER, quote="송금"),
+                ClaimViewDemand(kind=DemandKind.APP_INSTALL, quote="앱 설치"),
+                ClaimViewDemand(kind=DemandKind.AUTH_CODE, quote="인증번호"),
+                ClaimViewDemand(kind=DemandKind.PERSONAL_INFO, quote="개인정보"),
+            ]),
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = card["template"]["outputs"][0]["textCard"]["description"]
+
+        assert "요구한 것: 송금·입금, 앱 설치, 인증번호 전달" in description
+        assert "개인정보 제공" not in description
+
+    def test_empty_claims_omit_the_whole_block(self):
+        result = _voice_result(claims=ClaimView()).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = card["template"]["outputs"][0]["textCard"]["description"]
+
+        assert "통화에서 들은 내용" not in description
+        assert "주의할 점" not in description
+
+
+class TestVoiceResultConclusionBranching:
+    """conclusion에 따른 카드 선택(이슈 #115): not_analyzable -> VE3,
+    input_required -> VE4, 그 외 -> V1."""
+
+    def test_not_analyzable_uses_ve3_unrecognized_card(self):
+        result = _voice_result(conclusion=Conclusion.NOT_ANALYZABLE).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+
+        assert card == main.render_card("ve3-unrecognized")
+        text_card = card["template"]["outputs"][0]["textCard"]
+        assert text_card["title"] == "🎙️ 녹음 내용을 알아듣지 못했어요"
+
+    def test_input_required_uses_ve4_no_claim_card(self):
+        result = _voice_result(conclusion=Conclusion.INPUT_REQUIRED).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+
+        assert card == main.render_card("ve4-no-claim")
+        text_card = card["template"]["outputs"][0]["textCard"]
+        assert text_card["title"] == "🎙️ 의심할 말을 찾지 못했어요"
+
+    def test_input_required_never_gets_q1_attached(self):
+        """AI 쪽 decide_call()은 input_required에 questions를 채우지
+        않는다(ai/src/ai/case/gate.py) — 혹시 들어와도 VE4는 Q1을 붙이지
+        않는 카드라 구조적으로 무시된다."""
+
+        from ai.case.types import AttachedQuestion, QuestionId
+
+        result = _voice_result(
+            conclusion=Conclusion.INPUT_REQUIRED,
+            questions=[AttachedQuestion(question_id=QuestionId.ALREADY_ACTED, option_ids=["sent_money"])],
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result, job_id="some-job")
+
+        assert len(card["template"]["outputs"]) == 1
+
+    def test_suspected_uses_v1_with_112_and_report_buttons_removed(self):
+        """V1에는 112 신고·신고·상담하기 버튼이 없다(D15, 이슈 #115) —
+        자세히 보기·다른 녹음 확인하기만 있다."""
+
+        result = _voice_result(conclusion=Conclusion.SUSPECTED).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        text_card = card["template"]["outputs"][0]["textCard"]
+        labels = {b["label"] for b in text_card["buttons"]}
+
+        assert labels == {"자세히 보기", "다른 녹음 확인하기"}
+        assert "112 신고" not in labels
+        assert "신고·상담하기" not in labels
+
+
+class TestVoiceDetailCarouselTemplate:
+    """자세히 보기(`c-detail-carousel-voice.json`, 이슈 #115)."""
+
+    def test_detail_carousel_fills_claim_lines_without_the_section_title(self):
+        result = _voice_result(
+            claims=ClaimView(
+                identity=[ClaimViewIdentity(kind=IdentityKind.INSTITUTION, name="금융감독원", quote="금융감독원입니다", listed_institution=True)],
+            ),
+            caution=False,
+        ).model_dump(mode="json")
+
+        card = main.render_voice_detail_carousel(result)
+
+        assert card == main.render_card("c-detail-carousel-voice", {
+            "claim_lines": "- 상대가 내세운 기관: '금융감독원입니다'",
+            "unchecked": "- 받아 적은 글이 정확한지 (말을 글로 옮겨 틀릴 수 있어요)",
+            "verify_line": "상대가 말한 기관의 대표번호를 직접 찾아 전화해 확인하세요.",
+        })
+        items = card["template"]["outputs"][0]["carousel"]["items"]
+        # "통화에서 들은 내용"/"주의할 점" 칸 제목이 claim_lines에 남으면 안 된다.
+        assert "통화에서 들은 내용" not in items[0]["description"]
+        assert "주의할 점" not in items[0]["description"]
+
+    def test_detail_carousel_with_no_claims_uses_fallback_text(self):
+        result = _voice_result(claims=ClaimView()).model_dump(mode="json")
+
+        card = main.render_voice_detail_carousel(result)
+
+        assert "확인된 의심 근거가 없어요." in card["template"]["outputs"][0]["carousel"]["items"][0]["description"]
+
+    def test_text_flow_detail_carousel_is_unaffected(self):
+        """문자 결과의 자세히 보기(`render_detail_carousel`)는 음성 전용
+        함수와 완전히 분리돼 있어 이번 변경의 영향을 받지 않는다."""
+
+        analysis_result = {
+            "url": {"official": "unresolved", "domain": "example.com"},
+            "message": {"brand": "한진택배", "answer": "no_risk_found", "details": {"signals": []}},
+            "env": {"answer": "no_risk_found", "details": {"signals": []}},
+        }
+
+        card = main.render_detail_carousel(analysis_result)
+
+        assert card["template"]["outputs"][0]["carousel"]["type"] == "basicCard"
+
+
 class TestTranscribeAndAnalyzeWiring:
     """transcribe_call() 결과가 그대로 analyze_call()에 전달되는지, 예산
     계산이 올바른지 확인한다 — 두 함수 자체의 내부 로직은 ai 쪽 테스트의
@@ -630,7 +810,11 @@ class TestVoiceAnswerFlow:
         ).model_dump(mode="json")
         return job_id
 
-    def test_sent_money_answer_returns_k6_with_112_button(self, client):
+    def test_sent_money_answer_returns_k6_with_112_and_geumgam_buttons(self, client):
+        """D18: sent_money·entered_info 중 하나라도 있으면 112 신고 +
+        금감원 상담(1332)을 같이 단다(response_actions 코드가 아니라
+        답 자체가 기준이다)."""
+
         job_id = self._seed_voice_job()
 
         response = client.post(
@@ -646,7 +830,29 @@ class TestVoiceAnswerFlow:
         assert response.status_code == 200
         text_card = response.json()["template"]["outputs"][0]["textCard"]
         assert text_card["title"] == "🚨 지금 먼저 하세요"
-        assert any(b["label"] == "112 신고" for b in text_card["buttons"])
+        labels = {b["label"] for b in text_card["buttons"]}
+        assert labels == {"112 신고", "금감원 상담"}
+        assert next(b for b in text_card["buttons"] if b["label"] == "금감원 상담")["phoneNumber"] == "1332"
+        assert "신고·상담: 112(경찰), 1332(금융감독원)" in text_card["description"]
+
+    def test_entered_info_answer_also_returns_both_report_buttons(self, client):
+        """entered_info도 sent_money와 같은 버튼 조합을 받는다(D18)."""
+
+        job_id = self._seed_voice_job()
+
+        response = client.post(
+            "/kakao/skill",
+            json={
+                "userRequest": {"utterance": "", "user": {"id": "voice-user"}},
+                "action": {"clientExtra": {
+                    "case_id": job_id, "question_id": "already_acted", "option_id": "entered_info",
+                }},
+            },
+        )
+
+        text_card = response.json()["template"]["outputs"][0]["textCard"]
+        labels = {b["label"] for b in text_card["buttons"]}
+        assert labels == {"112 신고", "금감원 상담"}
 
     def test_not_yet_answer_with_no_prior_answers_returns_a2(self, client):
         job_id = self._seed_voice_job()
@@ -665,6 +871,32 @@ class TestVoiceAnswerFlow:
         assert "1394 상담" in str(response.json())
         assert "🚨 지금 먼저 하세요" not in str(response.json())
 
+    def test_a2_stop_line_excludes_hang_up(self, client):
+        """A2는 이미 끊은 통화라 hang_up을 stop_line에서 뺀다(이슈 #115)."""
+
+        job_id = main.create_analysis_job("voice-user")
+        job = main.ANALYSIS_JOBS[job_id]
+        job["analysis_kind"] = "voice"
+        job["final_payload"] = _voice_result(
+            conclusion=Conclusion.SUSPECTED,
+            stop_actions=["hang_up", "dont_send_money"],
+            response_actions=[],
+        ).model_dump(mode="json")
+
+        response = client.post(
+            "/kakao/skill",
+            json={
+                "userRequest": {"utterance": "", "user": {"id": "voice-user"}},
+                "action": {"clientExtra": {
+                    "case_id": job_id, "question_id": "already_acted", "option_id": "not_yet",
+                }},
+            },
+        )
+
+        text_card = response.json()["template"]["outputs"][0]["textCard"]
+        assert "돈을 보내지 마세요." in text_card["description"]
+        assert "끊" not in text_card["description"]
+
     def test_installed_app_only_answer_gets_no_button(self, client):
         job_id = self._seed_voice_job()
 
@@ -680,10 +912,12 @@ class TestVoiceAnswerFlow:
 
         text_card = response.json()["template"]["outputs"][0]["textCard"]
         assert text_card["buttons"] == []
+        assert "신고·상담:" not in text_card["description"]
 
     def test_answers_accumulate_across_multiple_clicks(self, client):
         """먼저 '아직 안 했어요'를 눌러도, 그 뒤 '돈을 보냈어요'를 누르면
-        쌓인 답 전부로 K6가 다시 나간다(D16)."""
+        쌓인 답 전부로 K6가 다시 나간다(D16). 버튼도 쌓인 답(D18) 기준으로
+        다시 고른다."""
 
         job_id = self._seed_voice_job()
 
@@ -692,7 +926,21 @@ class TestVoiceAnswerFlow:
 
         text_card = card["template"]["outputs"][0]["textCard"]
         assert text_card["title"] == "🚨 지금 먼저 하세요"
+        assert {b["label"] for b in text_card["buttons"]} == {"112 신고", "금감원 상담"}
         assert main.ANALYSIS_JOBS[job_id]["qa_answers"] == ["not_yet", "sent_money"]
+
+    def test_installed_app_then_sent_money_upgrades_to_report_buttons(self, client):
+        """installed_app만 골랐을 땐 버튼이 없다가, sent_money가 쌓이면
+        112+금감원으로 바뀐다 — 답 집합 전체를 기준으로 다시 고르기 때문."""
+
+        job_id = self._seed_voice_job()
+
+        first = main.handle_voice_answer(job_id, "installed_app")
+        assert first["template"]["outputs"][0]["textCard"]["buttons"] == []
+
+        second = main.handle_voice_answer(job_id, "sent_money")
+        labels = {b["label"] for b in second["template"]["outputs"][0]["textCard"]["buttons"]}
+        assert labels == {"112 신고", "금감원 상담"}
 
     def test_answer_for_unknown_job_is_handled_safely(self, client):
         response = client.post(
@@ -728,9 +976,13 @@ class TestVoiceAnswerFlow:
         outputs = card["template"]["outputs"]
         assert len(outputs) == 2
         list_card = outputs[1]["listCard"]
-        assert list_card["header"]["title"] == "이미 하신 게 있나요?"
+        assert list_card["header"]["title"] == "🙋 이미 하신 게 있나요?"
         assert [item["title"] for item in list_card["items"]] == ["돈이나 상품권을 보냈어요", "아직 안 했어요"]
-        assert list_card["items"][0]["extra"]["case_id"] == job_id
+        item = list_card["items"][0]
+        assert item["extra"] == {"case_id": job_id, "question_id": "already_acted", "option_id": "sent_money"}
+        # Q1 전용 블록이어야 한다 — "자세히 보기" 블록을 재사용하면 안 된다(이슈 #115).
+        assert item["blockId"] == "6ae336cd25d4bc48e2bb8f2a"
+        assert item["blockId"] != "6aad3abfe745d3358bd90c8d"
 
     async def test_q1_card_is_not_attached_on_sync_path_without_job_id(self, monkeypatch):
         """동기(개발용) 경로는 job_id가 없어 답을 쌓아 둘 곳이 없다 — Q1을
@@ -750,31 +1002,48 @@ class TestVoiceAnswerFlow:
         assert len(card["template"]["outputs"]) == 1
 
 
-class TestV1CardSurfacesNumberChecksAndSimilarCases:
-    """`VoiceCaseResult.number_checks`/`similar_cases`는 chatbot-copy.md
-    매핑 표에 있는 필드인데도 1차 구현에서 카드에 전혀 쓰이지 않던 것을
-    2차 리뷰에서 찾아 고쳤다 — 그 회귀를 지킨다."""
+class TestV1NumberChecksAndSimilarCases:
+    """`VoiceCaseResult.number_checks`/`similar_cases` 처리(이슈 #115).
+    `number_checks`는 checked/unchecked 줄로 들어가고 phone_number 줄을
+    대신한다. `similar_cases`는 FE 결정으로 V1에 전혀 안 보여 준다 —
+    단, 분석 결과 데이터(모델 필드) 자체는 그대로 유지된다."""
 
-    def test_official_number_check_is_shown(self):
-        from ai.case.types import NumberCheck
+    def test_official_number_check_replaces_phone_number_line_in_checked(self):
+        from ai.case.types import CheckItem, NumberCheck
 
         result = _voice_result(
+            checked=[CheckItem.PHONE_NUMBER],
             number_checks=[NumberCheck(number="1332", org="금융감독원", result="official")],
         ).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
         description = card["template"]["outputs"][0]["textCard"]["description"]
 
-        assert "1332" in description
-        assert "금융감독원" in description
-        assert "공식 번호가 맞아요" in description
+        assert "상대가 말한 번호(1332): 금융감독원 대표번호와 같아요" in description
+        assert "번호가 같아도 본인이라는 뜻은 아니에요" in description
+        # 일반 phone_number 줄("상대가 말한 전화번호")이 중복으로 더 남으면 안 된다.
+        assert description.count("상대가 말한 전화번호") == 0
 
-    def test_org_not_listed_is_not_phrased_as_unofficial(self):
-        """org_not_listed는 "공식이 아니다"가 아니라 "대조 못함"이어야 한다."""
-
+    def test_not_official_number_check_is_shown_in_checked(self):
         from ai.case.types import NumberCheck
 
         result = _voice_result(
+            number_checks=[NumberCheck(number="010-1234-5678", org="금융감독원", result="not_official")],
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = card["template"]["outputs"][0]["textCard"]["description"]
+
+        assert "상대가 말한 번호(010-1234-5678): 금융감독원 대표번호가 아니에요" in description
+
+    def test_org_not_listed_goes_to_unchecked_and_is_not_phrased_as_unofficial(self):
+        """org_not_listed는 확인한 것이 아니라 확인하지 못한 것으로 가고,
+        "공식이 아니다"가 아니라 "대조 못함"이어야 한다."""
+
+        from ai.case.types import CheckItem, NumberCheck
+
+        result = _voice_result(
+            checked=[CheckItem.PHONE_NUMBER],
             number_checks=[NumberCheck(number="02-1234-5678", org="알 수 없는 기관", result="org_not_listed")],
         ).model_dump(mode="json")
 
@@ -782,10 +1051,26 @@ class TestV1CardSurfacesNumberChecksAndSimilarCases:
         description = card["template"]["outputs"][0]["textCard"]["description"]
 
         assert "공식 번호가 아니에요" not in description
-        assert "대조하지 못했어요" in description
+        assert "상대가 말한 번호가 알 수 없는 기관 번호인지 (대표번호 자료에 없는 기관이에요)" in description
+        # "확인한 것" 블록이 아니라 "확인하지 못한 것" 블록에 들어가야 한다.
+        unchecked_block = description.split("확인하지 못한 것")[1]
+        assert "알 수 없는 기관 번호인지" in unchecked_block
 
-    def test_similar_cases_are_mentioned_without_a_raw_similarity_score(self):
-        """유사도 점수를 악성 확률처럼 보여 주면 안 된다(설계 문서 경고)."""
+    def test_phone_number_label_is_used_when_no_number_checks(self):
+        """`number_checks`가 없으면 일반 phone_number 라벨(#115: "상대가
+        말한 전화번호")이 그대로 나간다."""
+
+        from ai.case.types import CheckItem
+
+        result = _voice_result(checked=[CheckItem.PHONE_NUMBER]).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = card["template"]["outputs"][0]["textCard"]["description"]
+
+        assert "- 상대가 말한 전화번호" in description
+
+    def test_similar_cases_are_never_shown_in_v1_even_with_matches(self):
+        """FE 결정(#115): similar_cases는 V1에 아예 쓰지 않는다."""
 
         from ai.types import AnalysisStatus, CaseMatch, CaseSearchResult
 
@@ -795,24 +1080,14 @@ class TestV1CardSurfacesNumberChecksAndSimilarCases:
         )
         result = _voice_result(similar_cases=similar).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
-
-        assert "비슷한" in description
-        assert "0.98" not in description
-        assert "98" not in description
-
-    def test_empty_similar_cases_adds_no_line(self):
-        from ai.types import AnalysisStatus, CaseSearchResult
-
-        result = _voice_result(
-            similar_cases=CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=[]),
-        ).model_dump(mode="json")
+        # 분석 결과 데이터 자체는 유지된다 — payload에는 그대로 남아 있다.
+        assert result["similar_cases"]["matches"][0]["case_id"] == "c1"
 
         card = main.render_voice_result_card(result)
         description = card["template"]["outputs"][0]["textCard"]["description"]
 
         assert "비슷한" not in description
+        assert "0.98" not in description
 
 
 class TestExistingTextAndUrlFlowsAreUnaffected:
