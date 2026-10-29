@@ -11,7 +11,7 @@
               "description": "{{ claim_lines }}\n\n상대 화자의 말만 근거로 썼어요."
             },
             {
-              "title": "❔ 이번 분석으로 확인하지 못한 부분",
+              "title": "❔ 확인 범위",
               "description": "{{ unchecked }}\n\n결과는 확인한 자료로만 안내했어요. 확인하지 못한 부분은 판단에 넣지 않았어요."
             },
             {
