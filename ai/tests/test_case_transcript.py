@@ -1,4 +1,4 @@
-"""transcribe_call: 받아쓰기 + 문장 자르기 (스펙 D1, ADR 0007). 실제 네트워크·LLM 은 부르지 않는다."""
+"""transcribe_call: 받아쓰기 + 문장 자르기 (스펙 D1, ADR 0008). 실제 네트워크·LLM 은 부르지 않는다."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ def test_one_segment_per_sentence_without_speaker():
 
 
 def test_no_speaker_fields_in_result():
-    # 화자 분리를 하지 않는다. 결과 모양에도 화자 칸이 없다 (ADR 0007)
+    # 화자 분리를 하지 않는다. 결과 모양에도 화자 칸이 없다 (ADR 0008)
     dumped = _run(_rt("가나다. 라마바.")).model_dump()
     assert "speaker_split_failed" not in dumped and "diarize_model" not in dumped
     assert all("speaker" not in seg for seg in dumped["segments"])

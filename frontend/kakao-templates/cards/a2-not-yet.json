@@ -1,0 +1,20 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "description": "잘하셨어요. 지금처럼 {{ stop_line }}\n\n신고·상담은 한국인터넷진흥원(KISA)에서\n24시간 받을 수 있어요.\n신고·상담을 마쳤다면 문자를 지우고 번호를 차단하세요.\n\n나중에 무언가 했다면 위 목록에서 다시 골라 주세요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "KISA 상담하기",
+              "action": "webLink",
+              "webLinkUrl": "https://www.kisa.or.kr/118"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

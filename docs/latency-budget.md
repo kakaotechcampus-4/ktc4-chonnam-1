@@ -19,7 +19,7 @@
 | 문자 위험 신호 제안 | 30초 | 확보한 문자 자료와 실패 사유 유지 |
 | 페이지 의미 분석 | 2초 | 확보한 HTML 관측과 실패 사유 유지 |
 | 콜백 HTTP 전송 | 10초 | 저장 결과의 조회 폴백 유지 |
-| 통화 STT | 30초(실측 2~11초) | STT 실패는 대본 없음 결과(`not_analyzable`). 화자는 나누지 않는다([ADR 0007](adr/0007-no-speaker-diarization.md)) |
+| 통화 STT | 30초(실측 2~11초) | STT 실패는 대본 없음 결과(`not_analyzable`). 화자는 나누지 않는다([ADR 0008](adr/0008-no-speaker-diarization.md)) |
 | 통화 주장 읽기 | 12초 | 어휘표 폴백, `failures`에 `timeout` |
 | 통화 사례 검색 | 1초 | 미확인(`similar_cases:timeout`), 읽기와 병렬 실행 |
 | 통화 분석 전체(`analyze_call`) | 40초 | 남은 단계를 건너뛰고 `unchecked`에 `timeout` |
@@ -31,7 +31,7 @@
 
 통화 STT는 whisper-large-v3로 확정했다(`ai.case.transcript.transcribe_call`, `asyncio.wait_for`로 30초).
 2026-10-28 FSS 녹음 10건 실측에서 STT는 2~11초였다. 같은 실측에서 화자 분리(Claude Sonnet 5.5)는 평균 4.9초
-(환각으로 벗어난 1건 제외, 한도 20초)였고 STT와 합쳐 약 12~16초였는데, ADR 0007로 화자 분리를 없애 그만큼 줄었다. 통화 사례 검색은
+(환각으로 벗어난 1건 제외, 한도 20초)였고 STT와 합쳐 약 12~16초였는데, ADR 0008로 화자 분리를 없애 그만큼 줄었다. 통화 사례 검색은
 색인 콜드 적재가 약 1.4초라 기동 시 `warm_up_voice_case_search()`로 미리 채운다.
 붙일 사례가 있으면 사례 첨부 관문(`ai.case.attach_gate`, 순수 Python 선형 모델)이 추가로 돈다: 추론 p50 1.6ms · p95 약 5.6ms · 최대 약 16ms(대본 최대 약 1.5만 자), 모델 적재 약 30ms. 적재는 `warm_up_voice_case_search()`가 색인과 함께 미리 하므로 1초 검색 예산에 거의 영향이 없다.
 통화 분석은 카카오 첫 응답 뒤 콜백 경로로 수행하며, STT는 `analyze_call` 호출 전에 끝나므로 `analyze_call`의 40초 예산에 들지 않는다. 주장 읽기의 바깥 한도는 12.5초(12초 + 폴백이 먼저 나오도록 둔 0.5초 여유)다.

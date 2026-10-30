@@ -164,7 +164,7 @@ def _check_numbers(
 ) -> tuple[list[NumberCheck], bool]:
     """받아들인 기관 주장이 KB 에 있고 대본에 번호가 있으면 번호마다 대조한다.
 
-    화자를 나누지 않으므로(ADR 0007) 받는 사람 쪽 말 꼴의 문장("제 번호는 …", "02-… 이요?")은 뺀다.
+    화자를 나누지 않으므로(ADR 0008) 받는 사람 쪽 말 꼴의 문장("제 번호는 …", "02-… 이요?")은 뺀다.
     """
     org = None
     for ident in verify.claims.identity:

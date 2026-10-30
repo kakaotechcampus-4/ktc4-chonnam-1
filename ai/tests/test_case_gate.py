@@ -23,7 +23,14 @@ from ai.case.types import (
     UncheckedReason,
 )
 from ai.case.verify import VerifyResult
-from ai.types import AnalysisStatus, CaseMatch, CaseSearchResult, FailureCode
+from ai.types import (
+    AnalysisStatus,
+    CaseMatch,
+    CaseSearchResult,
+    FailureCode,
+    LinkCandidate,
+    LinkOrigin,
+)
 
 
 def _ev(code: E, quote: str = "인용 문장입니다", *, floor: bool = True) -> Evidence:
@@ -39,7 +46,7 @@ def _ev(code: E, quote: str = "인용 문장입니다", *, floor: bool = True) -
 def _verify(
     *codes: E, unshaped: tuple[E, ...] = (), spoken_hosts: list[str] | None = None
 ) -> VerifyResult:
-    """unshaped: 받아들였지만 자기소개·부탁 꼴이 아니라 하한에 쓰지 않는 근거 (ADR 0007)."""
+    """unshaped: 받아들였지만 자기소개·부탁 꼴이 아니라 하한에 쓰지 않는 근거 (ADR 0008)."""
     return VerifyResult(
         accepted=[_ev(c) for c in codes] + [_ev(c, floor=False) for c in unshaped],
         rejected=[],
@@ -148,6 +155,18 @@ def test_u5_spoken_host_counts_as_demand():
     assert Unchecked(
         item=UncheckedItem.LINK_SPELLING, reason=UncheckedReason.READ_FROM_VOICE
     ) in r.unchecked
+
+
+def test_spoken_host_is_passed_on_as_spoken_link():
+    r = _decide(_verify(spoken_hosts=["ykics24.kr"]))
+    assert r.links == [
+        LinkCandidate(url="https://ykics24.kr/", domain="ykics24.kr", origin=LinkOrigin.SPOKEN)
+    ]
+
+
+def test_no_spoken_host_no_links():
+    assert _decide(_verify(E.INSTITUTION_CLAIM, E.MONEY_REQUEST)).links == []
+    assert _decide(None, empty=True).links == []
 
 
 def test_u6_empty_transcript_is_not_analyzable():

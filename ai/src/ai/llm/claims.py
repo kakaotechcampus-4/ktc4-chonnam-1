@@ -29,7 +29,7 @@ def _resolve_model(model: str | None) -> str:
 
 
 def _render_segments(source: ReadingSource) -> str:
-    """세그먼트(문장)를 한 줄씩 data 태그로 감싼다. 화자 표기는 없다(ADR 0007).
+    """세그먼트(문장)를 한 줄씩 data 태그로 감싼다. 화자 표기는 없다(ADR 0008).
     원문 안의 닫는 태그는 무력화한다."""
     lines = []
     for seg in source.segments:

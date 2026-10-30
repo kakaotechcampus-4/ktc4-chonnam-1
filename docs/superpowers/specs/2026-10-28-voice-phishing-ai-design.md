@@ -14,7 +14,7 @@
 
 ```
 카카오 폴백 블록 → BE: 녹음 주소 판별·내려받기 (BE 담당, 이 문서 범위 밖)
-  → AI: STT(whisper-large-v3) → 문장 나누기(화자 분리 없음, ADR 0007)      ← 6.5단계
+  → AI: STT(whisper-large-v3) → 문장 나누기(화자 분리 없음, ADR 0008)      ← 6.5단계
   → AI: 개인정보 가리기(정규식) → 주장·요구 읽기(Haiku, LLM 1회) ∥ 사례 검색(voice KB)
   → AI: 읽기 검증(코드) → 번호 대조(로컬 KB) → 게이트(코드) → 결과
   → BE: 결과 카드(V1) + Q1 리스트 카드 (BE·FE 담당)
@@ -45,7 +45,7 @@
 
 | # | 결정 | 이유 |
 |---|---|---|
-| D1 | STT는 whisper-large-v3(엘리스 ML API). ~~화자 분리는 받아쓴 글을 코드가 문장으로 자르고 LLM이 문장마다 `화자1`·`화자2`·`기타`를 고른다.~~ 2026-10-31 [ADR 0007](../../adr/0007-no-speaker-diarization.md)로 화자 분리를 없앴다. 받아쓴 글을 문장으로 잘라 화자 없이 쓰고, 받는 사람 쪽 말은 문장 꼴(`ai/case/forms.py`)로 거른다. 시간 정보는 쓰지 않는다(`start`·`end` 는 None) | 화자 분리 STT 모델(`gpt-4o-transcribe-diarize`)이 아직 ML API에 없다. 2026-10-28 실측: 3~4분 녹음 STT+화자 분리 10~15초 |
+| D1 | STT는 whisper-large-v3(엘리스 ML API). ~~화자 분리는 받아쓴 글을 코드가 문장으로 자르고 LLM이 문장마다 `화자1`·`화자2`·`기타`를 고른다.~~ 2026-10-31 [ADR 0008](../../adr/0008-no-speaker-diarization.md)로 화자 분리를 없앴다. 받아쓴 글을 문장으로 잘라 화자 없이 쓰고, 받는 사람 쪽 말은 문장 꼴(`ai/case/forms.py`)로 거른다. 시간 정보는 쓰지 않는다(`start`·`end` 는 None) | 화자 분리 STT 모델(`gpt-4o-transcribe-diarize`)이 아직 ML API에 없다. 2026-10-28 실측: 3~4분 녹음 STT+화자 분리 10~15초 |
 | D2 | 개인정보 가리기는 두 겹이다. **분석 전**: v3 §4 정규식 `mask_pii`(주민·카드·계좌형 숫자열, 전화번호 제외). **저장·외부 전송 전**: 엘리스 PII Masking 모델(`/mask`)을 주입형으로 둔다 | PII Masking 모델은 기관명(`[MASKED_ORGANIZATION]`)과 전화번호(`[MASKED_NUMERIC]`)까지 가려서, 분석 전에 쓰면 기관 사칭 읽기와 번호 대조가 동작하지 않는다 |
 | D3 | 읽기 모델은 지금 Render 메인 서버의 Haiku(`LLM_MODEL`). `CLAIMS_MODEL` 이 있으면 그것을 쓴다(v3 §3과 같음) | 사용자 결정 |
 | D4 | 대표번호 KB는 공식 누리집에서 모아 로컬 YAML로 둔다. 출처 URL이 있으면 `status: curated` 로 넣는다 | 사용자가 이번 수집분 검수를 면제했다. 속도를 위해 로컬 저장 |

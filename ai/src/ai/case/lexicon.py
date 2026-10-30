@@ -103,7 +103,7 @@ def demand_kinds(text: str) -> set[DemandKind]:
 def read_with_lexicon(
     source: ReadingSource, failure: FailureCode | None = None
 ) -> ClaimReadingResult:
-    # 화자 구분이 없어 전체를 읽는다(ADR 0007). 받는 사람 쪽 말은 verify 의 V-2 도 다시 거른다
+    # 화자 구분이 없어 전체를 읽는다(ADR 0008). 받는 사람 쪽 말은 verify 의 V-2 도 다시 거른다
     identity: list[IdentityClaim] = []
     demands: list[DemandClaim] = []
     blockers: list[BlockerClaim] = []

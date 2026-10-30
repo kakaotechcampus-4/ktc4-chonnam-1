@@ -1,4 +1,4 @@
-"""verify_call: v3 §5.5 V-1~V-7 (통화). V-2 는 화자 대신 문장 꼴을 본다 (ADR 0007)."""
+"""verify_call: v3 §5.5 V-1~V-7 (통화). V-2 는 화자 대신 문장 꼴을 본다 (ADR 0008)."""
 
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ def test_v2_self_side_quote_rejected():
     assert _reasons(r) == ["self_side"]
 
 
-# ── V-2: 받는 사람이 되풀이한 말 (ADR 0007) ─────────────────────
+# ── V-2: 받는 사람이 되풀이한 말 (ADR 0008) ─────────────────────
 
 
 @pytest.mark.parametrize(
@@ -194,7 +194,7 @@ def test_polite_request_question_is_accepted_and_counts():
     assert _floor(r) == {EvidenceCode.INFO_REQUEST: True}
 
 
-# ── 하한 꼴: 자기소개·부탁 (ADR 0007) ───────────────────────────
+# ── 하한 꼴: 자기소개·부탁 (ADR 0008) ───────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -378,6 +378,13 @@ def test_v7_spoken_host_keeps_host_only():
     )
     assert r.spoken_hosts == ["spo-case.com", "a.kr"]
     assert _reasons(r) == ["not_url"]
+
+
+def test_v7_uses_message_link_host_rule():
+    # 점으로 이어 부른 전화번호·숫자는 주소가 아니다 (ai.links.valid_host)
+    r = _verify(_source(PROSECUTOR), _reading(spoken_hosts=["010.1234.5678", "3.5"]))
+    assert r.spoken_hosts == []
+    assert _reasons(r) == ["not_url", "not_url"]
 
 
 def test_r15_name_not_in_transcript_is_not_trusted():

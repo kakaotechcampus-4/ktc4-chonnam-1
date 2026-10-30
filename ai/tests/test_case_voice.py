@@ -41,7 +41,7 @@ class Calls:
 
 
 def _transcript(case: dict) -> TranscriptResult:
-    # 화자 표기 없이 받아쓴 글 그대로다 (ADR 0007)
+    # 화자 표기 없이 받아쓴 글 그대로다 (ADR 0008)
     return TranscriptResult(
         segments=[Segment(side=Side.UNKNOWN, text=text) for text in case["transcript"]]
     )
@@ -199,6 +199,16 @@ def test_spoken_link_is_not_input_required_and_stops_click(reading):
         for u in result.unchecked
     )
     assert result.failures == []
+
+
+def test_spoken_host_reaches_result_links():
+    case = _spoken_link_case({"spoken_hosts": ["ykics24.kr"]})
+
+    result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, Calls())))
+
+    assert [(link.url, link.origin.value) for link in result.links] == [
+        ("https://ykics24.kr/", "spoken")
+    ]
 
 
 def test_spoken_link_with_info_request_keeps_order_and_cap():

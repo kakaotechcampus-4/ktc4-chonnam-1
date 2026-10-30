@@ -63,7 +63,7 @@ def test_roundtrip_transcript_and_source():
     ],
 )
 def test_speaker_fields_are_gone(model, field):
-    # 화자 분리를 없앴다 (ADR 0007). 옛 칸을 넣으면 extra=forbid 로 막힌다
+    # 화자 분리를 없앴다 (ADR 0008). 옛 칸을 넣으면 extra=forbid 로 막힌다
     assert field not in model.model_fields
 
 

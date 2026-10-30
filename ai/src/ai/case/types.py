@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from ai.types import CaseSearchResult, FailureCode, StrictModel
+from ai.types import CaseSearchResult, FailureCode, LinkCandidate, StrictModel
 
 
 # ── enum ────────────────────────────────────────────────────
@@ -173,7 +173,7 @@ class Unchecked(StrictModel):
 
 
 class Segment(StrictModel):
-    # 통화는 화자를 나누지 않아 늘 unknown 이다 (ADR 0007). 누구 말인지는 verify 가 문장 꼴로 가늠한다
+    # 통화는 화자를 나누지 않아 늘 unknown 이다 (ADR 0008). 누구 말인지는 verify 가 문장 꼴로 가늠한다
     side: Side
     text: str
     start: float | None = None
@@ -181,7 +181,7 @@ class Segment(StrictModel):
 
 
 class TranscriptResult(StrictModel):
-    """STT 의 반환 형태. 세그먼트는 문장 하나씩이다(스펙 D1, ADR 0007)."""
+    """STT 의 반환 형태. 세그먼트는 문장 하나씩이다(스펙 D1, ADR 0008)."""
 
     segments: list[Segment]
     failure: FailureCode | None = None
@@ -315,6 +315,8 @@ class VoiceCaseResult(StrictModel):
     floors: list[str] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     claims: ClaimView = Field(default_factory=ClaimView)
+    # 말로 불러 준 주소(origin=spoken). 철자를 확인할 수 없어 공식 대조 근거가 될 수 없다 (U-3)
+    links: list[LinkCandidate] = Field(default_factory=list)
     stop_actions: list[StopAction] = Field(default_factory=list)
     # 분석 직후에는 비어 있다. Q1 답이 오면 apply_call_answers 가 채운다 (v3 §8)
     response_actions: list[ResponseAction] = Field(default_factory=list)

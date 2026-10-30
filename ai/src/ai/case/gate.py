@@ -26,6 +26,7 @@ from ai.case.types import (
     VoiceCaseResult,
 )
 from ai.case.verify import VerifyResult
+from ai.links import spoken_link
 from ai.types import AnalysisStatus, CaseSearchResult, FailureCode
 
 _E = EvidenceCode
@@ -210,8 +211,12 @@ def decide_call(
     codes = {e.code for e in verify.accepted}
     unofficial = any(e.code == _E.UNOFFICIAL_NUMBER for e in evidence)
     common.update(evidence=evidence, claims=verify.claims, rejected=verify.rejected)
+    # 읽기에서 함께 뽑은 주소를 BE 가 조사할 수 있게 넘긴다 (ADR 0007)
+    common["links"] = [
+        link for host in verify.spoken_hosts if (link := spoken_link(host)) is not None
+    ]
 
-    # 말로 부른 주소나 "주소로 들어가라"는 요구(R16). 링크는 조사하지 않는다
+    # 말로 부른 주소나 "주소로 들어가라"는 요구(R16). 여기서는 링크를 조사하지 않는다
     link_spoken = bool(verify.spoken_hosts) or any(
         d.kind == DemandKind.VISIT_LINK for d in verify.claims.demands
     )
@@ -235,7 +240,7 @@ def decide_call(
             **common,
         )
 
-    # L-3. 화자를 나누지 않으므로(ADR 0007) 꼴까지 맞은 근거(counts_for_floor)만 쓴다:
+    # L-3. 화자를 나누지 않으므로(ADR 0008) 꼴까지 맞은 근거(counts_for_floor)만 쓴다:
     # 자기소개 꼴의 신원 주장 + 부탁 꼴의 요구. 받는 사람이 되풀이한 말은 verify 가 이미 뺐다
     floor_codes = {e.code for e in verify.accepted if e.counts_for_floor}
     floors: list[str] = []

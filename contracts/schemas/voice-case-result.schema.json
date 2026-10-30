@@ -335,6 +335,40 @@
       "title": "IdentityKind",
       "type": "string"
     },
+    "LinkCandidate": {
+      "additionalProperties": false,
+      "description": "조사할 링크. 위험 여부가 아니라 조사 대상이다.",
+      "properties": {
+        "url": {
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        },
+        "domain": {
+          "minLength": 1,
+          "title": "Domain",
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/LinkOrigin"
+        }
+      },
+      "required": [
+        "url",
+        "domain",
+        "origin"
+      ],
+      "title": "LinkCandidate",
+      "type": "object"
+    },
+    "LinkOrigin": {
+      "enum": [
+        "message",
+        "spoken"
+      ],
+      "title": "LinkOrigin",
+      "type": "string"
+    },
     "NumberCheck": {
       "additionalProperties": false,
       "description": "상대가 말한 번호를 내세운 기관의 공식 대표번호와 맞춰 본 결과 (v3 §6.3).",
@@ -581,6 +615,13 @@
     },
     "claims": {
       "$ref": "#/$defs/ClaimView"
+    },
+    "links": {
+      "items": {
+        "$ref": "#/$defs/LinkCandidate"
+      },
+      "title": "Links",
+      "type": "array"
     },
     "stop_actions": {
       "items": {

@@ -98,7 +98,7 @@ def test_v1_script_reads_whole_transcript():
 
 
 def test_recipient_side_sentences_are_not_read():
-    # 받는 사람이 되묻거나 자기 일을 말한 문장은 읽지 않는다 (ADR 0007)
+    # 받는 사람이 되묻거나 자기 일을 말한 문장은 읽지 않는다 (ADR 0008)
     r = read_with_lexicon(
         source(seg("검찰이라면서 송금하라고요?"), seg("제가 지금 보낼게요"), seg("보내야 돼요?"))
     ).reading

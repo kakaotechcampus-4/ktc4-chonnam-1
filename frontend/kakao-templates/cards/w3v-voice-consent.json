@@ -1,0 +1,26 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "🔒 녹음을 확인하기 전에 알려 드려요",
+          "description": "녹음을 글로 받아 적기 위해 {{ external_service }}로 보내요.\n통화 상대방의 목소리도 함께 보내져요.\n녹음은 확인이 끝나면 바로 지워요.\n\n동의하시면 방금 보내 주신 녹음을 확인할게요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "동의하고 확인하기",
+              "action": "block",
+              "blockId": "6ae335a8b074221a79bea79f"
+            },
+            {
+              "label": "개인정보 처리 안내",
+              "action": "block",
+              "blockId": "6aad5d0387c6230d77feeda2"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

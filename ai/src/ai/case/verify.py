@@ -3,7 +3,7 @@
 판정은 코드가 한다. 모델이 낸 주장은 인용이 입력에 있고, 받는 사람 쪽 말 꼴이 아니고,
 알림·부정문이 아닐 때만 근거가 된다. 버린 것은 사유와 함께 rejected 에 남긴다.
 
-대본에 화자 구분이 없다(ADR 0007). 그래서 V-2 는 화자 대신 문장 꼴(forms)을 본다.
+대본에 화자 구분이 없다(ADR 0008). 그래서 V-2 는 화자 대신 문장 꼴(forms)을 본다.
 하한에 쓰는 근거(counts_for_floor)는 꼴까지 맞아야 한다: 신원은 자기소개 꼴, 요구는 부탁 꼴.
 """
 
@@ -27,6 +27,7 @@ from ai.case.types import (
     ReadingSource,
     RejectedClaim,
 )
+from ai.links import valid_host
 from ai.message_requests import action_is_denied
 from ai.types import StrictModel
 
@@ -83,7 +84,6 @@ _NEGATED_PREDICATE = re.compile(
 _TRAILING_PUNCT = re.compile(r"[.!\s]+$")
 
 _CLAUSE_BREAK = re.compile(r"(?:고(?=\s+(?!있|계시|싶))|며|지만|는데|,)\s+")
-_HOST = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$")
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://")
 
 
@@ -140,7 +140,8 @@ def _is_negated(clause: str) -> bool:
 def _verify_host(raw: str) -> str | None:
     host = _SCHEME.sub("", raw.strip().lower())
     host = re.split(r"[/?#]", host, maxsplit=1)[0]
-    return host if _HOST.match(host) else None
+    # 문자 링크와 같은 호스트 규칙을 쓴다 (ai.links)
+    return host if valid_host(host) else None
 
 
 def _identity_self_side(kind: IdentityKind, sentence: str) -> bool:
