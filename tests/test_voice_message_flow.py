@@ -12,8 +12,13 @@ URL이 로그에 노출되지 않는지, Q1→K6/A2 대응이 쌓이는지, 기�
 """
 
 import asyncio
+import io
 import os
 import tempfile
+import wave
+
+import httpx
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -67,8 +72,18 @@ def _real_temp_voice_file() -> str:
     다운로드도 디스크에 진짜 존재하는 파일 경로를 돌려줘야 한다."""
     fd, path = tempfile.mkstemp(suffix="_test_voice.m4a")
     with os.fdopen(fd, "wb") as file:
-        file.write(b"fake-audio-bytes")
+        file.write(_wav_bytes())
     return path
+
+
+def _wav_bytes(seconds=1, rate=8000):
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(rate)
+        audio.writeframes(b"\x00\x00" * round(seconds * rate))
+    return buffer.getvalue()
 
 
 def _voice_skill_payload(user_id: str = "voice-user", callback_url: str | None = None) -> dict:
@@ -83,6 +98,13 @@ def _voice_skill_payload(user_id: str = "voice-user", callback_url: str | None =
     if callback_url is not None:
         payload["userRequest"]["callbackUrl"] = callback_url
     return payload
+
+
+def _card_body(card: dict) -> dict:
+    """첫 카드의 본문. FE 가 이미지를 넣으며 textCard 를 basicCard 로 바꾼 카드가 있다."""
+
+    output = card["template"]["outputs"][0]
+    return output.get("textCard") or output["basicCard"]
 
 
 def _transcript(text: str = "안녕하세요", failure=None, speaker_split_failed: bool = False) -> TranscriptResult:
@@ -260,7 +282,7 @@ class TestVoiceMessageSyncPath:
         response = client.post("/kakao/skill", json=_voice_skill_payload())
 
         assert response.status_code == 200
-        text_card = response.json()["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(response.json())
         assert text_card["title"] == "⚠️ 보이스피싱이 의심돼요"
         assert "금융감독원 대표번호(1332)로 직접 전화해 확인하세요." in text_card["description"]
         assert "통화를 끊고" in text_card["description"]
@@ -292,6 +314,187 @@ class TestVoiceMessageSyncPath:
 
         assert response.status_code == 200
         assert response.json() == main.render_card("r4-unavailable")
+
+
+class TestV1CallClaimsFieldMapping:
+    """V1 `call_claims` 매핑(이슈 #115): 기관=identity[].quote, 상대가 한
+    말=첫 demands[].quote, 내세운 사정=blockers(있으면) 또는 pretexts,
+    요구한 것=demands[].kind 라벨(최대 3개)."""
+
+    def test_institution_line_uses_identity_quotes(self):
+        result = _voice_result(
+            claims=ClaimView(
+                identity=[ClaimViewIdentity(
+                    kind=IdentityKind.INSTITUTION, name="금융감독원",
+                    quote="금융감독원 조사국입니다", listed_institution=True,
+                )],
+            ),
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = _card_body(card)["description"]
+
+        assert "상대가 내세운 기관: '금융감독원 조사국입니다'" in description
+
+    def test_what_they_said_line_uses_first_demand_quote_not_pretext(self):
+        """이슈 원문: "상대가 한 말 = 첫 demands[].quote" — pretexts가
+        아니라 demands에서 가져온다."""
+
+        result = _voice_result(
+            claims=ClaimView(
+                demands=[ClaimViewDemand(kind=DemandKind.MONEY_TRANSFER, quote="지금 바로 입금하세요")],
+            ),
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = _card_body(card)["description"]
+
+        assert "상대가 한 말: '지금 바로 입금하세요'" in description
+
+    def test_pretext_line_is_used_when_no_blockers(self):
+        result = _voice_result(
+            claims=ClaimView(pretexts=["계좌가 범죄에 연루됐습니다"]),
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = _card_body(card)["description"]
+
+        assert "내세운 사정: '계좌가 범죄에 연루됐습니다'" in description
+
+    def test_blocker_line_takes_priority_over_pretext(self):
+        result = _voice_result(
+            claims=ClaimView(blockers=["다른 사람에게 말하지 마세요"], pretexts=["계좌가 범죄에 연루됐습니다"]),
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = _card_body(card)["description"]
+
+        assert "내세운 사정: '다른 사람에게 말하지 마세요'" in description
+        assert "계좌가 범죄에 연루됐습니다" not in description
+
+    def test_demand_labels_are_joined_up_to_three(self):
+        result = _voice_result(
+            claims=ClaimView(demands=[
+                ClaimViewDemand(kind=DemandKind.MONEY_TRANSFER, quote="송금"),
+                ClaimViewDemand(kind=DemandKind.APP_INSTALL, quote="앱 설치"),
+                ClaimViewDemand(kind=DemandKind.AUTH_CODE, quote="인증번호"),
+                ClaimViewDemand(kind=DemandKind.PERSONAL_INFO, quote="개인정보"),
+            ]),
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = _card_body(card)["description"]
+
+        assert "요구한 것: 송금·입금, 앱 설치, 인증번호 전달" in description
+        assert "개인정보 제공" not in description
+
+    def test_empty_claims_omit_the_whole_block(self):
+        result = _voice_result(claims=ClaimView()).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = _card_body(card)["description"]
+
+        assert "통화에서 들은 내용" not in description
+        assert "주의할 점" not in description
+
+
+class TestVoiceResultConclusionBranching:
+    """conclusion에 따른 카드 선택(이슈 #115): not_analyzable -> VE3,
+    input_required -> VE4, 그 외 -> V1."""
+
+    def test_not_analyzable_uses_ve3_unrecognized_card(self):
+        result = _voice_result(conclusion=Conclusion.NOT_ANALYZABLE).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+
+        assert card == main.render_card("ve3-unrecognized")
+        text_card = _card_body(card)
+        assert text_card["title"] == "🎙️ 녹음 내용을 알아듣지 못했어요"
+
+    def test_input_required_uses_ve4_no_claim_card(self):
+        result = _voice_result(conclusion=Conclusion.INPUT_REQUIRED).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+
+        assert card == main.render_card("ve4-no-claim")
+        text_card = _card_body(card)
+        assert text_card["title"] == "🎙️ 녹음에 사칭·요구하는 말이 없어요"
+
+    def test_input_required_never_gets_q1_attached(self):
+        """AI 쪽 decide_call()은 input_required에 questions를 채우지
+        않는다(ai/src/ai/case/gate.py) — 혹시 들어와도 VE4는 Q1을 붙이지
+        않는 카드라 구조적으로 무시된다."""
+
+        from ai.case.types import AttachedQuestion, QuestionId
+
+        result = _voice_result(
+            conclusion=Conclusion.INPUT_REQUIRED,
+            questions=[AttachedQuestion(question_id=QuestionId.ALREADY_ACTED, option_ids=["sent_money"])],
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result, job_id="some-job")
+
+        assert len(card["template"]["outputs"]) == 1
+
+    def test_suspected_uses_v1_with_112_and_report_buttons_removed(self):
+        """V1에는 112 신고·신고·상담하기 버튼이 없다(D15, 이슈 #115) —
+        자세히 보기·다른 녹음 확인하기만 있다."""
+
+        result = _voice_result(conclusion=Conclusion.SUSPECTED).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        text_card = _card_body(card)
+        labels = {b["label"] for b in text_card["buttons"]}
+
+        assert labels == {"자세히 보기", "다른 녹음 확인하기"}
+        assert "112 신고" not in labels
+        assert "신고·상담하기" not in labels
+
+
+class TestVoiceDetailCarouselTemplate:
+    """자세히 보기(`c-detail-carousel-voice.json`, 이슈 #115)."""
+
+    def test_detail_carousel_fills_claim_lines_without_the_section_title(self):
+        result = _voice_result(
+            claims=ClaimView(
+                identity=[ClaimViewIdentity(kind=IdentityKind.INSTITUTION, name="금융감독원", quote="금융감독원입니다", listed_institution=True)],
+            ),
+            caution=False,
+        ).model_dump(mode="json")
+
+        card = main.render_voice_detail_carousel(result)
+
+        items = card["template"]["outputs"][0]["carousel"]["items"]
+        assert "- 상대가 내세운 기관: '금융감독원입니다'" in items[0]["description"]
+        assert "통화 상대가 한 말만 근거로 썼어요." in items[0]["description"]
+        assert len(items) == 4  # no matches: omit only the similarity card
+        assert items[1]["title"] == "❔ 확인 범위"
+        assert "비교할 사례를 찾지 못했어요" in items[1]["description"]
+        assert "{{" not in str(card)
+        # "통화에서 들은 내용"/"주의할 점" 칸 제목이 claim_lines에 남으면 안 된다.
+        assert "통화에서 들은 내용" not in items[0]["description"]
+        assert "주의할 점" not in items[0]["description"]
+
+    def test_detail_carousel_with_no_claims_uses_fallback_text(self):
+        result = _voice_result(claims=ClaimView()).model_dump(mode="json")
+
+        card = main.render_voice_detail_carousel(result)
+
+        assert "확인된 의심 근거가 없어요." in card["template"]["outputs"][0]["carousel"]["items"][0]["description"]
+
+    def test_text_flow_detail_carousel_is_unaffected(self):
+        """문자 결과의 자세히 보기(`render_detail_carousel`)는 음성 전용
+        함수와 완전히 분리돼 있어 이번 변경의 영향을 받지 않는다."""
+
+        analysis_result = {
+            "url": {"official": "unresolved", "domain": "example.com"},
+            "message": {"brand": "한진택배", "answer": "no_risk_found", "details": {"signals": []}},
+            "env": {"answer": "no_risk_found", "details": {"signals": []}},
+        }
+
+        card = main.render_detail_carousel(analysis_result)
+
+        assert card["template"]["outputs"][0]["carousel"]["type"] == "basicCard"
 
 
 class TestTranscribeAndAnalyzeWiring:
@@ -391,7 +594,7 @@ class TestTranscribeAndAnalyzeWiring:
         card = await main.run_voice_analysis(SIGNED_CDN_URL)
 
         assert captured["transcript"] is failed_transcript
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(card)
         assert text_card["title"] == "🎙️ 녹음 내용을 알아듣지 못했어요"
 
     async def test_speaker_split_failed_transcript_is_passed_through(self, monkeypatch):
@@ -528,6 +731,217 @@ async def _noop():
     return None
 
 
+def _m4a_header():
+    # Container metadata fixture, not a codec/decode fixture.
+    def atom(kind, body):
+        return (len(body) + 8).to_bytes(4, "big") + kind + body
+    return atom(b"ftyp", b"M4A \x00\x00\x00\x00M4A isom") + atom(
+        b"moov", atom(b"trak", atom(b"mdia", atom(b"hdlr", b"\x00" * 8 + b"soun" + b"\x00" * 12))))
+
+
+def _webm_header():
+    # EBML DocType + audio TrackEntry CodecID, without claiming a real decode.
+    return b"\x1aE\xdf\xa3\x87\x42\x82\x84webm\x18\x53\x80\x67\xff\x16\x54\xae\x6b\x89\xae\x87\x86\x86A_OPUS"
+
+
+class TestVoiceInputValidation:
+    @pytest.mark.parametrize("extra_byte", [False, True])
+    async def test_actual_wav_at_25mib_reaches_stt_but_one_extra_byte_does_not(self, monkeypatch, tmp_path, extra_byte):
+        # PCM header is 44 bytes; keep the full original production size boundary.
+        data = _wav_bytes((main.MAX_VOICE_FILE_BYTES - 44) // 2, rate=1)
+        assert len(data) == main.MAX_VOICE_FILE_BYTES
+        if extra_byte:
+            data += b"x"
+        path = tmp_path / "download"
+        path.write_bytes(data)
+        async def download(url):
+            return str(path), len(data)
+        transcribe = AsyncMock(return_value=_transcript())
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        result = await main.run_voice_analysis(SIGNED_CDN_URL)
+        if extra_byte:
+            assert "25MB보다 커요" in str(result)
+            transcribe.assert_not_awaited()
+        else:
+            assert "보이스피싱이 의심" in str(result)
+            transcribe.assert_awaited_once_with(data, "voice.wav")
+        assert not path.exists()
+
+    async def test_sync_deadline_returns_r4_and_cleans_running_user(self, monkeypatch):
+        stopped = asyncio.Event()
+        async def download(url):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "VOICE_SYNC_TIMEOUT_SECONDS", 0.01)
+        from fastapi import BackgroundTasks
+        response = await main.handle_voice_message({"type": "audio", "url": SIGNED_CDN_URL},
+                                                  "voice-user", None, BackgroundTasks())
+        assert response == main.render_card("r4-unavailable")
+        assert "voice-user" not in main.RUNNING_USERS and stopped.is_set()
+
+    @pytest.mark.parametrize("data,expected_card,reason", [
+        (b"%PDF-1.7\nnot audio", "ve1-not-audio", None),
+        (b"\x89PNG\r\n\x1a\nimage", "ve1-not-audio", None),
+        (b"<html>not audio</html>", "ve1-not-audio", None),
+        (b"fLaC\x00\x00\x00\x22" + b"\x00" * 34, "ve2-invalid-audio", "지원하지 않는"),
+        (b"OggS\x00\x00OpusHead", "ve2-invalid-audio", "지원하지 않는"),
+        (b"RIFF\x00\x00\x00\x00WAVEbroken", "ve2-invalid-audio", "읽을 수 없어요"),
+        (b"ID3\x04\x00\x00\x00\x00\x00\x00", "ve2-invalid-audio", "읽을 수 없어요"),
+        (b"", "ve2-invalid-audio", "비어 있어요"),
+    ])
+    @pytest.mark.parametrize("with_job", [False, True])
+    async def test_rejected_bytes_produce_ve_card_before_stt(self, monkeypatch, tmp_path, data, expected_card, reason, with_job):
+        path = tmp_path / "looks-like-audio.m4a"
+        path.write_bytes(data)
+        async def download(url):
+            return str(path), len(data)
+        transcribe, analyze = AsyncMock(), AsyncMock()
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        monkeypatch.setattr(main, "analyze_call", analyze)
+        job_id = main.create_analysis_job("voice-user") if with_job else None
+        result = await main.run_voice_analysis(SIGNED_CDN_URL, job_id=job_id)
+        if reason is None:
+            assert result == main.render_card(expected_card)
+        else:
+            description = _card_body(result)["description"]
+            assert reason in description and "{{ reason_line }}" not in description
+            assert _card_body(result)["title"] == "🎙️ 이 녹음은 확인할 수 없어요"
+        assert not path.exists()
+        transcribe.assert_not_awaited()
+        analyze.assert_not_awaited()
+
+    @pytest.mark.parametrize("data,filename", [
+        (_wav_bytes(), "voice.wav"), (_m4a_header(), "voice.m4a"), (_webm_header(), "voice.webm"),
+        (b"\xff\xfb\x90\x00" + b"\x00" * 413, "voice.mp3"),
+        (b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x00" + b"\x00" * 413, "voice.mp3"),
+    ])
+    async def test_supported_content_controls_stt_filename_not_url_extension(self, monkeypatch, tmp_path, data, filename):
+        path = tmp_path / "download"
+        path.write_bytes(data)
+        async def download(url):
+            return str(path), len(data)
+        transcribe = AsyncMock(return_value=_transcript())
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        result = await main.run_voice_analysis(SIGNED_CDN_URL)
+        assert "보이스피싱이 의심" in str(result)
+        transcribe.assert_awaited_once_with(data, filename)
+        assert not path.exists()
+
+    @pytest.mark.parametrize("limit,seconds,reason", [(None, 3, None), (2, 2, None), (2, 3, "2초보다 길어요")])
+    async def test_wav_duration_limit_unset_boundary_and_violation(self, monkeypatch, tmp_path, limit, seconds, reason):
+        data = _wav_bytes(seconds)
+        path = tmp_path / "download"
+        path.write_bytes(data)
+        async def download(url):
+            return str(path), len(data)
+        transcribe = AsyncMock(return_value=_transcript())
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "MAX_VOICE_DURATION_SECONDS", limit)
+        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        result = await main.run_voice_analysis(SIGNED_CDN_URL)
+        if reason:
+            assert reason in str(result)
+            transcribe.assert_not_awaited()
+        else:
+            assert "보이스피싱이 의심" in str(result)
+            transcribe.assert_awaited_once()
+        assert not path.exists()
+
+    async def test_unknown_compressed_duration_is_not_silently_accepted_when_limit_configured(self, monkeypatch, tmp_path):
+        path = tmp_path / "download.webm"
+        path.write_bytes(_webm_header())
+        async def download(url):
+            return str(path), path.stat().st_size
+        transcribe = AsyncMock()
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "MAX_VOICE_DURATION_SECONDS", 60)
+        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        result = await main.run_voice_analysis(SIGNED_CDN_URL)
+        assert "녹음 길이를 확인할 수 없어요" in str(result)
+        transcribe.assert_not_awaited()
+        assert not path.exists()
+
+    @pytest.mark.parametrize("failure", [httpx.ConnectError("signed token must not leak"), httpx.ReadTimeout("signed token must not leak")])
+    @pytest.mark.parametrize("with_job", [False, True])
+    async def test_network_errors_and_timeouts_are_r4_in_both_paths(self, monkeypatch, failure, with_job, capsys):
+        download = AsyncMock(side_effect=failure)
+        transcribe = AsyncMock()
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        job_id = main.create_analysis_job("voice-user") if with_job else None
+        assert await main.run_voice_analysis(SIGNED_CDN_URL, job_id=job_id) == main.render_card("r4-unavailable")
+        assert "signed token must not leak" not in capsys.readouterr().out
+        transcribe.assert_not_awaited()
+
+    @pytest.mark.parametrize("extra_byte", [False, True])
+    async def test_real_download_25mib_boundary_is_streamed_and_cleaned(self, monkeypatch, tmp_path, extra_byte):
+        assert main.MAX_VOICE_FILE_BYTES == 25 * 1024 * 1024
+        class Stream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                for _ in range(25):
+                    yield b"\x00" * (1024 * 1024)
+                if extra_byte:
+                    yield b"x"
+        def respond(request):
+            return httpx.Response(200, stream=Stream(), headers={"Content-Type": "audio/mp4"})
+        original = main.tempfile.mkstemp
+        monkeypatch.setattr(main.tempfile, "mkstemp", lambda **kwargs: original(dir=tmp_path, **kwargs))
+        monkeypatch.setattr(main, "assert_resolves_to_public_ip", AsyncMock())
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            monkeypatch.setattr(main, "get_http_client", lambda: client)
+            if extra_byte:
+                result = await main.run_voice_analysis(SIGNED_CDN_URL)
+                assert "25MB보다 커요" in str(result)
+                assert not list(tmp_path.iterdir())
+            else:
+                path, size = await main.download_voice_media(SIGNED_CDN_URL)
+                assert size == main.MAX_VOICE_FILE_BYTES
+                assert os.path.getsize(path) == size
+                os.remove(path)
+
+    @pytest.mark.parametrize("data,mime,expected", [
+        (_wav_bytes(), "etc/m4a", "⚠️ 보이스피싱이 의심돼요"),
+        (b"%PDF-1.7 fake audio", "audio/mp4", "🎙️ 통화 녹음 파일만 확인할 수 있어요"),
+        (b"", "audio/mp4", "🎙️ 이 녹음은 확인할 수 없어요"),
+    ])
+    async def test_real_download_mime_does_not_override_content(self, monkeypatch, data, mime, expected):
+        def respond(request):
+            return httpx.Response(200, content=data, headers={"Content-Type": mime})
+        monkeypatch.setattr(main, "assert_resolves_to_public_ip", AsyncMock())
+        monkeypatch.setattr(main, "transcribe_call", AsyncMock(return_value=_transcript()))
+        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            monkeypatch.setattr(main, "get_http_client", lambda: client)
+            result = await main.run_voice_analysis(SIGNED_CDN_URL)
+        assert _card_body(result)["title"] == expected
+
+    async def test_outer_voice_deadline_uses_r4_and_cleans_running_user(self, monkeypatch):
+        stopped = asyncio.Event()
+        async def wait_for_download(url):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+        monkeypatch.setattr(main, "download_voice_media", wait_for_download)
+        monkeypatch.setattr(main, "CALLBACK_DEADLINE_SECONDS", 0.01)
+        job_id = main.create_analysis_job("voice-user")
+        main.RUNNING_USERS.add("voice-user")
+        await main.run_analysis_and_callback([], "", "https://untrusted.example/cb", "voice-user", job_id,
+                                             voice_media_url=SIGNED_CDN_URL)
+        assert main.ANALYSIS_JOBS[job_id]["result"] == main.render_card("r4-unavailable")
+        assert main.ANALYSIS_JOBS[job_id]["status"] == "timeout"
+        assert "voice-user" not in main.RUNNING_USERS and stopped.is_set()
+
+
 class TestVoiceMessageAsyncCallbackPath:
     def test_callback_path_creates_job_tagged_as_voice_and_responds_analyzing(self, client, monkeypatch):
         async def fake_run_analysis_and_callback(*args, **kwargs):
@@ -634,7 +1048,37 @@ class TestVoiceAnswerFlow:
         ).model_dump(mode="json")
         return job_id
 
-    def test_sent_money_answer_returns_k6_with_112_button(self, client):
+    @pytest.mark.parametrize("answers,phones", [
+        (["installed_app"], []),
+        (["installed_app", "not_yet"], []),
+        (["not_yet", "installed_app"], []),
+        (["sent_money", "not_yet"], ["112"]),
+        (["entered_info", "installed_app"], ["1394"]),
+        (["entered_info", "sent_money"], ["112"]),
+        (["sent_money", "entered_info"], ["112"]),
+    ])
+    def test_d17_accumulated_answers_follow_action_precedence(self, answers, phones):
+        """D17 uses accumulated actions; not_yet does not retract a prior action."""
+        job_id = self._seed_voice_job()
+        original = main.ANALYSIS_JOBS[job_id]["final_payload"]
+        for answer in answers:
+            card = main.handle_voice_answer(job_id, answer)
+        job = main.ANALYSIS_JOBS[job_id]
+        text_card = _card_body(card)
+        assert text_card["title"] == "🚨 지금 먼저 하세요"
+        assert [button["phoneNumber"] for button in text_card.get("buttons", [])] == phones
+        assert job["qa_answers"] == answers
+        assert job["final_payload"]["response_actions"]
+        assert job["final_payload"]["conclusion"] == original["conclusion"]
+        assert job["final_payload"]["stop_actions"] == original["stop_actions"]
+        assert "1332" not in str(text_card)
+        assert ("상담: 피싱 통합 상담 1394 (24시간)" in text_card["description"]) == ("1394" in phones)
+        # Accumulated actions must remain K6, never an A2 retraction.
+        assert "잘하셨어요" not in text_card["description"]
+
+    def test_sent_money_answer_returns_k6_with_only_112(self, client):
+        """D17: money takes precedence over the fallback consultation button."""
+
         job_id = self._seed_voice_job()
 
         response = client.post(
@@ -648,9 +1092,34 @@ class TestVoiceAnswerFlow:
         )
 
         assert response.status_code == 200
-        text_card = response.json()["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(response.json())
         assert text_card["title"] == "🚨 지금 먼저 하세요"
-        assert any(b["label"] == "112 신고" for b in text_card["buttons"])
+        labels = {b["label"] for b in text_card["buttons"]}
+        assert labels == {"112 신고"}
+        assert [b["phoneNumber"] for b in text_card["buttons"]] == ["112"]
+        assert "상담:" not in text_card["description"]
+        assert "1332" not in str(text_card)
+
+    def test_entered_info_answer_returns_1394_and_contact_line(self, client):
+        """D17: information-only answers get the consultation fallback."""
+
+        job_id = self._seed_voice_job()
+
+        response = client.post(
+            "/kakao/skill",
+            json={
+                "userRequest": {"utterance": "", "user": {"id": "voice-user"}},
+                "action": {"clientExtra": {
+                    "case_id": job_id, "question_id": "already_acted", "option_id": "entered_info",
+                }},
+            },
+        )
+
+        text_card = _card_body(response.json())
+        labels = {b["label"] for b in text_card["buttons"]}
+        assert labels == {"1394 상담"}
+        assert "상담: 피싱 통합 상담 1394 (24시간)" in text_card["description"]
+        assert "1332" not in str(text_card)
 
     def test_not_yet_answer_with_no_prior_answers_returns_a2(self, client):
         job_id = self._seed_voice_job()
@@ -669,6 +1138,32 @@ class TestVoiceAnswerFlow:
         assert "1394 상담" in str(response.json())
         assert "🚨 지금 먼저 하세요" not in str(response.json())
 
+    def test_a2_stop_line_excludes_hang_up(self, client):
+        """A2는 이미 끊은 통화라 hang_up을 stop_line에서 뺀다(이슈 #115)."""
+
+        job_id = main.create_analysis_job("voice-user")
+        job = main.ANALYSIS_JOBS[job_id]
+        job["analysis_kind"] = "voice"
+        job["final_payload"] = _voice_result(
+            conclusion=Conclusion.SUSPECTED,
+            stop_actions=["hang_up", "dont_send_money"],
+            response_actions=[],
+        ).model_dump(mode="json")
+
+        response = client.post(
+            "/kakao/skill",
+            json={
+                "userRequest": {"utterance": "", "user": {"id": "voice-user"}},
+                "action": {"clientExtra": {
+                    "case_id": job_id, "question_id": "already_acted", "option_id": "not_yet",
+                }},
+            },
+        )
+
+        text_card = _card_body(response.json())
+        assert "돈을 보내지 마세요." in text_card["description"]
+        assert "끊" not in text_card["description"]
+
     def test_installed_app_only_answer_gets_no_button(self, client):
         job_id = self._seed_voice_job()
 
@@ -682,21 +1177,39 @@ class TestVoiceAnswerFlow:
             },
         )
 
-        text_card = response.json()["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(response.json())
         assert text_card["buttons"] == []
+        assert "신고·상담:" not in text_card["description"]
 
     def test_answers_accumulate_across_multiple_clicks(self, client):
         """먼저 '아직 안 했어요'를 눌러도, 그 뒤 '돈을 보냈어요'를 누르면
-        쌓인 답 전부로 K6가 다시 나간다(D16)."""
+        쌓인 답 전부로 K6가 다시 나간다(D16). 버튼도 쌓인 답(D17) 기준으로
+        다시 고른다."""
 
         job_id = self._seed_voice_job()
 
         main.handle_voice_answer(job_id, "not_yet")
         card = main.handle_voice_answer(job_id, "sent_money")
 
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(card)
         assert text_card["title"] == "🚨 지금 먼저 하세요"
+        assert {b["label"] for b in text_card["buttons"]} == {"112 신고"}
         assert main.ANALYSIS_JOBS[job_id]["qa_answers"] == ["not_yet", "sent_money"]
+
+    def test_installed_app_then_sent_money_upgrades_to_report_buttons(self, client):
+        """installed_app만 골랐을 땐 버튼이 없다가, sent_money가 쌓이면
+        112로 바뀐다 — 답 집합 전체를 기준으로 다시 고르기 때문."""
+
+        job_id = self._seed_voice_job()
+
+        first = main.handle_voice_answer(job_id, "installed_app")
+        assert _card_body(first)["buttons"] == []
+
+        second = main.handle_voice_answer(job_id, "sent_money")
+        labels = {b["label"] for b in _card_body(second)["buttons"]}
+        assert labels == {"112 신고"}
+        assert "상담:" not in str(second)
+        assert "1332" not in str(second)
 
     def test_answer_for_unknown_job_is_handled_safely(self, client):
         response = client.post(
@@ -732,9 +1245,13 @@ class TestVoiceAnswerFlow:
         outputs = card["template"]["outputs"]
         assert len(outputs) == 2
         list_card = outputs[1]["listCard"]
-        assert list_card["header"]["title"] == "이미 하신 게 있나요?"
+        assert list_card["header"]["title"] == "🙋 이미 하신 게 있나요?"
         assert [item["title"] for item in list_card["items"]] == ["돈이나 상품권을 보냈어요", "아직 안 했어요"]
-        assert list_card["items"][0]["extra"]["case_id"] == job_id
+        item = list_card["items"][0]
+        assert item["extra"] == {"case_id": job_id, "question_id": "already_acted", "option_id": "sent_money"}
+        # Q1 전용 블록이어야 한다 — "자세히 보기" 블록을 재사용하면 안 된다(이슈 #115).
+        assert item["blockId"] == "6ae336cd25d4bc48e2bb8f2a"
+        assert item["blockId"] != "6aad3abfe745d3358bd90c8d"
 
     async def test_q1_card_is_not_attached_on_sync_path_without_job_id(self, monkeypatch):
         """동기(개발용) 경로는 job_id가 없어 답을 쌓아 둘 곳이 없다 — Q1을
@@ -754,42 +1271,75 @@ class TestVoiceAnswerFlow:
         assert len(card["template"]["outputs"]) == 1
 
 
-class TestV1CardSurfacesNumberChecksAndSimilarCases:
-    """`VoiceCaseResult.number_checks`/`similar_cases`는 chatbot-copy.md
-    매핑 표에 있는 필드인데도 1차 구현에서 카드에 전혀 쓰이지 않던 것을
-    2차 리뷰에서 찾아 고쳤다 — 그 회귀를 지킨다."""
+class TestV1NumberChecksAndSimilarCases:
+    """`VoiceCaseResult.number_checks`/`similar_cases` 처리(이슈 #115).
+    `number_checks`는 checked/unchecked 줄로 들어가고 phone_number 줄을
+    대신한다. `similar_cases`는 최신 FE 계약에 따라 V1 확인 상태와 실제 사례 장으로 보여 준다 —
+    단, 분석 결과 데이터(모델 필드) 자체는 그대로 유지된다."""
 
-    def test_official_number_check_is_shown(self):
-        from ai.case.types import NumberCheck
+    def test_official_number_check_replaces_phone_number_line_in_checked(self):
+        from ai.case.types import CheckItem, NumberCheck
 
         result = _voice_result(
+            checked=[CheckItem.PHONE_NUMBER],
             number_checks=[NumberCheck(number="1332", org="금융감독원", result="official")],
         ).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(card)["description"]
 
-        assert "1332" in description
-        assert "금융감독원" in description
-        assert "공식 번호가 맞아요" in description
+        assert "상대가 말한 번호(1332): 금융감독원 대표번호와 같아요" in description
+        assert "번호가 같아도 본인이라는 뜻은 아니에요" in description
+        # 일반 phone_number 줄("상대가 말한 전화번호")이 중복으로 더 남으면 안 된다.
+        assert description.count("상대가 말한 전화번호") == 0
 
-    def test_org_not_listed_is_not_phrased_as_unofficial(self):
-        """org_not_listed는 "공식이 아니다"가 아니라 "대조 못함"이어야 한다."""
-
+    def test_not_official_number_check_is_shown_in_checked(self):
         from ai.case.types import NumberCheck
 
         result = _voice_result(
+            number_checks=[NumberCheck(number="010-1234-5678", org="금융감독원", result="not_official")],
+        ).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = _card_body(card)["description"]
+
+        assert "상대가 말한 번호(010-1234-5678): 금융감독원 대표번호가 아니에요" in description
+
+    def test_org_not_listed_goes_to_unchecked_and_is_not_phrased_as_unofficial(self):
+        """org_not_listed는 확인한 것이 아니라 확인하지 못한 것으로 가고,
+        "공식이 아니다"가 아니라 "대조 못함"이어야 한다."""
+
+        from ai.case.types import CheckItem, NumberCheck
+
+        result = _voice_result(
+            checked=[CheckItem.PHONE_NUMBER],
             number_checks=[NumberCheck(number="02-1234-5678", org="알 수 없는 기관", result="org_not_listed")],
         ).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(card)["description"]
 
         assert "공식 번호가 아니에요" not in description
-        assert "대조하지 못했어요" in description
+        assert "상대가 말한 번호가 알 수 없는 기관 번호인지 (대표번호 자료에 없는 기관이에요)" in description
+        # "확인한 것" 블록이 아니라 "확인하지 못한 것" 블록에 들어가야 한다.
+        unchecked_block = description.split("확인하지 못한 것")[1]
+        assert "알 수 없는 기관 번호인지" in unchecked_block
 
-    def test_similar_cases_are_mentioned_without_a_raw_similarity_score(self):
-        """유사도 점수를 악성 확률처럼 보여 주면 안 된다(설계 문서 경고)."""
+    def test_phone_number_label_is_used_when_no_number_checks(self):
+        """`number_checks`가 없으면 일반 phone_number 라벨(#115: "상대가
+        말한 전화번호")이 그대로 나간다."""
+
+        from ai.case.types import CheckItem
+
+        result = _voice_result(checked=[CheckItem.PHONE_NUMBER]).model_dump(mode="json")
+
+        card = main.render_voice_result_card(result)
+        description = _card_body(card)["description"]
+
+        assert "- 상대가 말한 전화번호" in description
+
+    def test_similar_cases_are_checked_without_exposing_scores_or_guessing_type(self):
+        """Actual matches restore the checked item and the second carousel card."""
 
         from ai.types import AnalysisStatus, CaseMatch, CaseSearchResult
 
@@ -799,24 +1349,81 @@ class TestV1CardSurfacesNumberChecksAndSimilarCases:
         )
         result = _voice_result(similar_cases=similar).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        # 분석 결과 데이터 자체는 유지된다 — payload에는 그대로 남아 있다.
+        assert result["similar_cases"]["matches"][0]["case_id"] == "c1"
 
-        assert "비슷한" in description
+        card = main.render_voice_result_card(result)
+        description = _card_body(card)["description"]
+
+        assert "- 비슷한 사례" in description
+        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        assert items[1]["title"] == "📚 비슷한 사례"
+        assert "비슷한 예시 통화를 찾았어요" in items[1]["description"]
+        assert "결과 판단에는 쓰지 않았어요" in items[1]["description"]
+        assert "가족" not in str(items)
+        assert "family_impersonation" not in str(items)
+        assert "0.987654" not in str(items)
         assert "0.98" not in description
-        assert "98" not in description
 
-    def test_empty_similar_cases_adds_no_line(self):
-        from ai.types import AnalysisStatus, CaseSearchResult
 
+class TestLatestVoice115Contract:
+    @pytest.mark.parametrize("status,reason,expected", [
+        ("completed", None, "비교할 사례를 찾지 못했어요"),
+        ("fallback", "kb_empty", "비교할 사례를 찾지 못했어요"),
+        (None, "failed", "사례를 찾다가 문제가 생겼어요"),
+        (None, "timeout", "사례를 찾다가 문제가 생겼어요"),
+        (None, "not_run", "비교할 사례를 찾지 못했어요"),
+    ])
+    def test_missing_and_failed_case_search_are_distinguished(self, status, reason, expected):
+        from ai.case.types import CheckItem
+        from ai.types import CaseSearchResult
+
+        similar = CaseSearchResult(status=status, matches=[]) if status else None
         result = _voice_result(
-            similar_cases=CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=[]),
+            similar_cases=similar,
+            # The gate marks a completed-but-empty search checked. FE must correct it.
+            checked=[CheckItem.SIMILAR_CASES] if status == "completed" else [],
+            unchecked=[Unchecked(item="similar_cases", reason=reason)] if reason else [],
         ).model_dump(mode="json")
+        initial = main.render_voice_result_card(result)
+        description = _card_body(initial)["description"]
+        assert f"- 비슷한 사례 ({expected})" in description
+        assert description.count("- 비슷한 사례") == 1
+        carousel = main.render_voice_detail_carousel(result)
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
+        assert all(item["title"] != "📚 비슷한 사례" for item in items)
+        assert f"- 비슷한 사례 ({expected})" in items[1]["description"]
+        assert "{{" not in str(initial) + str(carousel)
 
-        card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+    @pytest.mark.parametrize("caution", [False, True])
+    def test_caution_does_not_imply_unknown_speaker(self, caution):
+        result = _voice_result(caution=caution).model_dump(mode="json")
+        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        assert "통화 상대가 한 말만 근거로 썼어요." in items[0]["description"]
+        assert "누가 한 말인지 가리지 못해" not in str(items)
 
-        assert "비슷한" not in description
+    def test_explicit_future_speaker_marker_changes_only_display(self):
+        # #116's AI schema/propagation is pending. Exercise the documented display
+        # boundary with a dict; do not infer the marker or change the AI model.
+        result = _voice_result(claims=ClaimView(
+            identity=[ClaimViewIdentity(kind=IdentityKind.INSTITUTION, name="검찰", quote="검찰입니다", listed_institution=True)],
+            demands=[ClaimViewDemand(kind=DemandKind.MONEY_TRANSFER, quote="돈을 보내세요")],
+            blockers=["전화가 안 돼요"],
+        )).model_dump(mode="json")
+        result["unchecked"].append({"item": "speaker", "reason": "speaker_unknown"})
+        initial = main.render_voice_result_card(result)
+        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        for label in ("통화에 나온 기관", "통화에 나온 말", "통화에 나온 사정", "통화에 나온 요구"):
+            assert label in str(initial)
+            assert label in items[0]["description"]
+        assert "누가 한 말인지 가리지 못해 통화에 나온 말을 옮겼어요." in items[0]["description"]
+        assert "통화에 나온 기관의 대표번호" in items[-1]["description"]
+        assert result["conclusion"] == "suspected"
+
+    def test_b2d_uses_only_112_and_1394(self):
+        card = _card_body(main.render_card("b2d-call-acted"))
+        assert [b["phoneNumber"] for b in card["buttons"]] == ["112", "1394"]
+        assert "1332" not in str(card)
 
 
 class TestExistingTextAndUrlFlowsAreUnaffected:

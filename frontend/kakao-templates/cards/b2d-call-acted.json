@@ -1,0 +1,31 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "basicCard": {
+          "title": "🚨 지금 바로 신고하세요",
+          "description": "돈을 보냈다면\n송금한 은행에 지급정지부터 요청하고 112에 신고하세요.\n\n정보를 알려 줬다면\n개인정보 노출 등록(pd.fss.or.kr)을 하고 1394에 상담하세요.\n\n앱을 설치했다면\n휴대폰 전원을 끄거나 비행기 모드로 바꾸고,\n지급정지·노출 등록은 다른 휴대폰이나 PC로 하세요.\n그다음 앱을 지우거나 휴대폰을 초기화하세요.\n\n신고·상담: 112(경찰), 1394(피싱 통합 상담)",
+          "thumbnail": {
+            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2d-call-acted.png",
+            "altText": "통화 화면 속 동전과 신분증 옆에서 전화기를 들고 다급한 표정의 기니피그",
+            "fixedRatio": false
+          },
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "112 신고",
+              "action": "phone",
+              "phoneNumber": "112"
+            },
+            {
+              "label": "1394 상담",
+              "action": "phone",
+              "phoneNumber": "1394"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

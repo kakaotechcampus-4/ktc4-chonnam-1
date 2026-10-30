@@ -57,7 +57,7 @@ def _truncate_evidence(evidence: str, max_length: int = _EVIDENCE_MAX_LENGTH) ->
 # ============================================================
 # 통화 녹음(보이스피싱) 결과 — VoiceCaseResult 기준
 # (docs/designs/chatbot-copy.md 3절 "V1 보이스피싱 결과",
-#  docs/designs/voice-phishing-flow.md D17)
+#  docs/designs/voice-phishing-flow.md D17, 이슈 #115)
 # ============================================================
 
 _VOICE_STOP_ACTION_JOIN = {
@@ -84,21 +84,19 @@ _VOICE_DEMAND_LABELS = {
     "other": "기타 요구",
 }
 
-# CheckItem -> "확인한 것" 줄. V1 전용 문구는 표의 V1 칸을 따른다.
+# CheckItem -> V1 확인 항목. similar_cases는 실제 검색 결과로 따로 조합한다.
 _VOICE_CHECKED_LABELS = {
     "transcript": "통화 내용 (받아 적은 글)",
-    "phone_number": "전화번호",
-    "similar_cases": "비슷한 사례",
+    "phone_number": "상대가 말한 전화번호",
     "user_answer": "원래 번호로 통화한 결과",
 }
 
 # UncheckedItem -> "확인하지 못한 것" 줄. actual_sender는 V1 전용 문구.
+# transcript_accuracy는 reason과 무관하게 항상 같은 고정 문장이라 별도 처리한다.
 _VOICE_UNCHECKED_LABELS = {
     "actual_sender": "실제로 건 곳",
-    "phone_number": "문자 속 전화번호",
-    "similar_cases": "비슷한 사례",
+    "phone_number": "상대가 말한 전화번호",
     "transcript": "통화 내용 (받아 적은 글)",
-    "transcript_accuracy": "받아 적은 글이 정확한지",
     "link_spelling": "주소 철자",
     "link_address": "문자 속 주소",
     "official_domain": "주소가 공식 주소인지",
@@ -106,6 +104,8 @@ _VOICE_UNCHECKED_LABELS = {
     "page_static": "페이지 내용",
     "page_rendered": "페이지 화면 (직접 열어 본 화면)",
 }
+
+_TRANSCRIPT_ACCURACY_LINE = "- 받아 적은 글이 정확한지 (말을 글로 옮겨 틀릴 수 있어요)"
 
 _VOICE_UNCHECKED_REASON_LABELS = {
     "skipped_enough_evidence": "근거가 충분해 더 보지 않았어요",
@@ -119,7 +119,14 @@ _VOICE_UNCHECKED_REASON_LABELS = {
     "read_from_voice": "말로 들은 주소라 다를 수 있어요",
 }
 
-_TRANSCRIPT_ACCURACY_LINE = "- 받아 적은 글이 정확한지 (말을 글로 옮겨 틀릴 수 있어요)"
+# number_checks 결과 -> checked/unchecked 줄(이슈 #115). 있으면 phone_number
+# 줄 대신 이걸 쓴다. official·not_official은 확인한 것, org_not_listed는
+# 확인하지 못한 것으로 간다 — 쓰는 목록 자체가 다르다.
+_NUMBER_CHECK_CHECKED_LINES = {
+    "official": "상대가 말한 번호({number}): {org} 대표번호와 같아요 (번호가 같아도 본인이라는 뜻은 아니에요)",
+    "not_official": "상대가 말한 번호({number}): {org} 대표번호가 아니에요",
+}
+_NUMBER_CHECK_UNCHECKED_LINE = "상대가 말한 번호가 {org} 번호인지 (대표번호 자료에 없는 기관이에요)"
 
 # response_actions -> 문장 (chatbot-copy.md 3절 "대응" 표. 통화에 나오는 값만 둔다)
 _VOICE_RESPONSE_ACTION_LINES = {
@@ -135,10 +142,8 @@ _VOICE_RESPONSE_ACTION_LINES = {
     "delete_downloaded_file": "받은 파일을 열지 말고 지우세요.",
 }
 
-# response_actions -> K6 버튼. 표에 없으면 버튼이 없다(report_112만 버튼이 있다).
-_VOICE_RESPONSE_ACTION_BUTTON = {
-    "report_112": {"label": "112 신고", "action": "phone", "phoneNumber": "112"},
-}
+# K6: chatbot-copy.md D17. 누적 답에서 송금 > 정보 제공 > 앱 설치 순서.
+_VOICE_CONSULT_BUTTON = [{"label": "1394 상담", "action": "phone", "phoneNumber": "1394"}]
 
 # Q1 option_id -> 리스트 카드 항목 라벨(V1 녹음 결과 칸, chatbot-copy.md 3절 Q1)
 _VOICE_QA_OPTION_LABELS = {
@@ -148,11 +153,9 @@ _VOICE_QA_OPTION_LABELS = {
     "not_yet": "아직 안 했어요",
 }
 
-# "자세히 보기" 등 기존 카드가 이미 쓰는, /kakao/skill로 돌아오는 블록.
-# 이 블록은 clientExtra를 그대로 돌려주기만 하면 돼서, 그 모양(job_id 대
-# case_id/question_id/option_id)은 우리 코드가 구분한다 — 새 블록을 꼭
-# 새로 만들 필요는 없지만, 실제 배포 전에 관리자센터에서 한 번 확인한다.
-_VOICE_CALLBACK_BLOCK_ID = "6aad3abfe745d3358bd90c8d"
+# Q1 답변 전용 스킬 블록(이슈 #115, 2026-10-29 관리자센터에서 확정).
+# "자세히 보기"가 쓰는 블록과는 다른 블록이다 — 그 블록을 재사용하지 않는다.
+_VOICE_ANSWER_BLOCK_ID = "6ae336cd25d4bc48e2bb8f2a"
 
 
 def _voice_truncate(text: str, max_length: int = 30) -> str:
@@ -161,119 +164,163 @@ def _voice_truncate(text: str, max_length: int = 30) -> str:
     return text[: max_length - 1] + "…"
 
 
+def _voice_join_stop_actions(action_codes: list[str]) -> str:
+    """멈출 행동 코드를 "~거나 ~지 마세요." 한 문장으로 잇는다(최대 3개)."""
+
+    joined = [
+        _VOICE_STOP_ACTION_JOIN[a] for a in action_codes[:3] if a in _VOICE_STOP_ACTION_JOIN
+    ]
+    if not joined:
+        return ""
+    if len(joined) == 1:
+        return joined[0] + "지 마세요."
+    return "거나 ".join(joined) + "지 마세요."
+
+
 def _voice_stop_line(stop_actions: list[str]) -> str:
-    """멈출 행동 줄. 받은 순서대로 최대 3개, hang_up이 있으면 맨 앞에
+    """V1 멈출 행동 줄. 받은 순서대로 최대 3개, hang_up이 있으면 맨 앞에
     "통화를 끊고, "를 붙인다(녹음이면 늘 hang_up이 들어온다)."""
 
     ordered = [a for a in stop_actions if a != "paste_text"][:3]
     has_hang_up = "hang_up" in ordered
-    joined = [
-        _VOICE_STOP_ACTION_JOIN[a] for a in ordered if a in _VOICE_STOP_ACTION_JOIN
-    ]
+    line = _voice_join_stop_actions([a for a in ordered if a != "hang_up"])
 
-    if not joined:
+    if not line:
         return "통화를 끊으세요." if has_hang_up else ""
-
-    line = (joined[0] + "지 마세요.") if len(joined) == 1 else ("거나 ".join(joined) + "지 마세요.")
     return f"통화를 끊고, {line}" if has_hang_up else line
 
 
-def _voice_verify_line(official_contact: dict | None) -> str:
+def _voice_stop_line_excluding_hang_up(stop_actions: list[str]) -> str:
+    """A2(아직 안 함) 전용 — 이미 끊은 통화라 hang_up은 아예 뺀다. 없으면
+    빈 문자열(이슈 #115)."""
+
+    ordered = [a for a in stop_actions if a not in ("paste_text", "hang_up")][:3]
+    return _voice_join_stop_actions(ordered)
+
+
+def _voice_verify_line(official_contact: dict | None, *, speaker_unknown: bool = False) -> str:
     if official_contact:
         org = official_contact.get("org", "")
         number = official_contact.get("number", "")
         return f"{org} 대표번호({number})로 직접 전화해 확인하세요."
+    if speaker_unknown:
+        return "통화에 나온 기관의 대표번호를 직접 찾아 전화해 확인하세요."
     return "상대가 말한 기관의 대표번호를 직접 찾아 전화해 확인하세요."
 
 
-def _voice_call_claims(
-    claims: dict,
-    caution: bool,
-    number_checks: list[dict] | None = None,
-    similar_cases: dict | None = None,
-) -> str:
-    """"주의할 점"/"통화에서 들은 내용" 블록. 비어 있으면 통째로 뺀다.
+def _voice_call_claims(claims: dict, caution: bool, *, speaker_unknown: bool = False) -> str:
+    """"주의할 점"/"통화에서 들은 내용" 블록(이슈 #115 V1 call_claims 매핑).
 
-    상대 번호 공식 대조(`number_checks`)와 비슷한 사례 유무(`similar_cases`)도
-    같은 블록 끝에 덧붙인다 — 둘 다 "상대 발화에서 얻은 참고 정보"라는
-    점에서 claims와 같은 자리에 둔다.
+    기관 = identity[].quote, 상대가 한 말 = 첫 demands[].quote, 내세운
+    사정 = blockers(있으면) 또는 pretexts, 요구한 것 = demands[].kind
+    라벨(최대 3개). 전부 비어 있으면 통째로 빈 문자열("칸 제목 포함, 값
+    없으면 빈 문자열").
+
+    "내세운 사정 = blockers → pretexts"는 이슈 원문 그대로 "blockers가
+    있으면 그걸, 없으면 pretexts"로 읽어 구현했다 — 다르게 뜻했다면
+    확인 필요(보고 사항).
     """
 
     identity = claims.get("identity") or []
-    pretexts = claims.get("pretexts") or []
     demands = claims.get("demands") or []
+    pretexts = claims.get("pretexts") or []
+    blockers = claims.get("blockers") or []
 
     lines = []
     if identity:
-        lines.append(f"- 상대가 내세운 기관: '{_voice_truncate(identity[0].get('quote', ''))}'")
-    if pretexts:
-        lines.append(f"- 상대가 한 말: '{_voice_truncate(pretexts[0])}'")
+        quotes = [_voice_truncate(i.get("quote", "")) for i in identity if i.get("quote")]
+        if quotes:
+            quoted = [f"'{q}'" for q in quotes]
+            lines.append(f"- 상대가 내세운 기관: {', '.join(quoted)}")
+    if demands and demands[0].get("quote"):
+        lines.append(f"- 상대가 한 말: '{_voice_truncate(demands[0]['quote'])}'")
+    pretext_source = blockers or pretexts
+    if pretext_source:
+        lines.append(f"- 내세운 사정: '{_voice_truncate(pretext_source[0])}'")
     if demands:
         demand_labels = [
             _VOICE_DEMAND_LABELS.get(d.get("kind", ""), "기타 요구") for d in demands[:3]
         ]
         lines.append(f"- 요구한 것: {', '.join(demand_labels)}")
 
-    lines.extend(_voice_number_check_lines(number_checks or []))
-
-    similar_line = _voice_similar_cases_line(similar_cases)
-    if similar_line:
-        lines.append(similar_line)
-
     if not lines:
         return ""
+
+    if speaker_unknown:
+        for index, line in enumerate(lines):
+            for original, replacement in (
+                ("상대가 내세운 기관:", "통화에 나온 기관:"),
+                ("상대가 한 말:", "통화에 나온 말:"),
+                ("내세운 사정:", "통화에 나온 사정:"),
+                ("요구한 것:", "통화에 나온 요구:"),
+            ):
+                if line.startswith(f"- {original}"):
+                    lines[index] = line.replace(original, replacement, 1)
+                    break
 
     title = "주의할 점" if caution else "통화에서 들은 내용"
     return f"{title}\n" + "\n".join(lines) + "\n\n"
 
 
-_NUMBER_CHECK_RESULT_LABELS = {
-    "official": "공식 번호가 맞아요",
-    "not_official": "공식 번호가 아니에요",
-    # org_not_listed는 "공식이 아니다"가 아니라 "대조할 자료가 없다"는 뜻이다.
-    "org_not_listed": "목록에 없는 기관이라 대조하지 못했어요",
-}
+def _voice_number_check_entries(number_checks: list[dict]) -> tuple[list[str], list[str]]:
+    """number_checks를 checked/unchecked 줄로 바꾼다(이슈 #115). 있으면
+    일반 phone_number 줄 대신 이 줄을 쓴다."""
+
+    checked_lines, unchecked_lines = [], []
+    for check in number_checks[:2]:
+        number, org, result = check.get("number", ""), check.get("org", ""), check.get("result")
+        template = _NUMBER_CHECK_CHECKED_LINES.get(result)
+        if template:
+            checked_lines.append(f"- {template.format(number=number, org=org)}")
+        elif result == "org_not_listed":
+            unchecked_lines.append(f"- {_NUMBER_CHECK_UNCHECKED_LINE.format(org=org)}")
+    return checked_lines, unchecked_lines
 
 
-def _voice_number_check_lines(number_checks: list[dict]) -> list[str]:
-    """상대가 말한 번호의 공식 대표번호 대조 줄."""
+def _voice_similar_cases_state(result: dict) -> str:
+    """검색 실패와 정상 검색의 빈 결과를 구분한다. 일치 유형은 추측하지 않는다."""
+    similar = result.get("similar_cases") or {}
+    if any(
+        entry.get("item") == "similar_cases" and entry.get("reason") in {"failed", "timeout"}
+        for entry in result.get("unchecked") or []
+    ):
+        return "failed"
+    if similar.get("status") == "completed" and similar.get("matches"):
+        return "found"
+    return "empty"
 
-    lines = []
-    for check in number_checks:
-        label = _NUMBER_CHECK_RESULT_LABELS.get(check.get("result"))
-        if not label:
-            continue
-        number = check.get("number", "")
-        org = check.get("org", "")
-        lines.append(f"- 상대가 말한 번호({number})는 {org} {label}")
-    return lines
 
-
-def _voice_similar_cases_line(similar_cases: dict | None) -> str | None:
-    """비슷한 사례가 있을 때만 한 줄로 알린다. 유사도 점수는 악성 확률로
-    오해될 수 있어 보여 주지 않는다(설계 문서 경고)."""
-
-    if not similar_cases:
-        return None
-    matches = similar_cases.get("matches") or []
-    if not matches:
-        return None
-    return "- 비슷한 보이스피싱 사례가 있어요"
+def _voice_speaker_unknown(result: dict) -> bool:
+    # #116의 명시적인 표시만 읽는다. caution/claims로 화자 상태를 추측하지 않는다.
+    return any(entry.get("item") == "speaker" for entry in result.get("unchecked") or [])
 
 
 def _voice_checked_unchecked(result: dict) -> tuple[str, str]:
-    checked_lines = [
-        f"- {_VOICE_CHECKED_LABELS[item]}"
-        for item in result.get("checked") or []
-        if item in _VOICE_CHECKED_LABELS
-    ]
+    number_checks = result.get("number_checks") or []
+    nc_checked, nc_unchecked = _voice_number_check_entries(number_checks)
+    skip_phone_number = bool(number_checks)
 
-    unchecked_lines = []
+    checked_lines = list(nc_checked)
+    for item in result.get("checked") or []:
+        if item == "similar_cases" or (item == "phone_number" and skip_phone_number):
+            continue  # 유사 사례와 번호 확인은 각각 실제 결과로 따로 조합한다.
+        label = _VOICE_CHECKED_LABELS.get(item)
+        if label:
+            checked_lines.append(f"- {label}")
+
+    unchecked_lines = list(nc_unchecked)
     has_transcript_accuracy = False
     for entry in result.get("unchecked") or []:
         item, reason = entry.get("item"), entry.get("reason")
+        if item == "speaker":
+            unchecked_lines.append("- 누가 한 말인지 (말한 사람을 나누지 못했어요)")
+            continue
+        if item == "similar_cases" or (item == "phone_number" and skip_phone_number):
+            continue
         if item == "transcript_accuracy":
             has_transcript_accuracy = True
+            unchecked_lines.append(_TRANSCRIPT_ACCURACY_LINE)
+            continue
         label = _VOICE_UNCHECKED_LABELS.get(item)
         if not label:
             continue
@@ -284,6 +331,16 @@ def _voice_checked_unchecked(result: dict) -> tuple[str, str]:
             continue
         reason_label = _VOICE_UNCHECKED_REASON_LABELS.get(reason)
         unchecked_lines.append(f"- {label} ({reason_label})" if reason_label else f"- {label}")
+
+    similar_state = _voice_similar_cases_state(result)
+    if similar_state == "found":
+        checked_lines.append("- 비슷한 사례")
+    else:
+        reason = (
+            "사례를 찾다가 문제가 생겼어요" if similar_state == "failed"
+            else "비교할 사례를 찾지 못했어요"
+        )
+        unchecked_lines.append(f"- 비슷한 사례 ({reason})")
 
     # 받아 적은 글은 늘 정확성을 장담할 수 없다고 적는다(V1 전용 규칙).
     if not has_transcript_accuracy:
@@ -296,24 +353,29 @@ def _voice_checked_unchecked(result: dict) -> tuple[str, str]:
 
 
 def render_voice_result_card(result: dict, job_id: str | None = None) -> dict:
-    """통화 녹음 분석 결과(`VoiceCaseResult.model_dump()`)를 V1 카드로 바꾼다.
+    """통화 녹음 분석 결과(`VoiceCaseResult.model_dump()`)를 결과 카드로
+    바꾼다(이슈 #115). `conclusion`에 따라 카드 자체가 갈린다:
 
-    `conclusion`에 따라 카드 자체가 갈린다 — `not_analyzable`은 받아쓰기
-    실패 전용 카드(VE3)로 보내고, 그 외에는 V1 한 카드에서 제목만 바뀐다
-    (`suspected`/`inconclusive`+`caution`). `questions`가 있으면(Q1 붙는
-    조건은 AI 쪽 `decide_call()`이 이미 판단해 둔 값이다) Q1 리스트 카드를
-    아래에 붙인다.
+    - `not_analyzable` -> `ve3-unrecognized`(받아쓰기 실패, 고정 문구)
+    - `input_required` -> `ve4-no-claim`(사칭·요구를 못 찾음, 고정 문구)
+    - 그 외 -> `v1-voice-result` 한 카드에서 제목만 바뀐다
+      (`suspected`/`inconclusive`+`caution`)
+
+    `questions`가 있으면(Q1 붙는 조건은 AI 쪽 `decide_call()`이 이미
+    판단해 둔 값이다 — `input_required`는 구조적으로 빈 리스트만 온다)
+    Q1 리스트 카드를 아래에 붙인다.
     """
 
     conclusion = result.get("conclusion")
-    caution = bool(result.get("caution"))
-    checked, unchecked = _voice_checked_unchecked(result)
 
     if conclusion == Conclusion.NOT_ANALYZABLE.value:
-        return render_card("ve3-voice-not-analyzable", {
-            "checked": checked,
-            "unchecked": unchecked,
-        })
+        return render_card("ve3-unrecognized")
+
+    if conclusion == Conclusion.INPUT_REQUIRED.value:
+        return render_card("ve4-no-claim")
+
+    caution = bool(result.get("caution"))
+    checked, unchecked = _voice_checked_unchecked(result)
 
     if conclusion == Conclusion.SUSPECTED.value:
         headline = "⚠️ 보이스피싱이 의심돼요"
@@ -325,10 +387,11 @@ def render_voice_result_card(result: dict, job_id: str | None = None) -> dict:
     card = render_card("v1-voice-result", {
         "headline": headline,
         "stop_line": _voice_stop_line(result.get("stop_actions") or []),
-        "verify_line": _voice_verify_line(result.get("official_contact")),
+        "verify_line": _voice_verify_line(
+            result.get("official_contact"), speaker_unknown=_voice_speaker_unknown(result)
+        ),
         "call_claims": _voice_call_claims(
-            result.get("claims") or {}, caution,
-            result.get("number_checks"), result.get("similar_cases"),
+            result.get("claims") or {}, caution, speaker_unknown=_voice_speaker_unknown(result)
         ),
         "checked": checked,
         "unchecked": unchecked,
@@ -343,7 +406,10 @@ def render_voice_result_card(result: dict, job_id: str | None = None) -> dict:
 
 
 def render_voice_qa_prompt_card(job_id: str | None, question: dict) -> dict | None:
-    """Q1 "이미 하신 게 있나요?" 리스트 카드. `case_id`로 job_id를 쓴다.
+    """Q1 "이미 하신 게 있나요?" 리스트 카드(`q1-already-acted.json`).
+    `case_id`로 job_id를 쓴다. `items`는 FE 템플릿에서 문자열 통째
+    빈칸이라, 렌더러(`kakao_card_renderer._substitute_string`)가 타입을
+    보존해 리스트 그대로 치환한다.
 
     job_id가 없으면(동기 개발 경로처럼 Job이 없는 경우) 답을 쌓아 둘 곳이
     없어 카드를 붙이지 않는다.
@@ -357,7 +423,7 @@ def render_voice_qa_prompt_card(job_id: str | None, question: dict) -> dict | No
         {
             "title": _VOICE_QA_OPTION_LABELS.get(option_id, option_id),
             "action": "block",
-            "blockId": _VOICE_CALLBACK_BLOCK_ID,
+            "blockId": _VOICE_ANSWER_BLOCK_ID,
             "extra": {
                 "case_id": job_id,
                 "question_id": "already_acted",
@@ -370,100 +436,103 @@ def render_voice_qa_prompt_card(job_id: str | None, question: dict) -> dict | No
     if not items:
         return None
 
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [
-                {
-                    "listCard": {
-                        "header": {"title": "이미 하신 게 있나요?"},
-                        "items": items,
-                    }
-                }
-            ]
-        },
-    }
+    return render_card("q1-already-acted", {"items": items})
+
+
+def _voice_d17_buttons(answers: list[str]) -> list[dict]:
+    """D17 버튼 우선순위. not_yet은 앞서 선택한 행동을 철회하지 않는다."""
+
+    given = set(answers)
+    if "sent_money" in given:
+        return [{"label": "112 신고", "action": "phone", "phoneNumber": "112"}]
+    if "entered_info" in given:
+        return list(_VOICE_CONSULT_BUTTON)
+    if "installed_app" in given:
+        return []
+    return list(_VOICE_CONSULT_BUTTON)
 
 
 def render_voice_answer_card(result: dict, answers: list[str]) -> dict:
-    """Q1 답변 뒤 K6(대응)·A2(아직 안 함) 카드를 고른다.
-
-    대응 버튼 규칙(D17): `report_112`만 버튼이 있다. 버튼 달 대응이 없으면
-    `1394 상담`을 붙이되, 지금까지 고른 답이 `앱을 설치했어요`뿐이면 버튼을
-    달지 않는다(그 휴대폰으로 전화를 걸게 되는 걸 막는다).
+    """Q1 답변 뒤 K6(대응)·A2(아직 안 함) 카드를 고른다(이슈 #115).
+    문자 결과(D17, `response_actions` 코드 기준)는 이 함수와 무관하다 —
+    음성 전용이다.
     """
 
     response_actions = result.get("response_actions") or []
 
     if not response_actions:
-        return render_card("a2-voice")
+        return render_card("a2-not-yet-voice", {
+            "stop_line": _voice_stop_line_excluding_hang_up(result.get("stop_actions") or []),
+        })
 
     lines = [
         f"{i}. {_VOICE_RESPONSE_ACTION_LINES[action]}"
         for i, action in enumerate(response_actions, start=1)
         if action in _VOICE_RESPONSE_ACTION_LINES
     ]
-    card = render_card("k6-voice-response", {"response_lines": "\n".join(lines)})
+    buttons = _voice_d17_buttons(answers)
+    # 1394 버튼이 있을 때만 PC 사용자에게도 상담 번호를 보여 준다.
+    contact_line = (
+        "상담: 피싱 통합 상담 1394 (24시간)"
+        if any(button.get("phoneNumber") == "1394" for button in buttons) else ""
+    )
 
-    buttons = [
-        _VOICE_RESPONSE_ACTION_BUTTON[action]
-        for action in response_actions
-        if action in _VOICE_RESPONSE_ACTION_BUTTON
-    ][:3]
+    card = render_card("k6-response", {
+        "response_lines": "\n".join(lines),
+        "contact_line": contact_line,
+        "buttons": buttons,
+    })
 
-    if not buttons and set(answers) != {"installed_app"}:
-        buttons = [{"label": "1394 상담", "action": "phone", "phoneNumber": "1394"}]
+    if not contact_line:
+        text_card = card["template"]["outputs"][0]["textCard"]
+        # contact_line이 비면 템플릿의 "{{ response_lines }}\n{{ contact_line }}\n\n"가
+        # 빈 줄을 하나 더 남긴다 — 정리한다(이슈 #115 "남는 빈 줄은 BE가 정리한다").
+        text_card["description"] = text_card["description"].replace("\n\n\n", "\n\n")
 
-    card["template"]["outputs"][0]["textCard"]["buttons"] = buttons
     return card
 
 
 def render_voice_detail_carousel(result: dict) -> dict:
-    """통화 녹음 결과의 "자세히 보기". `VoiceCaseResult`는 문자·URL
-    결과와 모양이 완전히 달라 `render_detail_carousel()`을 재사용하지
-    않는다. 아직 FE 캐러셀 설계가 초안 단계(voice-phishing-flow.md
-    "카드 JSON 만들기 전")라, 이미 V1에 쓴 구조화된 값(의심 근거·확인
-    범위)만으로 2장짜리 캐러셀을 만든다 — 설계가 확정되면 이 함수만
-    바꾸면 된다.
+    """통화 녹음 결과의 "자세히 보기"(`c-detail-carousel-voice.json`,
+    이슈 #115). `VoiceCaseResult`는 문자·URL 결과와 모양이 완전히 달라
+    `render_detail_carousel()`을 재사용하지 않는다.
+
+    `claim_lines`는 `call_claims`에서 칸 제목(첫 줄)만 뺀 줄들이다.
     """
 
     caution = bool(result.get("caution"))
+    speaker_unknown = _voice_speaker_unknown(result)
     claims_block = _voice_call_claims(
-        result.get("claims") or {}, caution,
-        result.get("number_checks"), result.get("similar_cases"),
+        result.get("claims") or {}, caution, speaker_unknown=speaker_unknown
     ).strip()
-    checked, unchecked = _voice_checked_unchecked(result)
+    claim_lines = (
+        "\n".join(claims_block.splitlines()[1:]) if claims_block else "확인된 의심 근거가 없어요."
+    )
+    _, unchecked = _voice_checked_unchecked(result)
+    verify_line = _voice_verify_line(result.get("official_contact"), speaker_unknown=speaker_unknown)
 
-    evidence_body = claims_block if claims_block else "확인된 의심 근거가 없어요."
-
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [
-                {
-                    "carousel": {
-                        "type": "basicCard",
-                        "items": [
-                            {
-                                "basicCard": {
-                                    "title": "의심 근거",
-                                    "description": evidence_body,
-                                }
-                            },
-                            {
-                                "basicCard": {
-                                    "title": "이번 분석으로 확인한 것·확인하지 못한 것",
-                                    "description": (
-                                        f"확인한 것\n{checked}\n\n확인하지 못한 것\n{unchecked}"
-                                    ),
-                                }
-                            },
-                        ],
-                    }
-                }
-            ]
-        },
-    }
+    card = render_card("c-detail-carousel-voice", {
+        "claim_lines": claim_lines,
+        "claim_note": (
+            "누가 한 말인지 가리지 못해 통화에 나온 말을 옮겼어요."
+            if speaker_unknown else "통화 상대가 한 말만 근거로 썼어요."
+        ),
+        "similar_type": "",
+        "similar_line": "",
+        "unchecked": unchecked,
+        "verify_line": verify_line,
+    })
+    items = card["template"]["outputs"][0]["carousel"]["items"]
+    if _voice_similar_cases_state(result) == "found":
+        # #109: 현재 CaseMatch에는 type이 없다. matched_variant/categories로
+        # 수법을 추측하지 않고, 검색된 사례가 있다는 사실만 알린다.
+        items[1]["description"] = (
+            "이번 통화와 비슷한 예시 통화를 찾았어요.\n\n"
+            "비슷하다고 해서 사기라는 뜻은 아니에요.\n결과 판단에는 쓰지 않았어요."
+        )
+    else:
+        items.pop(1)
+    return card
 
 
 def _r9_org_label(brand: str | None) -> str:

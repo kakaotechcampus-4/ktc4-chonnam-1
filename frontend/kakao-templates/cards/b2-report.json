@@ -3,25 +3,34 @@
   "template": {
     "outputs": [
       {
-        "basicCard": {
-          "title": "☎️ 신고하거나 상담받기",
-          "description": "상황에 맞는 방법을 바로 알려드릴게요.",
-          "thumbnail": {
-            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2-report.png",
-            "altText": "수화기를 들고 신고하는 경찰 모자 기니피그와 빨간 경광등",
-            "fixedRatio": false
+        "listCard": {
+          "header": {
+            "title": "☎️ 어떤 상황인가요?"
           },
-          "buttonLayout": "vertical",
-          "buttons": [
+          "items": [
             {
-              "label": "문자만 받았어요",
+              "title": "문자만 받았어요",
+              "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2-list-1-message-only.png",
               "action": "block",
               "blockId": "6ab78d64322b97a3a1cc9567"
             },
             {
-              "label": "링크를 눌렀어요",
+              "title": "링크를 눌렀어요",
+              "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2-list-2-link-clicked.png",
               "action": "block",
               "blockId": "6ab78d883dd52f826f111e49"
+            },
+            {
+              "title": "전화만 받았어요",
+              "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2-list-3-call-only.png",
+              "action": "block",
+              "blockId": "6ae330ff25d4bc48e2bb8c57"
+            },
+            {
+              "title": "통화 중 돈·정보를 줬어요",
+              "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2-list-4-call-acted.png",
+              "action": "block",
+              "blockId": "6ae331f080857534c13f8390"
             }
           ]
         }

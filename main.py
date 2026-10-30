@@ -20,6 +20,7 @@ from backend.src.server.media_guard import (
     media_host,
 )
 from backend.src.server.templates.renderer import render_r1_lookalike
+from backend.src.server.voice_input import VoiceInputRejected, inspect_voice_audio, invalid_audio
 from services.official_domain_service import check_link_official
 from services.link_resolution import first_real_host, is_shortener
 from services.kakao_card_renderer import render_card
@@ -603,7 +604,9 @@ VOICE_DOWNLOAD_TIMEOUT_SECONDS = 15.0
 # 다운로드(최대 15초)+분석을 콜백 상한 없이 넉넉하게 담는다 — 운영 경로(콜백)는
 # CALLBACK_DEADLINE_SECONDS를 따로 쓴다.
 VOICE_SYNC_TIMEOUT_SECONDS = 90.0
-_VOICE_FILE_EXTENSIONS = (".m4a", ".mp3", ".wav", ".webm")
+# #115 Q-7 is not decided. No arbitrary recording-length policy is enabled.
+# A configured limit is checked only against measured duration (currently WAV).
+MAX_VOICE_DURATION_SECONDS: float | None = None
 
 # analyze_call()에 줄 예산(v3 B3, latency-budget.md). 전체 분석 상한
 # (CALLBACK_DEADLINE_SECONDS=45초)에서 카드 렌더링·콜백 전송 여유 5초를 뺀
@@ -613,22 +616,6 @@ _VOICE_FILE_EXTENSIONS = (".m4a", ".mp3", ".wav", ".webm")
 VOICE_ANALYZE_BUDGET_S = CALLBACK_DEADLINE_SECONDS - 5.0
 # 이보다 적게 남으면 analyze_call()의 읽기·검색(LLM 호출)을 사실상 건너뛴다.
 VOICE_MIN_ANALYZE_BUDGET_S = 5.0
-
-
-def _voice_filename(media_url: str) -> str:
-    """STT에 보낼 파일명. 실제 확장자를 확인해 쓰고, 알 수 없으면 m4a로
-    둔다 — 카카오 녹음은 메시지·파일 첨부 모두 대부분 m4a다(실기기 확인,
-    `voice-phishing-flow.md` 0절). Content-Type은 `etc/m4a`처럼 표준이
-    아니라 쓰지 않는다.
-    """
-    try:
-        path = urlparse(media_url).path.lower()
-    except ValueError:
-        path = ""
-    for ext in _VOICE_FILE_EXTENSIONS:
-        if path.endswith(ext):
-            return f"voice{ext}"
-    return "voice.m4a"
 
 
 async def download_voice_media(url: str) -> tuple[str, int]:
@@ -660,10 +647,12 @@ async def download_voice_media(url: str) -> tuple[str, int]:
                     raise MediaDownloadBlocked(
                         f"다운로드 실패 status={response.status_code}"
                     )
+                # Content-Type and URL extensions are advisory only (Kakao also
+                # sends nonstandard MIME). Validate actual bytes before STT.
                 async for chunk in response.aiter_bytes(VOICE_DOWNLOAD_CHUNK_BYTES):
                     total += len(chunk)
                     if total > MAX_VOICE_FILE_BYTES:
-                        raise MediaDownloadBlocked("파일이 너무 큼")
+                        raise invalid_audio("25MB보다 커요")
                     destination.write(chunk)
     except BaseException:
         # asyncio.CancelledError는 Exception이 아니라 BaseException만
@@ -674,7 +663,7 @@ async def download_voice_media(url: str) -> tuple[str, int]:
 
     if total == 0:
         os.remove(path)
-        raise MediaDownloadBlocked("빈 파일")
+        raise invalid_audio("녹음 파일이 비어 있어요")
 
     print(f"[VOICE DOWNLOAD OK] host={host} size={total}")
     return path, total
@@ -683,9 +672,9 @@ async def download_voice_media(url: str) -> tuple[str, int]:
 async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
     """음성 메시지 카드 생성: 다운로드 -> STT·화자분리 -> 통화 분석 -> 카드.
 
-    job_id가 있으면(콜백 경로) 예외를 밖으로 던져 `run_analysis_and_callback()`의
-    공용 타임아웃·실패 처리로 넘기고, job_id가 없으면(동기 경로) 여기서
-    안전한 카드로 끝낸다. 다운로드한 파일은 성공·실패·취소와 무관하게
+    입력 오류와 다운로드 실패는 콜백·동기 모두 VE1/VE2/R4로 안내한다.
+    STT·분석의 예외는 기존 공용 실패 처리로 넘긴다(job_id가 없는 동기
+    경로는 여기서 안전한 카드로 끝낸다). 다운로드한 파일은 성공·실패·취소와 무관하게
     분석 전에 바로 지운다 — 녹음 원본은 저장하지 않는다(개인정보 정책).
     대본(segments)도 저장하지 않는다 — `job["final_payload"]`에는
     `VoiceCaseResult`(결과)만 남고 대본은 이 함수 지역 변수로만 존재한다.
@@ -695,19 +684,15 @@ async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
 
     try:
         path, _size = await download_voice_media(media_url)
+    except VoiceInputRejected as error:
+        return render_card(error.card, {"reason_line": error.reason_line})
     except asyncio.CancelledError:
         raise
     except Exception as error:
         print(f"[VOICE ANALYSIS ERROR] download failed: {type(error).__name__}")
-        if job_id is not None:
-            # 원본 예외(예: httpx 네트워크 오류)를 그대로 올리면 공용
-            # run_analysis_and_callback()의 [ANALYSIS ERROR] 로그가
-            # str(error)를 찍는데, 그 메시지에 media_url(서명된 CDN URL)이
-            # 포함될 수 있다. 안전한 정적 메시지로 바꿔서 올린다.
-            raise MediaDownloadBlocked("음성 다운로드 실패") from error
+        # Download failures have a user-facing R4 result even for callback Jobs.
+        # Never forward a network exception containing the signed media URL.
         return render_card("r4-unavailable")
-
-    filename = _voice_filename(media_url)
 
     try:
         try:
@@ -725,6 +710,14 @@ async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
             os.remove(path)
         except OSError:
             pass
+
+    try:
+        filename = inspect_voice_audio(
+            audio_bytes, max_bytes=MAX_VOICE_FILE_BYTES,
+            max_seconds=MAX_VOICE_DURATION_SECONDS,
+        )
+    except VoiceInputRejected as error:
+        return render_card(error.card, {"reason_line": error.reason_line})
 
     # transcribe_call()·analyze_call()은 계약상 CancelledError만 올리고
     # 그 외 실패는 예외 대신 실패 결과로 돌려준다(ai.case) — 외부 함수라
@@ -799,7 +792,7 @@ async def handle_voice_message(
                 timeout=VOICE_SYNC_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
-            return kakao_response("음성 분석 시간이 초과되었어요. 잠시 후 다시 보내 주세요.")
+            return render_card("r4-unavailable")
         finally:
             if user_id:
                 RUNNING_USERS.discard(user_id)
@@ -975,7 +968,7 @@ async def run_analysis_and_callback(
                 f"user={user_id}"
             )
 
-            result = kakao_response(
+            result = render_card("r4-unavailable") if voice_media_url is not None else kakao_response(
                 "분석이 예상보다 오래 걸리고 있어요. "
                 "잠시 후 다시 확인해주세요."
             )
