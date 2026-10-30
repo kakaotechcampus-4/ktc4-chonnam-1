@@ -1,0 +1,15 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "🚨 지금 먼저 하세요",
+          "description": "{{ response_lines }}\n\n답해 주신 내용 기준으로 안내했어요.",
+          "buttonLayout": "vertical",
+          "buttons": []
+        }
+      }
+    ]
+  }
+}

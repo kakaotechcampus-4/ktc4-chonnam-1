@@ -2,9 +2,11 @@ import asyncio
 import hmac
 import os
 import tempfile
+import time
 
 import uuid
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 
@@ -27,11 +29,17 @@ from services.result_card_renderer import (
     merge_kakao_responses,
     render_detail_carousel,
     render_voice_result_card,
+    render_voice_detail_carousel,
+    render_voice_answer_card,
 )
 
 # AI 연결
 from ai.pipeline import analyze_message_part, finalize_analysis
 from ai.types import UrlAnalysis
+
+# 통화(음성) 분석 연결. ai.case 는 카카오 payload를 모른다 (CLAUDE.md 의존 방향).
+from ai.case import transcribe_call, analyze_call, apply_call_answers
+from ai.case.types import VoiceCaseResult
 
 from scanner.isolation_client import collect_url_isolated
 from scanner.isolation_page import to_isolated_page
@@ -310,6 +318,12 @@ def handle_detail_carousel(job_id: str) -> dict:
             "분석 결과를 찾을 수 없어요. 문자를 다시 보내 주세요."
         )
 
+    # 음성(VoiceCaseResult)과 문자·URL(AnalysisResponse)은 모양이 완전히
+    # 달라서 같은 렌더러로 돌리면 안 된다 — 음성 결과를 문자 캐러셀
+    # 렌더러에 넘기면 빈 칸투성이 캐러셀이 나간다.
+    if job.get("analysis_kind") == "voice":
+        return render_voice_detail_carousel(final_payload)
+
     return render_detail_carousel(final_payload)
 
 
@@ -317,44 +331,31 @@ def handle_detail_carousel(job_id: str) -> dict:
 # Kakao Skill
 # ============================================================
 
-def _field_types(mapping: dict) -> dict[str, str]:
-    """민감한 값을 남기지 않고, 필드 이름과 자료형만 돌려준다."""
-    return {key: type(value).__name__ for key, value in mapping.items()}
+_VOICE_ATTACHMENT_EXTENSIONS = (".m4a", ".mp3", ".wav", ".webm")
 
 
-def _log_voice_payload_diagnostics(body: dict) -> None:
-    """카카오 음성 메시지가 SkillPayload에 어떤 모양으로 오는지 확인하기
-    위한 임시 진단 로그다 — 실제 구현(다운로드·분석·카드 렌더링) 전,
-    `userRequest.params`/`action.params`/`action.detailParams`에 음성
-    미디어 관련 필드가 있는지만 먼저 확인한다.
+def _utterance_voice_attachment(utterance: str) -> dict | None:
+    """`params.media` 없이 녹음 파일(M4A 등)을 파일로 첨부했을 때를 인식한다.
 
-    URL·토큰·사용자 ID·음성 내용 같은 민감한 값은 절대 남기지 않는다 —
-    필드 이름·자료형·미디어 타입·URL "존재 여부"만 기록한다. 운영에서는
-    끈다(APP_ENV가 local/test/staging일 때만 동작).
+    실기기 확인 결과(`voice-phishing-flow.md` 0절): 카톡 **파일 첨부**로 보낸
+    녹음은 `params.media`가 오지 않고, `utterance`에 카카오 CDN의 서명된
+    주소만 그대로 온다. 음성 **메시지**(마이크 버튼)의 `media.type=="audio"`
+    경로와는 별개 경로라 여기서 추가로 인식한다. 허용 호스트(`is_allowed_media_url`)와
+    경로 끝 오디오 확장자로만 판별하고, 문자나 일반 링크를 음성으로 오인하지 않는다.
     """
 
-    app_env = os.getenv("APP_ENV", "production").lower()
-    if app_env not in {"local", "test", "staging"}:
-        return
-
-    user_request = body.get("userRequest") or {}
-    params = user_request.get("params") or {}
-    action = body.get("action") or {}
-    action_params = action.get("params") or {}
-    detail_params = action.get("detailParams") or {}
-
-    print(f"[VOICE DIAG] userRequest.params field_types={_field_types(params)}")
-    print(f"[VOICE DIAG] action.params field_types={_field_types(action_params)}")
-    print(f"[VOICE DIAG] action.detailParams field_types={_field_types(detail_params)}")
-
-    media = params.get("media")
-    if isinstance(media, dict):
-        print(
-            f"[VOICE DIAG] userRequest.params.media "
-            f"type={media.get('type')!r} "
-            f"has_url={'url' in media} "
-            f"field_types={_field_types(media)}"
-        )
+    candidate = (utterance or "").strip()
+    if not candidate or any(ch.isspace() for ch in candidate):
+        return None
+    if not is_allowed_media_url(candidate):
+        return None
+    try:
+        path = urlparse(candidate).path.lower()
+    except ValueError:
+        return None
+    if not path.endswith(_VOICE_ATTACHMENT_EXTENSIONS):
+        return None
+    return {"type": "audio", "url": candidate}
 
 
 @app.post("/kakao/skill", dependencies=[Depends(verify_skill_secret)])
@@ -370,13 +371,18 @@ async def kakao_skill(
     user_id = user_request.get("user", {}).get("id")
     callback_url = user_request.get("callbackUrl")
 
-    # 음성 메시지는 utterance에도 서명된 CDN URL이 그대로 실려 온다
-    # (Render 로그로 실제 payload 확인함, 2026-10-27) — 음성이면 utterance를
-    # 로그에 남기지 않는다.
-    is_voice_message = (
-        (user_request.get("params") or {}).get("media") or {}
-    ).get("type") == "audio"
+    # 카카오톡 음성 메시지는 두 모양으로 온다 (voice-phishing-flow.md 0절):
+    # (1) 마이크 버튼 메시지 — params.media.type == "audio"
+    # (2) 파일로 첨부한 녹음(m4a 등) — params.media 없이 utterance에 카카오
+    #     CDN 서명 주소만 옴. 호스트+확장자로 판별한다.
+    media: dict = (user_request.get("params") or {}).get("media") or {}
+    if media.get("type") != "audio":
+        attachment_media = _utterance_voice_attachment(utterance)
+        if attachment_media is not None:
+            media = attachment_media
+    is_voice_message = media.get("type") == "audio"
 
+    # 음성은 utterance(또는 그 안의 서명된 CDN URL)를 로그에 남기지 않는다.
     print(
         f"[KAKAO] "
         f"user={user_id} "
@@ -388,8 +394,6 @@ async def kakao_skill(
         f"{bool(callback_url)}"
     )
 
-    # 임시 진단 로그 (음성 메시지 Payload 조사용) — 기능 결정 전 조사
-    _log_voice_payload_diagnostics(body)
     # 경로에는 1회용 콜백 토큰이 있어 호스트만 남긴다. 허용 목록을 좁힐 때 쓴다.
     print(f"[CALLBACK HOST] {callback_host(callback_url)}")
 
@@ -397,7 +401,7 @@ async def kakao_skill(
     if callback_url is not None and not is_allowed_callback_url(callback_url):
         print("[CALLBACK REJECTED] 허용되지 않은 callbackUrl")
         return render_card("r4-unavailable")
-    
+
     intent_name = (
         body.get("intent", {}).get("name", "")
     )
@@ -411,16 +415,23 @@ async def kakao_skill(
     if detail_job_id:
         return handle_detail_carousel(detail_job_id)
 
+    # Q1 "이미 하신 게 있나요?" 리스트 카드 항목 클릭. LLM·네트워크 없이
+    # apply_call_answers()로 바로 답한다(설계 문서 D11, 콜백 불필요).
+    qa_case_id = client_extra.get("case_id")
+    qa_question_id = client_extra.get("question_id")
+    qa_option_id = client_extra.get("option_id")
+
+    if qa_case_id and qa_question_id == "already_acted" and qa_option_id:
+        return handle_voice_answer(qa_case_id, qa_option_id)
+
     # 사용자가 결과 확인 요청하면 최근 분석 결과를 리턴
     if intent_name == "결과 확인":
         return handle_check_result(user_id)
 
-    # 카카오톡 음성 메시지 (Render 로그로 실제 payload 확인함, 2026-10-27).
-    # utterance에도 음성 파일의 서명된 CDN URL이 그대로 실려 오므로, 반드시
-    # split_message() 호출 **전에** 분기한다 — utterance를 링크로 보고
-    # 기존 문자·URL 분석으로 흘려보내면 안 된다(다운로드 주소 출처는
-    # 오직 media.url이어야 함).
-    media = (user_request.get("params") or {}).get("media") or {}
+    # 카카오톡 음성 메시지. utterance에도 음성 파일의 서명된 CDN URL이
+    # 그대로 실려 올 수 있으므로, 반드시 split_message() 호출 **전에**
+    # 분기한다 — utterance를 링크로 보고 기존 문자·URL 분석으로
+    # 흘려보내면 안 된다(다운로드 주소 출처는 오직 media.url이어야 함).
     if is_voice_message:
         return await handle_voice_message(
             media, user_id, callback_url, background_tasks
@@ -531,36 +542,39 @@ async def run_analysis(
 # 출처로 쓰지 않는다).
 # ============================================================
 
-MAX_VOICE_FILE_BYTES = 25 * 1024 * 1024  # 25MB
+MAX_VOICE_FILE_BYTES = 25 * 1024 * 1024  # 25MB (whisper 한도)
 VOICE_DOWNLOAD_CHUNK_BYTES = 1024 * 1024  # 1MB
 VOICE_DOWNLOAD_TIMEOUT_SECONDS = 15.0
-VOICE_SYNC_TIMEOUT_SECONDS = 10.0  # callbackUrl 없는 동기 경로(개발용) 예산
+# callbackUrl 없는 동기 경로(개발용) 예산. 실제 STT(최대 30초)+화자분리(최대 20초)+
+# 다운로드(최대 15초)+분석을 콜백 상한 없이 넉넉하게 담는다 — 운영 경로(콜백)는
+# CALLBACK_DEADLINE_SECONDS를 따로 쓴다.
+VOICE_SYNC_TIMEOUT_SECONDS = 90.0
+_VOICE_FILE_EXTENSIONS = (".m4a", ".mp3", ".wav", ".webm")
+
+# analyze_call()에 줄 예산(v3 B3, latency-budget.md). 전체 분석 상한
+# (CALLBACK_DEADLINE_SECONDS=45초)에서 카드 렌더링·콜백 전송 여유 5초를 뺀
+# 값에서, 이미 쓴 다운로드·STT·화자분리 시간을 뺀다. `CALLBACK_DEADLINE_SECONDS`
+# 그대로 넘기면 분석이 45초를 다 써서 카드를 만들기 전에 바깥 wait_for가
+# 작업을 취소해 결과가 시간 초과로 바뀐다.
+VOICE_ANALYZE_BUDGET_S = CALLBACK_DEADLINE_SECONDS - 5.0
+# 이보다 적게 남으면 analyze_call()의 읽기·검색(LLM 호출)을 사실상 건너뛴다.
+VOICE_MIN_ANALYZE_BUDGET_S = 5.0
 
 
-async def mock_analyze_voice_case(audio_path: str, filename: str) -> dict:
-    """실제 STT·AI 분석을 흉내 내는 자리 표시자.
-
-    다음 주 AI 연동 전까지, 수신→다운로드→Mock 분석→콜백 흐름 전체를
-    끝까지 테스트할 수 있도록 고정된 결과를 돌려준다. 진짜 분석이
-    들어오면 이 함수만 교체하면 된다(호출부는 바뀌지 않는다). 입력을
-    메모리의 bytes가 아니라 파일 경로로 받는다 — 실제 STT 연동 때도
-    파일을 통째로 들고 있을 필요가 없도록 미리 맞춰 둔 경계다.
+def _voice_filename(media_url: str) -> str:
+    """STT에 보낼 파일명. 실제 확장자를 확인해 쓰고, 알 수 없으면 m4a로
+    둔다 — 카카오 녹음은 메시지·파일 첨부 모두 대부분 m4a다(실기기 확인,
+    `voice-phishing-flow.md` 0절). Content-Type은 `etc/m4a`처럼 표준이
+    아니라 쓰지 않는다.
     """
-
-    await asyncio.sleep(0)  # 실제 작업이면 여기서 await 체인이 이어진다
-
-    return {
-        "scenario": "voice_phishing",
-        "conclusion": "주의 필요",
-        "evidence": [
-            {"text": "(목업) 실제 STT·분석 연동 전 고정 결과입니다.", "source": "mock"},
-        ],
-        "guidance": (
-            "실제 기관은 전화로 송금이나 계좌 정보를 요구하지 않아요. "
-            "의심되면 끊고 공식 대표번호로 직접 확인하세요."
-        ),
-        "mock": True,
-    }
+    try:
+        path = urlparse(media_url).path.lower()
+    except ValueError:
+        path = ""
+    for ext in _VOICE_FILE_EXTENSIONS:
+        if path.endswith(ext):
+            return f"voice{ext}"
+    return "voice.m4a"
 
 
 async def download_voice_media(url: str) -> tuple[str, int]:
@@ -598,8 +612,9 @@ async def download_voice_media(url: str) -> tuple[str, int]:
                         raise MediaDownloadBlocked("파일이 너무 큼")
                     destination.write(chunk)
     except BaseException:
-        # 바깥 wait_for 타임아웃은 CancelledError(Exception 이 아니다)로 들어온다.
-        # 경로를 아직 돌려주지 않아 호출부가 지울 수 없으므로 여기서 지우고 다시 올린다
+        # asyncio.CancelledError는 Exception이 아니라 BaseException만
+        # 상속한다(3.8+) — except Exception만 쓰면 다운로드 도중 취소됐을
+        # 때 이 임시 파일이 지워지지 않고 남는다.
         os.remove(path)
         raise
 
@@ -612,15 +627,22 @@ async def download_voice_media(url: str) -> tuple[str, int]:
 
 
 async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
-    """음성 메시지 카드 생성.
+    """음성 메시지 카드 생성: 다운로드 -> STT·화자분리 -> 통화 분석 -> 카드.
 
     job_id가 있으면(콜백 경로) 예외를 밖으로 던져 `run_analysis_and_callback()`의
     공용 타임아웃·실패 처리로 넘기고, job_id가 없으면(동기 경로) 여기서
-    안전한 카드로 끝낸다. 다운로드한 파일은 성공·실패와 무관하게 지운다.
+    안전한 카드로 끝낸다. 다운로드한 파일은 성공·실패·취소와 무관하게
+    분석 전에 바로 지운다 — 녹음 원본은 저장하지 않는다(개인정보 정책).
+    대본(segments)도 저장하지 않는다 — `job["final_payload"]`에는
+    `VoiceCaseResult`(결과)만 남고 대본은 이 함수 지역 변수로만 존재한다.
     """
+
+    started = time.monotonic()
 
     try:
         path, _size = await download_voice_media(media_url)
+    except asyncio.CancelledError:
+        raise
     except Exception as error:
         print(f"[VOICE ANALYSIS ERROR] download failed: {type(error).__name__}")
         if job_id is not None:
@@ -631,23 +653,64 @@ async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
             raise MediaDownloadBlocked("음성 다운로드 실패") from error
         return render_card("r4-unavailable")
 
+    filename = _voice_filename(media_url)
+
     try:
-        result = await mock_analyze_voice_case(path, "voice_message")
-    except Exception as error:
-        print(f"[VOICE ANALYSIS ERROR] {type(error).__name__}")
-        if job_id is not None:
-            raise RuntimeError("음성 분석 실패") from error
-        return render_card("r4-unavailable")
+        try:
+            audio_bytes = await asyncio.to_thread(Path(path).read_bytes)
+        except asyncio.CancelledError:
+            raise
+        except OSError as error:
+            print(f"[VOICE ANALYSIS ERROR] read failed: {type(error).__name__}")
+            if job_id is not None:
+                raise RuntimeError("음성 파일 읽기 실패") from error
+            return render_card("r4-unavailable")
     finally:
+        # 녹음 원본은 바이트로 읽은 즉시 지운다(분석 단계로 넘기지 않는다).
         try:
             os.remove(path)
         except OSError:
             pass
 
-    if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
-        job["final_payload"] = result
+    # transcribe_call()·analyze_call()은 계약상 CancelledError만 올리고
+    # 그 외 실패는 예외 대신 실패 결과로 돌려준다(ai.case) — 외부 함수라
+    # 그래도 방어적으로 감싼다.
+    try:
+        transcript = await transcribe_call(audio_bytes, filename)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        print(f"[VOICE ANALYSIS ERROR] transcribe failed: {type(error).__name__}")
+        if job_id is not None:
+            raise RuntimeError("음성 받아쓰기 실패") from error
+        return render_card("r4-unavailable")
 
-    return render_voice_result_card(result)
+    elapsed = time.monotonic() - started
+    remaining_budget = VOICE_ANALYZE_BUDGET_S - elapsed
+
+    # 남은 예산이 5초 미만이면 analyze_call()에 0초 예산을 줘 실제 분석
+    # (읽기·검색 LLM 호출)을 사실상 건너뛰게 한다 — analyze_call()은 예산이
+    # 바닥이면 자체적으로 즉시 시간 초과 처리해 안전한 미확인 결과를 낸다.
+    analyze_budget = (
+        remaining_budget if remaining_budget >= VOICE_MIN_ANALYZE_BUDGET_S else 0.0
+    )
+
+    try:
+        result = await analyze_call(transcript, time_budget_s=analyze_budget)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        print(f"[VOICE ANALYSIS ERROR] analyze failed: {type(error).__name__}")
+        if job_id is not None:
+            raise RuntimeError("통화 분석 실패") from error
+        return render_card("r4-unavailable")
+
+    payload = result.model_dump(mode="json")
+
+    if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
+        job["final_payload"] = payload
+
+    return render_voice_result_card(payload, job_id)
 
 
 async def handle_voice_message(
@@ -707,6 +770,36 @@ async def handle_voice_message(
     )
 
     return render_card("r5-analyzing")
+
+
+def handle_voice_answer(job_id: str, option_id: str) -> dict:
+    """Q1 "이미 하신 게 있나요?" 리스트 카드 항목 클릭을 처리한다.
+
+    `apply_call_answers()`는 LLM·네트워크를 쓰지 않는 순수 함수라 콜백 없이
+    바로 답한다(설계 문서 D11). 답은 쌓인다 — 같은 case(job)에 여러 번
+    답해도 지금까지 고른 답 전부로 다시 안내를 고른다(D16). 결론·멈출
+    행동은 `apply_call_answers()`가 바꾸지 않는다(`response_actions`만).
+    """
+
+    job = ANALYSIS_JOBS.get(job_id)
+    final_payload = job.get("final_payload") if job else None
+
+    if job is None or job.get("analysis_kind") != "voice" or not final_payload:
+        return kakao_response("분석 결과를 찾을 수 없어요. 녹음을 다시 보내 주세요.")
+
+    try:
+        result = VoiceCaseResult.model_validate(final_payload)
+    except Exception as error:
+        print(f"[VOICE ANSWER ERROR] {type(error).__name__}")
+        return kakao_response("분석 결과를 찾을 수 없어요. 녹음을 다시 보내 주세요.")
+
+    answers: list[str] = job.setdefault("qa_answers", [])
+    answers.append(option_id)
+
+    updated = apply_call_answers(result, answers)
+    job["final_payload"] = updated.model_dump(mode="json")
+
+    return render_voice_answer_card(job["final_payload"], answers)
 
 
 def _http_host(url: str | None) -> str | None:
