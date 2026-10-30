@@ -1,0 +1,18 @@
+id: N15
+scenario: voice_phishing
+# 상대는 기관을 내세우기만 하고, 송금 말은 받는 사람이 되물은 것뿐이다. 되물은 말은 요구가 아니다 (ADR 0008)
+input: {kind: audio}
+transcript:
+  - "서울중앙지검 수사관 김○○입니다"
+  - "네? 제 계좌에서 송금하라고요?"
+  - "그런 말씀은 드린 적 없습니다"
+runtime:
+  reading:
+    identity: [{kind: institution, name: 서울중앙지검, quote: "서울중앙지검 수사관 김○○입니다"}]
+    demands: [{kind: money_transfer, quote: "제 계좌에서 송금하라고요?"}]
+expect:
+  conclusion: inconclusive
+  caution: true
+  floors: []
+  stop_actions: [hang_up]
+  rejected: [self_side]

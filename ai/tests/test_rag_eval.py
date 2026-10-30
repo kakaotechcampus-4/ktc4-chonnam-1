@@ -281,7 +281,7 @@ def test_default_run_times_kb_load_inside_first_search(monkeypatch):
         calls.append("search")
         raise Stop
 
-    monkeypatch.setattr(rag_eval, "load_rows", lambda: [{"message": "x"}])
+    monkeypatch.setattr(rag_eval, "load_rows", lambda **_: [{"message": "x"}])
     monkeypatch.setattr(rag_eval, "default_searcher", searcher)
     monkeypatch.setattr(rag_eval, "load_cases", lambda: calls.append("load") or ())
 

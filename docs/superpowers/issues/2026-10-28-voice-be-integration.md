@@ -8,7 +8,7 @@ AI 진입점 (`ai.case`)
 
 | 함수 | 역할 |
 | --- | --- |
-| `transcribe_call(audio: bytes, filename: str, *, runtime=None) -> TranscriptResult` | whisper STT + Sonnet 5.5 화자 분리. 내부 한도 STT 30초 + 분리 20초 |
+| `transcribe_call(audio: bytes, filename: str, *, runtime=None) -> TranscriptResult` | whisper STT. 문장마다 세그먼트 하나이고 화자는 나누지 않음([ADR 0008](../../adr/0008-no-speaker-diarization.md)). 내부 한도 30초 |
 | `analyze_call(transcript, *, runtime=None, time_budget_s=40.0) -> VoiceCaseResult` | 주장 읽기 + 사례 검색 + 결정적 판정 |
 | `warm_up_voice_case_search()` | 사례 색인 미리 적재 (`from ai.case import warm_up_voice_case_search`. `ai.kb.search` 의 같은 이름 함수는 색인만 채우고 관문 모델은 읽지 않는다) |
 | `apply_call_answers(result, answers) -> VoiceCaseResult` | 쌓인 Q1 답으로 `response_actions` 를 채운 사본 (v3 §8). 결론·멈출 행동은 바뀌지 않음. LLM·네트워크 0회라 콜백 없이 바로 답해도 됨 |
@@ -30,7 +30,7 @@ AI 진입점 (`ai.case`)
    - MPEG 프레임·ISO-BMFF 오디오 handler·WebM 오디오 CodecID 확인은 **압축 오디오 전체 디코딩/모든 손상 검증을 완료했다는 뜻이 아니다.** M4A/WebM 테스트에는 메타데이터 fixture를 쓰며 실제 STT/코덱 검증은 별도다. 원본 파일은 바이트로 읽은 즉시 지운다.
 3. **첫 응답은 즉시** 보냅니다 (콜백 사용, 5초 안). 이후 작업은 콜백 경로에서 수행합니다.
 4. `transcribe_call(audio, filename)`. 걸린 시간(`elapsed`)을 잽니다.
-5. `analyze_call(transcript, time_budget_s = 40 - elapsed)`. PR #105 는 다운로드부터 카드 렌더링까지를 `asyncio.wait_for(..., CALLBACK_DEADLINE_SECONDS=45)` 로 감쌉니다. 다운로드(한도 15초)·STT·분리도 이 45초 안에 들어가므로, 분석 예산은 v3 B3 대로 `CALLBACK_DEADLINE_SECONDS - 5`(40초)에서 `elapsed` 를 뺍니다. `45 - elapsed` 로 주면 분석이 45초를 다 써서 카드 렌더링 전에 바깥 `wait_for` 가 작업을 취소하고 결과가 시간 초과(R4)로 바뀝니다. `elapsed` 는 다운로드 시작부터 잽니다. 남은 예산이 5초 미만이면 함수를 생략하는 대신 `analyze_call(..., time_budget_s=0.0)`으로 호출해 읽기·검색 LLM 작업을 사실상 건너뛰고 미확인 결과를 받습니다.
+5. `analyze_call(transcript, time_budget_s = 40 - elapsed)`. PR #105 는 다운로드부터 카드 렌더링까지를 `asyncio.wait_for(..., CALLBACK_DEADLINE_SECONDS=45)` 로 감쌉니다. 다운로드(한도 15초)·STT도 이 45초 안에 들어가므로, 분석 예산은 v3 B3 대로 `CALLBACK_DEADLINE_SECONDS - 5`(40초)에서 `elapsed` 를 뺍니다. `45 - elapsed` 로 주면 분석이 45초를 다 써서 카드 렌더링 전에 바깥 `wait_for` 가 작업을 취소하고 결과가 시간 초과(R4)로 바뀝니다. `elapsed` 는 다운로드 시작부터 잽니다. 남은 예산이 5초 미만이면 함수를 생략하는 대신 `analyze_call(..., time_budget_s=0.0)`으로 호출해 읽기·검색 LLM 작업을 사실상 건너뛰고 미확인 결과를 받습니다.
 6. 결과를 **먼저 저장** (콜백은 1회성) -> 콜백 카드 전송. 콜백이 만료·실패하면 `결과 확인` 조회가 저장본을 보여줍니다 (처리 중이면 K1, 실패면 R4, 없으면 K4).
 7. **결과 카드 버튼은 `자세히 보기`·`다른 녹음 확인하기`입니다(이슈 #115, 2026-10-29로 D15 기준에서 다시 바뀜).** `112 신고`는 V1에 달지 않습니다 — 신고·상담 버튼은 결과 카드가 아니라 Q1 → K6 로 안내합니다. `v1-voice-result.json`(`frontend/kakao-templates/`, FE `refactor/voice-phishing-fe` 소유)이 두 버튼을 고정값으로 담고 있어 BE가 버튼을 조립하지 않습니다. 옛 목업 카드 `r-voice-result.json` 은 지워졌습니다(PR #105 당시 썼던 것).
 
@@ -48,10 +48,10 @@ AI 진입점 (`ai.case`)
 | --- | --- | --- |
 | `STT_BASE_URL` | whisper 엔드포인트 루트. **`/v1` 없이** 넣습니다(코드가 `/v1/audio/transcriptions` 를 붙임). 예: `https://mlapi.run/<엔드포인트 ID>` | 필수 |
 | `STT_MODEL` | STT 모델 | `whisper-large-v3` |
-| `DIARIZE_BASE_URL` | 화자 분리용 Claude 엔드포인트 루트. **`/v1` 없이** 넣습니다(코드가 `/v1/messages` 를 붙임) | 필수 |
-| `DIARIZE_MODEL` | 화자 분리 모델 | `claude-sonnet-5-5` |
 | `LLM_API_KEY` | 위 호출 공용 키 | 필수 |
-| `LLM_BASE_URL` / `LLM_MODEL` / `CLAIMS_MODEL` | 주장 읽기 (기존, 읽기만). `LLM_BASE_URL` 은 OpenAI 클라이언트용이라 지금 Render 값처럼 **`/v1` 까지** 넣습니다. 위 두 변수와 형식이 다르니 값을 복사하지 마세요(`…/v1/v1/messages` 404). `CLAIMS_MODEL` 이 없으면 `LLM_MODEL` 을 씁니다 | 기존 값 |
+| `LLM_BASE_URL` / `LLM_MODEL` / `CLAIMS_MODEL` | 주장 읽기 (기존, 읽기만). `LLM_BASE_URL` 은 OpenAI 클라이언트용이라 지금 Render 값처럼 **`/v1` 까지** 넣습니다. `STT_BASE_URL` 과 형식이 다르니 값을 복사하지 마세요. `CLAIMS_MODEL` 이 없으면 `LLM_MODEL` 을 씁니다 | 기존 값 |
+
+`DIARIZE_BASE_URL`·`DIARIZE_MODEL` 은 화자 분리를 없애면서(ADR 0008) 쓰지 않습니다. 이미 넣었다면 지워도 됩니다.
 
 Render 환경 변수와 `.env.example` 에 추가해야 합니다.
 
@@ -72,7 +72,8 @@ Render 환경 변수와 `.env.example` 에 추가해야 합니다.
 | `official_contact` (`org`, `number`, `source_url`) | V1 `verify_line`: `{org} 대표번호({number})로 직접 전화해 확인하세요.` 없으면(`null`) `상대가 말한 기관의 대표번호를 직접 찾아 전화해 확인하세요.` 번호는 대표번호 KB 에서만 오며 녹음 속 번호가 아님. `source_url`은 카드에 쓰지 않음 |
 | `response_actions` | K6 대응 줄. 분석 직후에는 비어 있고 `apply_call_answers` 가 채움. 비어 있으면 `a2-not-yet-voice.json` |
 | `checked` / `unchecked` (+`reason`) | 확인한 것 / 확인하지 못한 것. 둘을 섞지 않음 (`not_run` 과 `failed` 구분). `phone_number` 라벨은 `상대가 말한 전화번호`(둘 다 통일), `transcript_accuracy`는 reason 무관하게 늘 `받아 적은 글이 정확한지 (말을 글로 옮겨 틀릴 수 있어요)` |
-| `failures` | 실패 이유 문구 (`timeout`, `llm_error`, `invalid_output` 등). 화자 분리 실패는 여기가 아니라 `unchecked` 와 `inconclusive`·`caution` 으로 나타남 |
+| `failures` | 실패 이유 문구 (`timeout`, `llm_error`, `invalid_output` 등). |
+| `rejected` (`reason`) | 버린 주장. `self_side` 는 받는 사람이 되묻거나 옮긴 말·자기 일을 말한 문장으로 본 것(ADR 0008). 카드에 싣지 않음 |
 | `similar_cases` | 최신 FE 댓글(2026-10-30)에 따라 V1 확인 상태를 복원한다. completed+matches면 확인, matches 없음/kb_empty면 비교할 사례 없음, unchecked failed/timeout이면 검색 문제로 구분한다. 실제 matches가 있을 때만 캐러셀 두 번째 장을 붙인다. 현재 AI에 type이 없어 수법명을 추측하지 않고 일반적인 사례 발견 안내만 한다(#109 의존) |
 | `explanation` | 부가 설명. 카드에 아직 안 씀(비어 있어도 카드는 나가야 함 조건은 만족) |
 | `questions[0]` (Q1, `option_ids`: `entered_info`, `installed_app`, `sent_money`, `not_yet`) | 결과 아래 `이미 하신 게 있나요?` 리스트 카드(`q1-already-acted.json`). 라벨은 FE. 블록은 **`block_answer`=`6ae336cd25d4bc48e2bb8f2a`**(2026-10-29 관리자센터 확정) — "자세히 보기" 블록(`6aad3abfe745d3358bd90c8d`)과 다르다, 재사용 금지 |
@@ -160,7 +161,8 @@ XML은 Git에서 제외된 `.venv/voice-115-fe-alignment-results.xml`에만 생�
 - `audio_seconds` 는 wav 만 채워집니다. 그 외 형식은 `None` 입니다.
 - 지식베이스 대본의 라이선스 문제: 금감원 자료는 "무단 복제·배포 금지"입니다. 공개 저장소에 올리기 전에 해결해야 합니다.
 - 가족·지인 사칭 유형은 사례 검색이 약합니다 (결과가 `inconclusive` 로 나올 수 있음). 사례 첨부 관문 때문에 `similar_cases` 가 빈 채로 나가는 것은 오류가 아닙니다.
-- 5초 안에 카카오 첫 응답, STT 실측은 3~4분 녹음에 12~16초입니다. 더 긴 녹음의 한도는 정해지지 않았습니다.
+- 5초 안에 카카오 첫 응답, STT 실측은 2~11초입니다(화자 분리를 하던 때 3~4분 녹음 합계 12~16초). 더 긴 녹음의 한도는 정해지지 않았습니다.
+- 대본에 화자 구분이 없습니다. 누가 한 말인지는 문장 꼴로 가늠하고, `suspected` 는 자기소개 꼴의 기관·지인 주장과 부탁 꼴의 요구가 함께 있을 때만 나옵니다(ADR 0008). 결과 형태는 바뀌지 않았습니다.
 
 ## 완료 조건
 
@@ -170,14 +172,14 @@ XML은 Git에서 제외된 `.venv/voice-115-fe-alignment-results.xml`에만 생�
 - [x] **바이트/헤더 기반 입력 검증과 VE1/VE2/R4 분기** — 25MB 경계·비오디오·미지원 형식·빈 파일·손상된 WAV·다운로드 실패·시간 초과. 원인별 VE2 문구와 파일 정리 유지
 - [ ] **운영 녹음 길이 상한 확정·전 형식 길이 측정·압축 오디오 전체 디코딩 검증** — WAV 측정만 가능, 운영 상한 미설정. 새 라이브러리/ffprobe/배포 설정을 추가하지 않음
 - [x] `mock_analyze_voice_case()` 를 `transcribe_call`/`analyze_call` 로 교체, `render_voice_result_card()` 를 `VoiceCaseResult` 기준(conclusion별 V1/VE3/VE4 분기 포함)으로 재작성
-- [x] 첫 응답 즉시, 이후 `transcribe_call` -> `analyze_call(time_budget_s)` 를 콜백 경로에서 실행. 예산은 `CALLBACK_DEADLINE_SECONDS(45) - 5` 에서 다운로드+STT+화자분리 경과 시간을 뺀 값, 5초 미만이면 `analyze_call` 에 0초를 줘 실제 분석을 사실상 건너뜀
+- [x] 첫 응답 즉시, 이후 `transcribe_call` -> `analyze_call(time_budget_s)` 를 콜백 경로에서 실행. 예산은 `CALLBACK_DEADLINE_SECONDS(45) - 5` 에서 다운로드+STT 경과 시간을 뺀 값, 5초 미만이면 `analyze_call` 에 0초를 줘 실제 분석을 사실상 건너뜀
 - [x] 결과를 콜백 전에 저장하고, `결과 확인` 이 저장본(처리 중 K1 / 실패 R4 / 없음 K4)을 보여줌
 - [x] V1/VE3/VE4 결과 카드와 Q1 리스트 카드 렌더링, Q1 답은 `apply_call_answers` 결과로 K6(D17)/A2 생성, 전용 블록(`block_answer`) 사용
 - [x] V1 버튼 `자세히 보기`·`다른 녹음 확인하기`(D15 재변경), K6 버튼은 최신 D17 규칙(문자 분석은 그대로 유지)
 - [x] lifespan 에서 `warm_up_voice_case_search()` 호출 (실패해도 기동) — 테스트로 확인됨
-- [x] 환경 변수 6개를 `.env.example` 에 반영. **Render 실제 설정은 별도 확인 필요**(`STT_BASE_URL`/`DIARIZE_BASE_URL` 미설정이면 전부 `ve3-unrecognized`(알아듣지 못함)로만 응답)
+- [x] 환경 변수 6개를 `.env.example` 에 반영. **Render 실제 설정은 별도 확인 필요**(`STT_BASE_URL` 미설정이면 전부 `ve3-unrecognized`(알아듣지 못함)로만 응답)
 - [x] 대본 저장·외부 전송 전 마스킹 — 엔드포인트 미정이라 대본 자체를 저장하지 않는 방식으로 조건 충족(`EliceMasker` 호출은 아직 안 함)
-- [x] STT 실패(`not_analyzable`), 화자 분리 실패(`TranscriptResult.speaker_split_failed`), 시간 초과 경로 테스트
+- [x] STT 실패(`not_analyzable`), 시간 초과 경로 테스트
 - [x] 한 사용자 동시 요청 K5 잠금
 - [x] 의존 방향 유지 (`backend` -> `ai`), `ai/` 는 카카오 payload 를 모름
 - [x] VE1/VE2/R4 테스트 38개 추가(`TestVoiceInputValidation`). 기존 V1/VE3/VE4·Q1/K6/A2·문자 테스트를 함께 실행하며 통합 결과는 아래 실제 실행 기록으로 구분

@@ -38,27 +38,33 @@ def roundtrip(obj):
 
 
 def _segment():
-    return Segment(side=Side.OTHER, speaker="화자1", text="안녕", start=0.0, end=1.5)
+    return Segment(side=Side.OTHER, text="안녕", start=0.0, end=1.5)
 
 
 def test_roundtrip_transcript_and_source():
     t = TranscriptResult(
         segments=[_segment()],
-        speaker_split_failed=False,
         failure=FailureCode.TIMEOUT,
         stt_model="m",
-        diarize_model="d",
         audio_seconds=3.0,
     )
     roundtrip(t)
-    roundtrip(
-        ReadingSource(
-            kind=InputKind.AUDIO,
-            segments=[_segment()],
-            other_speaker="화자1",
-            speaker_split_failed=False,
-        )
-    )
+    roundtrip(ReadingSource(kind=InputKind.AUDIO, segments=[_segment()]))
+
+
+@pytest.mark.parametrize(
+    "model,field",
+    [
+        (TranscriptResult, "speaker_split_failed"),
+        (TranscriptResult, "diarize_model"),
+        (ReadingSource, "other_speaker"),
+        (Segment, "speaker"),
+        (ClaimReading, "speaker_confidence"),
+    ],
+)
+def test_speaker_fields_are_gone(model, field):
+    # 화자 분리를 없앴다 (ADR 0008). 옛 칸을 넣으면 extra=forbid 로 막힌다
+    assert field not in model.model_fields
 
 
 def test_roundtrip_reading():
@@ -68,8 +74,6 @@ def test_roundtrip_reading():
             "pretexts": [{"quote": "수사 중"}],
             "demands": [{"kind": "money_transfer", "quote": "옮기세요"}],
             "blockers": [{"quote": "통화 안 돼"}],
-            "other_speaker": "화자1",
-            "speaker_confidence": "high",
             "spoken_hosts": ["a.com"],
         }
     )

@@ -2,15 +2,13 @@ id: V1
 scenario: voice_phishing
 input: {kind: audio}
 transcript:
-  - [A, "여보세요"]
-  - [B, "금융감독원 수사관 김○○입니다. 고객님 명의 계좌가 범죄에 연루됐습니다"]
-  - [A, "네? 어떻게 해야 하죠"]
-  - [B, "자산 보호를 위해 안전계좌로 옮기셔야 합니다. 확인은 02-1234-5678로 하세요"]
+  - "여보세요"
+  - "금융감독원 수사관 김○○입니다. 고객님 명의 계좌가 범죄에 연루됐습니다"
+  - "네? 어떻게 해야 하죠"
+  - "자산 보호를 위해 안전계좌로 옮기셔야 합니다. 확인은 02-1234-5678로 하세요"
 runtime:
   search: kb_empty
   reading:
-    other_speaker: B
-    speaker_confidence: high
     identity: [{kind: institution, name: 금융감독원, quote: "금융감독원 수사관 김○○입니다"}]
     pretexts: [{quote: "고객님 명의 계좌가 범죄에 연루됐습니다"}]
     demands:
