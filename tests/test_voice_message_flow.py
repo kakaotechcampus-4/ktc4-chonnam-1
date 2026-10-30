@@ -1036,6 +1036,34 @@ class TestVoiceAnswerFlow:
         ).model_dump(mode="json")
         return job_id
 
+    @pytest.mark.parametrize("answers,phones", [
+        (["installed_app"], []),
+        (["installed_app", "not_yet"], ["1394"]),
+        (["not_yet", "installed_app"], ["1394"]),
+        (["sent_money", "not_yet"], ["112", "1332"]),
+        (["entered_info", "installed_app"], ["112", "1332"]),
+    ])
+    def test_d18_accumulated_answers_current_behavior(self, answers, phones):
+        """Characterize current outputs; app+not_yet phone policy still needs FE/PM agreement.
+
+        D16 allows accumulated answers and not_yet does not retract prior actions.
+        Do not mistake the observed 1394 combination for a newly approved policy.
+        """
+        job_id = self._seed_voice_job()
+        original = main.ANALYSIS_JOBS[job_id]["final_payload"]
+        for answer in answers:
+            card = main.handle_voice_answer(job_id, answer)
+        job = main.ANALYSIS_JOBS[job_id]
+        text_card = card["template"]["outputs"][0]["textCard"]
+        assert text_card["title"] == "🚨 지금 먼저 하세요"
+        assert [button["phoneNumber"] for button in text_card.get("buttons", [])] == phones
+        assert job["qa_answers"] == answers
+        assert job["final_payload"]["response_actions"]
+        assert job["final_payload"]["conclusion"] == original["conclusion"]
+        assert job["final_payload"]["stop_actions"] == original["stop_actions"]
+        # All four combinations must remain K6, never an A2 retraction.
+        assert "잘하셨어요" not in text_card["description"]
+
     def test_sent_money_answer_returns_k6_with_112_and_geumgam_buttons(self, client):
         """D18: sent_money·entered_info 중 하나라도 있으면 112 신고 +
         금감원 상담(1332)을 같이 단다(response_actions 코드가 아니라

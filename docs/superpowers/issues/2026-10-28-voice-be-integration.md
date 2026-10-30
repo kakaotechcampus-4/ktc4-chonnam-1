@@ -25,10 +25,12 @@ AI 진입점 (`ai.case`)
 2. BE가 URL을 검증하고 내려받습니다.
    - 호스트는 카카오 CDN만 허용 (PR #105 `media_guard.py`, `KAKAO_MEDIA_HOSTS`)
    - 크기 상한 25MB(`main.py` `MAX_VOICE_FILE_BYTES`, whisper 한도)는 **구현 완료**. 형식은 지금 코드에 m4a·mp3·wav·**webm**이 들어 있는데, `v0-voice-check.json`(FE 카드)은 "m4a, mp3, wav"만 안내한다 — webm 포함 여부가 코드와 카드 안내가 어긋난 상태다(아래 "FE/PM 확인 필요" 참고). **실제 카카오 음성 파일 형식·디코더 지원 범위를 확인하기 전까지 임의로 빼거나 넣지 않는다**
-   - **형식·크기·길이 초과 시 전용 안내 카드(VE1·VE2)는 아직 구현 전**이다(2026-10-30 기준, 다른 담당자 작업 중). 지금은 크기 초과가 `MediaDownloadBlocked` → 일반 실패 카드(`r4-unavailable`)로만 나간다. 녹음 길이 상한 자체도 아직 정해지지 않았다(VE2 `reason_line` 문구는 상한이 정해진 뒤에 쓸 수 있다)
+   - **VE1/VE2/R4 입력 검증 구현 완료**(`a6c5b77`). `backend/src/server/voice_input.py::inspect_voice_audio()`는 MIME·확장자만 신뢰하지 않고 바이트/컨테이너의 오디오 단서를 검사한다. 비오디오 → VE1, 미지원 오디오·빈 파일·손상된 WAV·25MB 초과 → 원인별 `reason_line`을 채운 VE2, 다운로드 실패·시간 초과 → R4. 정확히 25×1024×1024바이트인 WAV의 STT 전달과 1바이트 초과 차단도 테스트했다.
+   - **길이 상한은 미정**이며 `MAX_VOICE_DURATION_SECONDS=None`이다. WAV 측정과 가상 상한의 경계/초과 처리만 구현했다. 상한을 설정하고 압축 형식의 길이를 측정하지 못하면 VE2로 끝내며 통과로 간주하지 않는다. 전체 형식 길이 측정 도구/실행 환경은 추가 결정이 필요하다.
+   - MPEG 프레임·ISO-BMFF 오디오 handler·WebM 오디오 CodecID 확인은 **압축 오디오 전체 디코딩/모든 손상 검증을 완료했다는 뜻이 아니다.** M4A/WebM 테스트에는 메타데이터 fixture를 쓰며 실제 STT/코덱 검증은 별도다. 원본 파일은 바이트로 읽은 즉시 지운다.
 3. **첫 응답은 즉시** 보냅니다 (콜백 사용, 5초 안). 이후 작업은 콜백 경로에서 수행합니다.
 4. `transcribe_call(audio, filename)`. 걸린 시간(`elapsed`)을 잽니다.
-5. `analyze_call(transcript, time_budget_s = 40 - elapsed)`. PR #105 는 다운로드부터 카드 렌더링까지를 `asyncio.wait_for(..., CALLBACK_DEADLINE_SECONDS=45)` 로 감쌉니다. 다운로드(한도 15초)·STT·분리도 이 45초 안에 들어가므로, 분석 예산은 v3 B3 대로 `CALLBACK_DEADLINE_SECONDS - 5`(40초)에서 `elapsed` 를 뺍니다. `45 - elapsed` 로 주면 분석이 45초를 다 써서 카드 렌더링 전에 바깥 `wait_for` 가 작업을 취소하고 결과가 시간 초과(R4)로 바뀝니다. `elapsed` 는 다운로드 시작부터 잽니다. 남은 예산이 너무 적으면(예: 5초 미만) 호출하지 않고 대본 없음/미확인 카드로 처리합니다.
+5. `analyze_call(transcript, time_budget_s = 40 - elapsed)`. PR #105 는 다운로드부터 카드 렌더링까지를 `asyncio.wait_for(..., CALLBACK_DEADLINE_SECONDS=45)` 로 감쌉니다. 다운로드(한도 15초)·STT·분리도 이 45초 안에 들어가므로, 분석 예산은 v3 B3 대로 `CALLBACK_DEADLINE_SECONDS - 5`(40초)에서 `elapsed` 를 뺍니다. `45 - elapsed` 로 주면 분석이 45초를 다 써서 카드 렌더링 전에 바깥 `wait_for` 가 작업을 취소하고 결과가 시간 초과(R4)로 바뀝니다. `elapsed` 는 다운로드 시작부터 잽니다. 남은 예산이 5초 미만이면 함수를 생략하는 대신 `analyze_call(..., time_budget_s=0.0)`으로 호출해 읽기·검색 LLM 작업을 사실상 건너뛰고 미확인 결과를 받습니다.
 6. 결과를 **먼저 저장** (콜백은 1회성) -> 콜백 카드 전송. 콜백이 만료·실패하면 `결과 확인` 조회가 저장본을 보여줍니다 (처리 중이면 K1, 실패면 R4, 없으면 K4).
 7. **결과 카드 버튼은 `자세히 보기`·`다른 녹음 확인하기`입니다(이슈 #115, 2026-10-29로 D15 기준에서 다시 바뀜).** `112 신고`는 V1에 달지 않습니다 — 신고·상담 버튼은 결과 카드가 아니라 Q1 → K6 로 안내합니다. `v1-voice-result.json`(`frontend/kakao-templates/`, FE `refactor/voice-phishing-fe` 소유)이 두 버튼을 고정값으로 담고 있어 BE가 버튼을 조립하지 않습니다. 옛 목업 카드 `r-voice-result.json` 은 지워졌습니다(PR #105 당시 썼던 것).
 
@@ -57,12 +59,15 @@ Render 환경 변수와 `.env.example` 에 추가해야 합니다.
 
 | `VoiceCaseResult` | 카드 |
 | --- | --- |
+| 입력 내용이 비오디오 | `ve1-not-audio.json`, STT 호출 안 함 |
+| 미지원 오디오·빈 파일·손상된 WAV·크기 초과 | `ve2-invalid-audio.json`, 원인별 `reason_line`, STT 호출 안 함 |
+| 다운로드 실패·시간 초과 | 공용 `r4-unavailable.json`, 동기·콜백 경로 모두 |
 | `conclusion` = `not_analyzable` | **`ve3-unrecognized.json`**(받아쓰기 실패·빈 대본, 고정 문구, 플레이스홀더 없음) |
 | `conclusion` = `input_required` | **`ve4-no-claim.json`**(사칭·요구를 못 찾음, 고정 문구). AI `decide_call()`(`ai/src/ai/case/gate.py`)이 이 분기에서 `questions` 를 채우지 않아 Q1 이 구조적으로 안 붙는다 |
 | `conclusion` = `suspected` / `inconclusive`(그 밖, `official_domain` 은 통화에 안 나옴) | `v1-voice-result.json`. 제목만 3갈래(`suspected` → `⚠️ 보이스피싱이 의심돼요`, `inconclusive`+`caution` → `🔎 주의가 필요한 통화예요`, 그 밖 → `🤔 판단하기 어려워요`) |
 | `caution` | 주의 문구 덧붙임 여부 + `call_claims` 칸 제목(`주의할 점`/`통화에서 들은 내용`) |
 | `stop_actions` | 지금 멈출 행동 목록(`stop_line`). V1은 `hang_up` 포함, A2(`stop_line`)는 `hang_up` 제외 |
-| `claims` (`identity`/`demands`/`pretexts`/`blockers`) | V1 `call_claims` 4줄: 기관=`identity[].quote`(여러 개면 전부), 상대가 한 말=**첫 `demands[].quote`**, 내세운 사정=`blockers`(있으면) 또는 `pretexts` 중 첫 번째, 요구한 것=`demands[].kind` 라벨 최대 3개. 전부 비면 칸 제목까지 빈 문자열. **"내세운 사정"에 `blockers`(원래 "하지 말라"는 통제성 발화)가 들어가는 게 맞는지는 미확인 — 아래 "FE/PM 확인 필요" 참고** |
+| `claims` (`identity`/`demands`/`pretexts`/`blockers`) | V1 `call_claims` 4줄: 기관=`identity[].quote`(여러 개면 전부), 상대가 한 말=**첫 `demands[].quote`**, 내세운 사정=`blockers`(있으면) 또는 `pretexts` 중 첫 번째, 요구한 것=`demands[].kind` 라벨 최대 3개. 전부 비면 칸 제목까지 빈 문자열. **blockers는 원래 연락처로 확인하지 못하게 하는 사정이다. pretexts와 함께 있을 때 fallback인지 함께 표시할지는 아래 FE/AI/PM 확인 필요** |
 | `number_checks` | `checked`/`unchecked` 줄로 들어간다(일반 `phone_number` 줄 **대신**). `official`/`not_official`→확인한 것(`상대가 말한 번호({number}): {org} 대표번호와 같아요/아니에요`), `org_not_listed`→확인하지 못한 것(`상대가 말한 번호가 {org} 번호인지 (대표번호 자료에 없는 기관이에요)`, "공식이 아니다"가 아님) |
 | `official_contact` (`org`, `number`, `source_url`) | V1 `verify_line`: `{org} 대표번호({number})로 직접 전화해 확인하세요.` 없으면(`null`) `상대가 말한 기관의 대표번호를 직접 찾아 전화해 확인하세요.` 번호는 대표번호 KB 에서만 오며 녹음 속 번호가 아님. `source_url`은 카드에 쓰지 않음 |
 | `response_actions` | K6 대응 줄. 분석 직후에는 비어 있고 `apply_call_answers` 가 채움. 비어 있으면 `a2-not-yet-voice.json` |
@@ -97,11 +102,31 @@ Q1 답은 쌓입니다(`job["qa_answers"]`). 답이 들어올 때마다 저장�
 
   `contact_line` 이 비면 템플릿이 남기는 빈 줄을 BE가 정리합니다. **"`installed_app`과 `not_yet`을 함께 고른 경우"는 지금 구현에서 "`installed_app` 만"에 안 들어가 세 번째 행(1394)으로 빠집니다 — 의도한 동작인지 미확인**(아래 "FE/PM 확인 필요" 참고).
 
+## K6 누적 답 통합 재현
+
+D16·기존 테스트는 `not_yet`과 행동 답의 누적을 허용한다.
+`main.py::handle_voice_answer()`가 답을 쌓고, `ai.case.actions.response_actions_for()`는
+`not_yet`을 대응 추가/이전 답 취소로 쓰지 않는다. 따라서 이전 행동의 대응이 있으면 A2가 아니라 K6를 유지한다.
+
+| 답의 입력 순서 | 카드 | 전화 버튼 |
+| --- | --- | --- |
+| `installed_app` | K6 | 없음 |
+| `installed_app` → `not_yet` | K6 | 1394 |
+| `not_yet` → `installed_app` | K6 | 1394 |
+| `sent_money` → `not_yet` | K6 | 112·1332 |
+| `entered_info` → `installed_app` | K6 | 112·1332 |
+
+`TestVoiceAnswerFlow.test_d18_accumulated_answers_current_behavior`는 위 현상을 기록한다.
+앱 설치+중립 답에 1394가 붙는 결과는 **현상 기록이며 승인된 새 정책이 아니다.**
+FE D18은 "답별 버튼 합치기"와 "앱 설치만이면 버튼 없음"을 명시하지만 중립 답이 섞일 때의
+의미는 명확하지 않다. 권장 검토안은 버튼 판정에서 행동 답과 중립 답을 분리해 앱 설치+중립 답에는
+버튼을 달지 않는 것이다. 합의 전에는 버튼 코드와 답 누적 정책을 바꾸지 않는다.
+
 ## 개인정보
 
 - 분석 경로의 `segments` 는 정규식으로 가려진 상태입니다 (`mask_pii`). 기관명·전화번호는 근거로 써야 해서 남깁니다.
 - 대본을 **저장하거나 외부로 보내기 전**에는 주입형 `EliceMasker` (`ai/src/ai/case/privacy.py`)로 한 번 더 가립니다. 엔드포인트 주소는 아직 미정이라 `base_url`/`api_key`/`timeout` 을 설정으로 받게 하고, 미정이면 대본은 저장하지 않고 결과(`VoiceCaseResult`)만 저장합니다.
-- 녹음 원본은 분석 직후 폐기합니다 (저장 금지). 녹음 전용 전송 동의(W3v)는 FE 초안 VF4 를 따릅니다.
+- 내려받은 임시 파일은 바이트로 읽은 즉시 삭제하며 원본 파일을 영속 저장하지 않습니다. 바이트는 STT 호출에 사용합니다. 외부 STT 서비스의 보관 정책 검증과 녹음 전용 전송 동의(W3v)는 별도 사항입니다.
 
 ## 알려진 한계 / 후속
 
@@ -113,10 +138,11 @@ Q1 답은 쌓입니다(`job["qa_answers"]`). 답이 들어올 때마다 저장�
 
 ## 완료 조건
 
-(2026-10-30 갱신 — 체크된 항목은 `feature/voice-fe-alignment-be`/`refactor/voice-phishing-be` 에서 구현·테스트까지 확인됨. 미체크는 아직 코드가 없거나 결정이 안 남)
+(2026-10-30 갱신 — 기준 `2349b18`, 입력 검증 `a6c5b77`, 문서 `178c36f`를 `feature/voice-115-integration`에서 통합 검증. 체크는 해당 구현 범위만 뜻하며 실서비스 배포·전체 코덱 검증을 뜻하지 않는다.)
 
 - [x] 녹음 URL 검증(호스트)과 내려받기 — 음성메시지(`media.type=="audio"`)·파일 첨부(utterance) 두 경로 모두 구현
-- [ ] **녹음 크기·형식·길이 검증과 초과·불가 시 전용 안내 카드(VE1·VE2)** — 크기 상한(25MB)만 있고 전용 카드 분기는 아직 없음(다른 담당자 작업 중, `main.py` 미착수). 길이 상한 자체가 미정
+- [x] **바이트/헤더 기반 입력 검증과 VE1/VE2/R4 분기** — 25MB 경계·비오디오·미지원 형식·빈 파일·손상된 WAV·다운로드 실패·시간 초과. 원인별 VE2 문구와 파일 정리 유지
+- [ ] **운영 녹음 길이 상한 확정·전 형식 길이 측정·압축 오디오 전체 디코딩 검증** — WAV 측정만 가능, 운영 상한 미설정. 새 라이브러리/ffprobe/배포 설정을 추가하지 않음
 - [x] `mock_analyze_voice_case()` 를 `transcribe_call`/`analyze_call` 로 교체, `render_voice_result_card()` 를 `VoiceCaseResult` 기준(conclusion별 V1/VE3/VE4 분기 포함)으로 재작성
 - [x] 첫 응답 즉시, 이후 `transcribe_call` -> `analyze_call(time_budget_s)` 를 콜백 경로에서 실행. 예산은 `CALLBACK_DEADLINE_SECONDS(45) - 5` 에서 다운로드+STT+화자분리 경과 시간을 뺀 값, 5초 미만이면 `analyze_call` 에 0초를 줘 실제 분석을 사실상 건너뜀
 - [x] 결과를 콜백 전에 저장하고, `결과 확인` 이 저장본(처리 중 K1 / 실패 R4 / 없음 K4)을 보여줌
@@ -128,18 +154,44 @@ Q1 답은 쌓입니다(`job["qa_answers"]`). 답이 들어올 때마다 저장�
 - [x] STT 실패(`not_analyzable`), 화자 분리 실패(`TranscriptResult.speaker_split_failed`), 시간 초과 경로 테스트
 - [x] 한 사용자 동시 요청 K5 잠금
 - [x] 의존 방향 유지 (`backend` -> `ai`), `ai/` 는 카카오 payload 를 모름
-- [x] 관련 테스트와 전체 테스트 통과(음성 51개 + 문자 카드 렌더링 75개, 전체 스위트는 이 작업과 무관한 사전 존재 실패 3~5개만 남음)
-- [ ] VE1/VE2 구현 후 관련 테스트 추가(다른 담당자)
+- [x] VE1/VE2/R4 테스트 38개 추가(`TestVoiceInputValidation`). 기존 V1/VE3/VE4·Q1/K6/A2·문자 테스트를 함께 실행하며 통합 결과는 아래 실제 실행 기록으로 구분
+- [x] K6 D18 네 가지 조합과 중립 답의 역순 조합을 현재 동작 재현 테스트로 추가. 미확정 전화 버튼 정책은 변경하지 않음
 - [ ] 이 문서의 "FE/PM 확인 필요" 항목 결론 반영
 
-## FE/PM 확인 필요 (2026-10-30 조사, 임의로 정하지 않음)
+## 통합 테스트 실행 기록 (2026-10-30)
+
+Worktree `ktc4-voice-input-validation`, 브랜치 `feature/voice-115-integration`.
+기준 `2349b18` 위 구현 `a6c5b77`과 문서 `178c36f`를 통합했다(문서 cherry-pick 결과 `2a0c5e0`).
+이 Worktree 전용 `.venv`의 Python 3.14.5와 설치된 테스트 의존성을 사용했다.
+외부 STT/LLM·실서비스 배포는 실행하지 않았으며 테스트 기대값/시간 예산도 완화하지 않았다.
+
+| 명령 (`.venv/Scripts/python.exe -B -X utf8 -m pytest -p no:cacheprovider` 뒤 인자) | 결과 | 전체 실행 시간 |
+| --- | --- | --- |
+| `tests/test_voice_message_flow.py tests/test_result_card_renderer.py tests/test_message_facts_card.py tests/test_media_guard.py -q --tb=short` | 181 passed | 9.62초 |
+| `tests -q --tb=short` | 634 passed, 2 skipped | 27.50초 |
+| `tests ai/tests -q --tb=short --junitxml=.venv/voice-115-integration-results.xml` | 1926 passed, 3 skipped | 49.91초 |
+
+기존 Starlette TestClient 사용 중단 경고와 pytest-asyncio fixture loop scope 미설정 경고는 남아 있다.
+결과 XML은 Git에서 제외된 이 Worktree의 `.venv` 안에만 생성했다.
+
+과거 입력 검증 작업에서 전체 실행 중 실패했던 AI 사례는 다음과 같다.
+
+`ai/tests/test_revision_integration.py::test_partial_html_preserves_observed_form_without_claiming_completion[element-limit]`
+
+`ai/page.py`의 HTML 검사 예산은 0.100초다. 이번 통합 전체 실행에서는 **실패 재현 안 됨**:
+JUnit 테스트케이스 총시간(설정·정리 포함)은 `element-limit` 0.024초, `text-limit` 0.004초였다.
+이 시간은 HTML 파서만의 별도 벤치마크가 아니다. 이전의 전체 실행 실패/분리 실행 통과 이력은
+환경·실행 순서에 민감할 가능성을 남기며, 이번 한 번의 통과를 해당 문제 해결로 선언하지 않는다.
+AI 구현·테스트·100ms 예산은 변경하지 않았다.
+
+## FE/AI/PM 확인 필요 (2026-10-30 조사, 임의로 정하지 않음)
 
 | 항목 | 지금 코드/문서 상태 | 확인할 것 |
 | --- | --- | --- |
-| `call_claims` 의 "내세운 사정 = `blockers` → `pretexts`" | "blockers 있으면 그걸, 없으면 pretexts" 로 해석해 구현(`_voice_call_claims`). `blockers`는 원래 "다른 사람에게 말하지 마세요" 같은 통제성 발화라 "내세운 사정"(사유)으로 보여 주는 게 의미상 맞는지 의문 | 이슈 원문 "blockers → pretexts" 가 우선순위(fallback) 뜻이 맞는지, `blockers` 를 "사정" 칸에 넣는 게 의도인지 |
+| `call_claims` 의 "내세운 사정 = `blockers` → `pretexts`" | 실제 AI 프롬프트(`ai/src/ai/prompts/v1/claims_call.md`)상 `pretexts`는 내세운 명분·사정, `blockers`는 원래 연락처로 확인하지 못하게 하는 사정(폰 고장/통화 불가)이다. 단순한 "말하지 말라" 일반 통제 발화로 정의하면 부정확하다. 두 모델은 각각 인용을 담고 `verify.py`가 대본에 존재하는 인용을 보존하며 blockers는 `CONTACT_BLOCKER` 근거도 생성한다. 현재 BE는 blockers의 첫 항목, 없으면 pretexts의 첫 항목을 표시한다 | FE copy는 "blockers 먼저, 이어서 pretexts", 이슈는 화살표 표기라 fallback/연결 여부가 불명확하다. FE/AI/PM이 둘 다 있을 때 표시 범위·순서·라벨을 확정해야 한다. 현재 매핑 변경 없음 |
 | K6 D18 "버튼 달 대응이 없음 → 1394" 조건 | `installed_app`+`not_yet` 조합처럼 `installed_app` 외에 무해한 답(`not_yet`)이 섞이면 "installed_app만"이 아니게 돼 1394 버튼이 붙음 — `response_actions_for()` 가 만들 수 있는 조합상 이 세 번째 행이 실제로 트리거되는 다른 입력이 있는지도 불분명 | "installed_app만"의 기준이 답 집합 전체인지, 응답에 영향 주는 답만인지 |
-| `.webm` 지원 여부 | 코드(`main.py` `_VOICE_FILE_EXTENSIONS`/`_VOICE_ATTACHMENT_EXTENSIONS`)는 m4a·mp3·wav·webm, FE 카드(`v0-voice-check.json`)는 m4a·mp3·wav만 안내 | 실제 카카오 녹음이 webm으로 올 수 있는지, 디코더(STT)가 webm을 받는지 확인 전까지 변경 금지(이번 작업·VE1/VE2 작업 모두 해당) |
-| 녹음 길이 상한 | 미정. VE2 `reason_line`에 "N분보다 길어요" 문구가 필요하지만 N을 못 정함(`voice-phishing-flow.md` Q-7) | 길이 상한 값(분 단위), 초과 판정을 다운로드 전(헤더)·후(디코딩) 중 어디서 할지 |
+| `.webm` 지원 여부 | 파일 첨부 인식은 `main.py::_VOICE_ATTACHMENT_EXTENSIONS`, 내용 검사는 `backend/src/server/voice_input.py`의 WebM 오디오 CodecID 검사로 유지한다. FE 카드(`v0-voice-check.json`)는 m4a·mp3·wav만 안내 | 실제 카카오 녹음·STT 코덱 실측과 카드 안내 정합성 확인. 이번 통합에서도 지원 제거/확대 없음 |
+| 녹음 길이 상한 | 미정(`MAX_VOICE_DURATION_SECONDS=None`). WAV 측정과 가상 상한 경계 테스트만 구현. ffprobe 없음. 압축 형식의 길이를 추정하지 않음 | 운영 상한 값, 전체 형식 측정 도구/실행 환경, 측정 실패 안내 정책을 확정해야 함 |
 | STT 서비스명 / W3v 배포 | `w3v-voice-consent.json` 의 `{{ external_service }}` 가 비어 있고, `block_voice_consent` 블록 ID는 이미 확정됨(`6ae335a8b074221a79bea79f`). 서비스명이 안 정해져 **W3v는 배포 보류**(이슈·README 모두 명시) | STT 서비스(엘리스 ML API 뒤의 실제 모델/제공자) 사용자 노출용 이름, 확정 후 W3v 배포 가능 여부 |
 
 이 표의 어느 항목도 이번 작업에서 임의로 결정하지 않았다 — 결론이 나기 전까지 관련 코드(`.webm` 목록, K6 세 번째 행, `blockers` 처리)는 지금 동작을 유지한다.
