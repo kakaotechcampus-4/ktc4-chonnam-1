@@ -271,6 +271,13 @@ def test_v7_spoken_host_keeps_host_only():
     assert _reasons(r) == ["not_url"]
 
 
+def test_v7_uses_message_link_host_rule():
+    # 점으로 이어 부른 전화번호·숫자는 주소가 아니다 (ai.links.valid_host)
+    r = _verify(_source(PROSECUTOR), _reading(spoken_hosts=["010.1234.5678", "3.5"]))
+    assert r.spoken_hosts == []
+    assert _reasons(r) == ["not_url", "not_url"]
+
+
 def test_v8_low_confidence_marks_split_failed():
     r = _verify(_source(PROSECUTOR), _reading(speaker_confidence="low"))
     assert r.speaker_split_failed

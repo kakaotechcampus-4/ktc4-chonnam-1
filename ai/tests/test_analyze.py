@@ -29,6 +29,7 @@ EXPECTED_ANALYSIS_KEYS = {
     "claimed_purpose",
     "requested_actions",
     "persuasion_signals",
+    "urls",
 }
 
 
@@ -146,6 +147,25 @@ async def test_uncited_fields_are_removed_but_valid_fields_survive():
         PersuasionCode.AUTHORITY
     ]
     assert_fixed_analysis_keys(result)
+
+
+@pytest.mark.asyncio
+async def test_urls_must_be_written_in_message():
+    text = "택배 확인: bit.ly/abc 또는 cjlogistlcs.com"
+    parsed = ExtractedMessage(urls=["bit.ly/abc", "cjlogistics.com", "bit.ly/abc", " "])
+    client, _ = fake_client(parsed=parsed)
+
+    result = await analyze_message(text, client=client, model="test-model")
+
+    # 글자를 고친 주소는 원문에 없어 버리고, 같은 구간은 한 번만 남긴다
+    assert result.urls == ["bit.ly/abc"]
+
+
+def test_prompt_forbids_correcting_links():
+    prompt = analyze_module.PROMPT_PATH.read_text(encoding="utf-8")
+
+    assert "`urls`" in prompt
+    assert "keep `cjlogistlcs.com` as written" in prompt
 
 
 @pytest.mark.asyncio

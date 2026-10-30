@@ -23,6 +23,7 @@ from ai.case.types import (
     ReadingSource,
     RejectedClaim,
 )
+from ai.links import valid_host
 from ai.message_requests import action_is_denied
 from ai.types import StrictModel
 
@@ -66,7 +67,6 @@ _NOTICE_DOEMNIDA = re.compile(r"됩니다$")
 _TRAILING_PUNCT = re.compile(r"[.!\s]+$")
 
 _CLAUSE_BREAK = re.compile(r"(?:고(?=\s+(?!있|계시|싶))|며|지만|는데|,)\s+")
-_HOST = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$")
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://")
 
 
@@ -104,7 +104,8 @@ def _last_clause_start(quote: str) -> int:
 def _verify_host(raw: str) -> str | None:
     host = _SCHEME.sub("", raw.strip().lower())
     host = re.split(r"[/?#]", host, maxsplit=1)[0]
-    return host if _HOST.match(host) else None
+    # 문자 링크와 같은 호스트 규칙을 쓴다 (ai.links)
+    return host if valid_host(host) else None
 
 
 def verify_call(

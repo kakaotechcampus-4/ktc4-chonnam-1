@@ -42,7 +42,7 @@ LLM은 표현이 제각각인 문자·대화·캡처에서 **누가 누구라고
 1. 이 문서가 v2를 대체한다. v2의 루프·도구 선택·분석 중 질문은 모두 폐기한다. v2에서 가져온 규칙(링크 사실, 페이지 요약, 근거 코드, 하한·상한, 멈출 행동, 피해 대응)도 **이 문서에 다시 적은 내용**이 기준이다.
 2. **수정 범위는 `ai/` 와 문서뿐이다.** `main.py`, `backend/`, `services/`, `scanner/`, `frontend/`, `infra/`, 루트 `tests/` 는 고치지 않는다. BE·FE 작업은 §10·§11 명세로만 남긴다.
 3. `ai/` 에서 `server`·`backend`·`services`·`scanner`·`main` 을 import 하지 않는다. 네트워크가 필요한 일은 `CaseDeps` Protocol로 주입받는다(§6.5).
-4. 기존 공개 함수(`ai.pipeline.*`, `ai.llm.*`, `ai.kb.*`)의 동작을 바꾸지 않는다. `analyze_message` 는 `AGENT_MODE=off` 경로용으로 그대로 두고, 새 읽기 함수 `ai.llm.claims.read_claims` 를 만든다. 새 기능은 `ai/src/ai/case/` 에 둔다.
+4. 기존 공개 함수(`ai.pipeline.*`, `ai.llm.*`, `ai.kb.*`)의 동작을 바꾸지 않는다. `analyze_message` 는 `AGENT_MODE=off` 경로용으로 그대로 두고(ADR 0007 로 링크 칸 `urls` 만 더했다), 새 읽기 함수 `ai.llm.claims.read_claims` 를 만든다. 새 기능은 `ai/src/ai/case/` 에 둔다.
 5. 테스트는 실제 LLM·네트워크를 부르지 않는다. 가짜 클라이언트·가짜 Deps를 쓴다(`ai/tests/conftest.py` 의 `SimpleNamespace` + `AsyncMock` 패턴).
 6. 작업 브랜치는 `feature/claim-reading-ai` 다(`develop` 에서 분기). Task마다 테스트 작성 → 구현 → 통과 확인 → 커밋 순서로 진행한다. 커밋 메시지는 `feat(ai): …`, `test(ai): …`, `docs: …` 꼴이다.
 7. 테스트 명령(저장소 루트): `python -X utf8 -m pytest ai/tests -q`. Task 8 이후에는 `python -X utf8 -m pytest ai/tests tests -q` 도 통과해야 한다. 시작하기 전에 지금 통과 수를 기록해 둔다.
@@ -58,7 +58,8 @@ LLM은 표현이 제각각인 문자·대화·캡처에서 **누가 누구라고
 
 | 일 | 입력 | 출력 | 코드로 하기 어려운 이유 |
 |---|---|---|---|
-| **주장·요구 읽기** (`read_claims`, §5) | 마스킹 본문(링크 자리는 `<링크N>`), 캡처 말풍선, 통화 대본 | 내세운 신분, 내세운 명분·사정, 요구 행동(종류+인용), 확인을 막는 사정, 보낸 곳·주제 | 같은 요구가 여러 말로 온다("옮겨 두셔야", "돌려놓으셔야"). 여러 메시지에 흩어진 관계·사정·요구를 묶어야 한다. 경고문·완료 알림을 요구와 구별해야 한다 |
+| **주장·요구 읽기** (`read_claims`, §5) | 마스킹 본문(링크는 남긴다), 캡처 말풍선, 통화 대본 | 내세운 신분, 내세운 명분·사정, 요구 행동(종류+인용), 확인을 막는 사정, 보낸 곳·주제 | 같은 요구가 여러 말로 온다("옮겨 두셔야", "돌려놓으셔야"). 여러 메시지에 흩어진 관계·사정·요구를 묶어야 한다. 경고문·완료 알림을 요구와 구별해야 한다 |
+| 문자에 적힌 링크 | 문자 본문 | 원문에 적힌 그대로의 링크 구간(`urls`) | 바꿔 적은 주소(`cj-deliver . top`, `bit[.]ly`)와 조사 경계(`bit.ly/abc로`)는 문맥을 봐야 안다. 요구 읽기에서 함께 낸다([ADR 0007](../adr/0007-llm-link-extraction.md)) |
 | 통화의 상대 화자 고르기 | 화자가 나뉜 대본 | 상대 화자, 신뢰도 | 누가 요구하는 쪽인지는 문맥을 봐야 안다. 통화 읽기에서 함께 낸다 |
 | 말로 불러 준 주소 | 대본 | 호스트 후보 | "에스피오 대시 케이스 닷컴" → `spo-case.com`. 통화 읽기에서 함께 낸다 |
 | 캡처 읽기(비전) | 이미지 | 말풍선(보낸 쪽 표시), URL | 이미지 |
@@ -68,7 +69,7 @@ LLM은 표현이 제각각인 문자·대화·캡처에서 **누가 누구라고
 
 | 일 | 어디 |
 |---|---|
-| 마스킹, 링크 찾기, 무력화 표기 복원, URL 정규형 | §4 |
+| 마스킹, 링크 검증(원문 대조·잘린 주소 거르기), 무력화 표기 복원, URL 정규형 | §4 |
 | 인용 검증, 상대 쪽 말인지 확인, 알림·부정 문장 거르기, 수사·감독 기관 목록 대조 | §5.5 |
 | 리다이렉트·정적 검사·공식 대조·도메인 나이·수집·렌더링·페이지 브랜드 읽기를 할지와 그 순서 | §6 |
 | 번호 대조, 사례 검색 | §6.3 |
@@ -174,12 +175,12 @@ Enum:
 
 | 입력 | 처리 | LLM |
 |---|---|---|
-| text | `mask_pii()` → `extract_links()` → 읽기 원문을 만든다. 본문 전체가 세그먼트 하나이고 `side=unknown` 이다. 링크 구간은 `<링크1>`, `<링크2>` … 로 바꾼다 | 0 |
+| text | `mask_pii()` → 읽기 원문을 만든다. 본문 전체가 세그먼트 하나이고 `side=unknown` 이다. 링크는 읽기(§5)가 짚고 `extract_links()` 가 검증한다 | 0 |
 | image | `read_screenshot()`(비전) → 말풍선 목록(`side`)과 URL → 말풍선마다 `mask_pii()` → 링크 후보(origin=image) | 1 |
 | audio | `transcribe_call()`(STT, 화자 분리) → 발화마다 `mask_pii()` → 화자가 붙은 세그먼트. `side` 는 읽기 결과의 `other_speaker` 로 채운다 | 0 (STT 별도) |
 
 - **`mask_pii`**: 주민등록번호 `\d{6}-?[1-4]\d{6}`, 카드번호(13~16자리, 구분자 허용), 계좌번호처럼 보이는 10~14자리 숫자열을 각각 `<주민번호>`·`<카드번호>`·`<계좌번호>` 로 바꾼다. 전화번호와 URL은 남긴다(근거로 써야 한다). **마스킹한 뒤의 세그먼트가 이후 모든 인용 검증의 기준이다.**
-- **`extract_links`**: BE `backend/src/server/url_utils.py` 의 `split_message` 와 같은 후보 규칙을 쓴다. 복사해서 `ai/` 안에 두고 import 하지 않는다. 무력화 표기(`hxxp`, `[.]`, `(.)`, `[dot]`, `" . "`)를 되살린다. 단축 도메인(`bit.ly`, `han.gl`, `me2.do`, `vo.la`, `url.kr`, `t.ly`, `tinyurl.com`, `naver.me`)이면 `shortener=True` 다. 링크는 최대 3개까지 쓴다.
+- **`extract_links`** ([ADR 0007](../adr/0007-llm-link-extraction.md)로 바뀜): 정규식으로 찾지 않는다. 요구 읽기 LLM 이 원문에 적힌 그대로 낸 링크 구간을 `ai/src/ai/links.py` 의 `message_links()` 가 검증한다. 원문에 그대로 있어야 하고, 더 긴 주소에서 잘라 낸 구간이면 버린다. 무력화 표기(`hxxp`, `[.]`, `(.)`, `[dot]`, `" . "`)를 되살리고 앞뒤 조사·문장 부호를 뗀다. 지금은 `ai.pipeline.read_message()` 가 `analyze_message` 의 `urls` 로 이 일을 한다. `shortener` 칸과 개수 상한은 아직 두지 않았다. 단축 주소 판정은 BE `services/link_resolution.py` 의 `is_shortener()` 가 하고, 링크는 `split_message` 처럼 모두 넘긴다(덜 넘기면 남은 공식 링크만으로 공식 결과가 날 수 있다).
 - **URL 정규형**: 스킴이 없으면 `https`, 호스트는 소문자, 경로가 비면 `/`.
 - **`read_screenshot`**: 출력은 `ScreenshotText{app: sms | kakaotalk | other | unknown, bubbles: list[{side: other | self | unknown, text}], urls: list[str], confidence: high | medium | low}` 다. 화면에 대화방이 여럿이면 가장 최근 대화방 하나만 읽는다. 문자 앱처럼 보낸 쪽이 화면에 드러나지 않으면 `unknown` 이다.
 - **STT**: `STT_MODEL`(기본 `gpt-4o-transcribe-diarize`)을 쓴다. 파라미터와 응답 형식은 OpenAI 공식 speech-to-text 가이드로 확인한다. 화자 정보가 없으면 `speaker_split_failed=True` 로 두고 전체 발화를 쓴다.
