@@ -38,7 +38,7 @@ python -m pip install ./ai
 ## 0. BE → AI: 원문을 넘기고 링크를 받는다 (`split_message` 대체)
 
 링크는 요구 분석 LLM 이 문자를 읽으면서 함께 뽑는다([ADR 0007](./adr/0007-llm-link-extraction.md)).
-BE 는 [split_message()](../backend/src/server/url_utils.py) 대신 원문을 넘긴다.
+BE 는 정규식 `split_message()`(삭제됨) 대신 원문을 넘긴다. BE 구현은 `main.py` 의 `run_analysis()` 다.
 
 ```python
 from ai.pipeline import analyze_message_part, read_message
@@ -91,8 +91,7 @@ from ai.pipeline import analyze_message_part
 message_result = await analyze_message_part(message_text)
 ```
 
-§0 으로 바꾸면 `message_text` 는 `reading.message` 이고 `extracted=reading.extracted` 를 함께 넘긴다.
-바꾸기 전까지는 BE의 기존 [split_message()](../backend/src/server/url_utils.py)가 URL 목록과 URL을 제거한 본문을 분리한다. 개인정보 마스킹은 BE가 준비해야 한다. URL 분석 결과·원문 전체·페이지 HTML을 본문에 섞지 않는다. 예를 들어 URL 제거 후 본문이 `[CJ대한통운] 배송 현황을 확인하세요`이면 그 문자열을 전달한다.
+BE 는 §0 의 `reading.message` 를 `message_text` 로, `reading.extracted` 를 `extracted=` 로 함께 넘긴다. 개인정보 마스킹은 BE가 준비해야 한다. URL 분석 결과·원문 전체·페이지 HTML을 본문에 섞지 않는다. 예를 들어 URL 제거 후 본문이 `[CJ대한통운] 배송 현황을 확인하세요`이면 그 문자열을 전달한다.
 
 반환된 `message_result`는 해당 요청의 최종 호출까지 보관한다. BE에서 분류나 `answer`를 다시 계산하지 않는다. 빈 입력은 `answer="failed"`, 일부 분석 실패는 `answer="partial"`과 `details.reason.failures`로 반환된다. `answer="risk_found"`는 분석을 완료하고 검증된 위험 근거(`details.signals`)를 확인한 경우다. 규칙은 [결과 계약 §4](./scheme.md#4-answer-결정-규칙)를 따른다.
 

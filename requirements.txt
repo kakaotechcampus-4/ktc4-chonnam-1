@@ -2,6 +2,5 @@ fastapi
 uvicorn[standard]
 httpx
 idna
-tldextract
 
 -e ./ai

@@ -1,6 +1,6 @@
 """카카오톡 음성(통화 녹음) 처리 흐름 테스트.
 
-핵심 검증: 음성은 split_message()/기존 문자·URL 분석으로 흘러가지 않고
+핵심 검증: 음성은 read_message()/기존 문자·URL 분석으로 흘러가지 않고
 완전히 분리된 경로를 타는지, 다운로드 주소는 반드시 media.url(또는 M4A
 파일 첨부 utterance)에서만 오는지, transcribe_call()→analyze_call() 연동이
 예산·실패·취소를 안전하게 다루는지, 임시 파일이 지워지는지, 서명된 CDN
@@ -166,12 +166,12 @@ def _patch_pipeline(monkeypatch, *, download=None, transcript=None, analysis=Non
     monkeypatch.setattr(main, "analyze_call", fake_analyze)
 
 
-class TestVoiceMessageIsRoutedBeforeSplitMessage:
-    def test_split_message_is_never_called_for_a_voice_message(self, client, monkeypatch):
-        def unexpected_split(utterance):
-            pytest.fail("split_message()가 음성 메시지에도 호출됨")
+class TestVoiceMessageIsRoutedBeforeReadMessage:
+    def test_read_message_is_never_called_for_a_voice_message(self, client, monkeypatch):
+        async def unexpected_read(utterance, **_kwargs):
+            pytest.fail("read_message()가 음성 메시지에도 호출됨")
 
-        monkeypatch.setattr(main, "split_message", unexpected_split)
+        monkeypatch.setattr(main, "read_message", unexpected_read)
         _patch_pipeline(monkeypatch)
 
         response = client.post("/kakao/skill", json=_voice_skill_payload())
@@ -234,13 +234,16 @@ class TestVoiceMessageIsRoutedBeforeSplitMessage:
         assert "token=should-not-leak" not in out
         assert SIGNED_CDN_URL not in out
 
-    def test_plain_link_is_not_mistaken_for_a_voice_attachment(self, client, monkeypatch):
-        """허용 호스트라도 오디오 확장자가 아니면 음성으로 보지 않는다."""
+    def test_plain_link_is_not_mistaken_for_a_voice_attachment(
+        self, client, monkeypatch, stub_read_message,
+    ):
+        """허용 호스트라도 오디오 확장자가 아니면 음성으로 보지 않고 문자 분석으로 보낸다."""
 
         def unexpected_download(url):
             pytest.fail("오디오가 아닌 링크가 음성 다운로드로 감")
 
         monkeypatch.setattr(main, "download_voice_media", unexpected_download)
+        calls = stub_read_message()
 
         response = client.post(
             "/kakao/skill",
@@ -254,6 +257,7 @@ class TestVoiceMessageIsRoutedBeforeSplitMessage:
 
         assert response.status_code == 200
         assert response.json() == main.render_card("r6-input-required")
+        assert [text for text, _ in calls] == ["https://media.kakao.test/page.html"]
 
 
 class TestVoiceMessageSyncPath:
@@ -931,7 +935,7 @@ class TestVoiceInputValidation:
         monkeypatch.setattr(main, "CALLBACK_DEADLINE_SECONDS", 0.01)
         job_id = main.create_analysis_job("voice-user")
         main.RUNNING_USERS.add("voice-user")
-        await main.run_analysis_and_callback([], "", "https://untrusted.example/cb", "voice-user", job_id,
+        await main.run_analysis_and_callback("", "https://untrusted.example/cb", "voice-user", job_id,
                                              voice_media_url=SIGNED_CDN_URL)
         assert main.ANALYSIS_JOBS[job_id]["result"] == main.render_card("r4-unavailable")
         assert main.ANALYSIS_JOBS[job_id]["status"] == "timeout"
@@ -978,7 +982,7 @@ class TestVoiceMessageAsyncCallbackPath:
         job_id = main.create_analysis_job("voice-user")
 
         await main.run_analysis_and_callback(
-            [], "", "https://bot-api.kakao.com/callback/test", "voice-user", job_id,
+            "", "https://bot-api.kakao.com/callback/test", "voice-user", job_id,
             voice_media_url=SIGNED_CDN_URL,
         )
 
@@ -995,7 +999,7 @@ class TestVoiceMessageAsyncCallbackPath:
         job_id = main.create_analysis_job("voice-user")
 
         await main.run_analysis_and_callback(
-            [], "", "https://untrusted.example.test/callback", "voice-user", job_id,
+            "", "https://untrusted.example.test/callback", "voice-user", job_id,
             voice_media_url=SIGNED_CDN_URL,
         )
 
@@ -1016,7 +1020,7 @@ class TestVoiceMessageAsyncCallbackPath:
         main.ANALYSIS_JOBS[job_id]["analysis_kind"] = "voice"
 
         await main.run_analysis_and_callback(
-            [], "", "https://untrusted.example.test/callback", "voice-user", job_id,
+            "", "https://untrusted.example.test/callback", "voice-user", job_id,
             voice_media_url=SIGNED_CDN_URL,
         )
 
@@ -1423,9 +1427,11 @@ class TestLatestVoice115Contract:
 
 
 class TestExistingTextAndUrlFlowsAreUnaffected:
-    def test_text_message_without_media_still_works(self, client):
-        """URL 없는 일반 문자는 음성 분기를 타지 않고 기존 흐름(빈 입력
-        처리)을 그대로 탄다."""
+    def test_text_message_without_media_still_works(self, client, stub_read_message):
+        """URL 없는 일반 문자는 음성 분기를 타지 않고 문자 분석(read_message)을
+        탄다. 링크가 없다고 읽히면 r6-input-required 다."""
+
+        calls = stub_read_message()
 
         response = client.post(
             "/kakao/skill",
@@ -1434,6 +1440,7 @@ class TestExistingTextAndUrlFlowsAreUnaffected:
 
         assert response.status_code == 200
         assert response.json() == main.render_card("r6-input-required")
+        assert [text for text, _ in calls] == ["평범한 문자"]
 
     def test_media_dict_without_audio_type_falls_through_to_normal_flow(self, client):
         """media가 있어도 type이 audio가 아니면 기존 흐름(빈 입력 처리)을 탄다."""
