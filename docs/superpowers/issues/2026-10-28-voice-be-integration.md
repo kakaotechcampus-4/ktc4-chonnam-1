@@ -73,7 +73,7 @@ Render 환경 변수와 `.env.example` 에 추가해야 합니다.
 | `response_actions` | K6 대응 줄. 분석 직후에는 비어 있고 `apply_call_answers` 가 채움. 비어 있으면 `a2-not-yet-voice.json` |
 | `checked` / `unchecked` (+`reason`) | 확인한 것 / 확인하지 못한 것. 둘을 섞지 않음 (`not_run` 과 `failed` 구분). `phone_number` 라벨은 `상대가 말한 전화번호`(둘 다 통일), `transcript_accuracy`는 reason 무관하게 늘 `받아 적은 글이 정확한지 (말을 글로 옮겨 틀릴 수 있어요)` |
 | `failures` | 실패 이유 문구 (`timeout`, `llm_error`, `invalid_output` 등). 화자 분리 실패는 여기가 아니라 `unchecked` 와 `inconclusive`·`caution` 으로 나타남 |
-| `similar_cases` | **FE 결정(이슈 #115, 2026-10-29)으로 V1·자세히 보기 어디에도 쓰지 않는다.** `VoiceCaseResult.similar_cases` 데이터 자체는 그대로 저장·복원된다 — 카드 렌더러가 이 필드를 안 읽을 뿐이다(`악성 확률로 보일 수 있다는 FE 우려`) |
+| `similar_cases` | 최신 FE 댓글(2026-10-30)에 따라 V1 확인 상태를 복원한다. completed+matches면 확인, matches 없음/kb_empty면 비교할 사례 없음, unchecked failed/timeout이면 검색 문제로 구분한다. 실제 matches가 있을 때만 캐러셀 두 번째 장을 붙인다. 현재 AI에 type이 없어 수법명을 추측하지 않고 일반적인 사례 발견 안내만 한다(#109 의존) |
 | `explanation` | 부가 설명. 카드에 아직 안 씀(비어 있어도 카드는 나가야 함 조건은 만족) |
 | `questions[0]` (Q1, `option_ids`: `entered_info`, `installed_app`, `sent_money`, `not_yet`) | 결과 아래 `이미 하신 게 있나요?` 리스트 카드(`q1-already-acted.json`). 라벨은 FE. 블록은 **`block_answer`=`6ae336cd25d4bc48e2bb8f2a`**(2026-10-29 관리자센터 확정) — "자세히 보기" 블록(`6aad3abfe745d3358bd90c8d`)과 다르다, 재사용 금지 |
 
@@ -89,38 +89,64 @@ Q1 답은 쌓입니다(`job["qa_answers"]`). 답이 들어올 때마다 저장�
 | `entered_info` (그 밖) | `change_password`, `register_info_exposure` |
 | `installed_app` | `request_payment_stop`, `isolate_phone`, `use_other_device`, `remove_app_and_check_device` |
 
-**K6 버튼 규칙은 문자와 녹음이 다릅니다(`k6-response.json` 은 공용 템플릿, 버튼 조립 로직만 시나리오별).**
+**K6 버튼은 D17을 따른다(2026-10-30 최신 FE 요구). D18은 철회됐다.**
 
-- **문자(D17, 기존 그대로 유지)**: `report_112` 에만 `112 신고`, 버튼 달 대응이 없으면 `KISA 상담하기`, `installed_app` 만 고른 경우는 버튼 없음.
-- **녹음(D18, 2026-10-29 신규, `render_voice_answer_card()`)**: 버튼은 `response_actions` 코드가 아니라 **쌓인 Q1 답(answers) 자체**를 기준으로 고른다.
+문자는 기존 D17 구현을 유지한다. 녹음은 누적 Q1 답에서 아래 순서로 선택한다.
 
-  | 쌓인 Q1 답 | 버튼 | `contact_line` |
-  | --- | --- | --- |
-  | `sent_money` 또는 `entered_info` 가 있음 | `112 신고`(phone 112) · `금감원 상담`(phone 1332) | `신고·상담: 112(경찰), 1332(금융감독원)` (phone 버튼이 PC 카톡에 안 보여서 본문에도 적음) |
-  | `installed_app` 만 있음 | 없음(빈 목록) | 빈 문자열 |
-  | 그 밖(버튼 달 대응이 없음) | `1394 상담`(phone 1394) | 빈 문자열 |
-
-  `contact_line` 이 비면 템플릿이 남기는 빈 줄을 BE가 정리합니다. **"`installed_app`과 `not_yet`을 함께 고른 경우"는 지금 구현에서 "`installed_app` 만"에 안 들어가 세 번째 행(1394)으로 빠집니다 — 의도한 동작인지 미확인**(아래 "FE/PM 확인 필요" 참고).
-
-## K6 누적 답 통합 재현
-
-D16·기존 테스트는 `not_yet`과 행동 답의 누적을 허용한다.
-`main.py::handle_voice_answer()`가 답을 쌓고, `ai.case.actions.response_actions_for()`는
-`not_yet`을 대응 추가/이전 답 취소로 쓰지 않는다. 따라서 이전 행동의 대응이 있으면 A2가 아니라 K6를 유지한다.
-
-| 답의 입력 순서 | 카드 | 전화 버튼 |
+| 누적 행동 | 버튼 | contact_line |
 | --- | --- | --- |
-| `installed_app` | K6 | 없음 |
-| `installed_app` → `not_yet` | K6 | 1394 |
-| `not_yet` → `installed_app` | K6 | 1394 |
-| `sent_money` → `not_yet` | K6 | 112·1332 |
-| `entered_info` → `installed_app` | K6 | 112·1332 |
+| sent_money 포함(정보·앱·not_yet 포함 여부와 무관) | 112 신고 | 빈 문자열 |
+| 돈 없이 entered_info 포함 | 1394 상담 | 상담: 피싱 통합 상담 1394 (24시간) |
+| 돈·정보 없이 installed_app 포함 | 없음 | 빈 문자열 |
+| 그 밖의 K6 또는 A2 | 1394 상담 | K6에서만 위 상담 줄, A2는 고정 템플릿 |
 
-`TestVoiceAnswerFlow.test_d18_accumulated_answers_current_behavior`는 위 현상을 기록한다.
-앱 설치+중립 답에 1394가 붙는 결과는 **현상 기록이며 승인된 새 정책이 아니다.**
-FE D18은 "답별 버튼 합치기"와 "앱 설치만이면 버튼 없음"을 명시하지만 중립 답이 섞일 때의
-의미는 명확하지 않다. 권장 검토안은 버튼 판정에서 행동 답과 중립 답을 분리해 앱 설치+중립 답에는
-버튼을 달지 않는 것이다. 합의 전에는 버튼 코드와 답 누적 정책을 바꾸지 않는다.
+D16의 답 누적 계약은 유지한다. not_yet은 이전 행동을 철회하지 않으며,
+앱 설치+not_yet도 앱 설치 대응만 남으므로 전화 버튼이 없다.
+정보+돈은 112만 표시한다. B2d는 상황이 미확정인 진입 카드이므로 FE 템플릿대로 112·1394를 함께 안내한다.
+1332 대응 버튼은 제거했다. 공식 번호 KB에서 반환한 official_contact의 사실 정보는 바꾸지 않는다.
+
+## 2026-10-30 FE 계약 동기화
+
+기준: `origin/refactor/voice-phishing-fe`의 `1c226c9`,
+[이슈 #115 최신 FE 댓글](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/issues/115#issuecomment-6514684572).
+B2d, VE4, C2 제목, A2 녹음, 녹음 캐러셀과 README·설계 문서를 동기화했다.
+K6 JSON은 이미 FE와 같으며 BE의 버튼·contact_line 조합만 변경했다.
+관련 없는 문자 카드·Q2 신규 구현은 가져오지 않았다.
+
+- 사례 type은 `CaseMatch`에 없다. case_id/categories/matched_variant에서 유형을 추측하지 않는다.
+  현재는 “이번 통화와 비슷한 예시 통화를 찾았어요.”와 판정에 쓰지 않았다는 안내만 표시한다.
+  FE의 유형별 similar_type/similar_line은 #109 AI 인터페이스 확정 후 연결해야 한다.
+- claim_note는 기본 “통화 상대가 한 말만 근거로 썼어요.”다.
+  #116 문서의 명시적 unchecked.item=speaker가 전달되는 경우에만 중립 말머리와
+  “누가 한 말인지 가리지 못해 통화에 나온 말을 옮겼어요.”를 표시하도록 준비했다.
+  caution으로 화자 상태를 추측하지 않는다. AI 모델에는 아직 이 항목이 없으므로
+  실제 화자 미확인 전달·한 화자 판별·번호 검증 변경 등 #116 자체 구현은 남아 있다.
+- blockers/pretexts의 기존 첫 항목 fallback 매핑은 변경하지 않았다. FE의 연결 표시 요구와
+  AI의 두 필드 의미·표시 범위는 협의가 필요하다.
+- #119 링크 추출 전환과 STT·배포 설정은 변경하지 않았다.
+- FE 최신 README에는 문자 A2/A3/R6b/Q2 계약도 추가되어 있다. 이번 음성 범위에서는
+  해당 문자 템플릿·새 분기 구현을 동기화하지 않았다. 공유 C2 제목만 최신으로 맞추고
+  기존 문자 판정·카드 동작은 회귀 테스트로 보존했다.
+
+### 최신 FE 반영 후 검증 기록
+
+위 Worktree 전용 Python 환경에서 실행했다. 모든 외부 STT/LLM은 기존 mock을 사용했다.
+
+| pytest 대상 (`-B -X utf8 -m pytest -p no:cacheprovider`, `-q --tb=short`) | 결과 | 실행 시간 |
+| --- | --- | --- |
+| `tests/test_voice_message_flow.py tests/test_result_card_renderer.py tests/test_detail_carousel.py` | 164 passed | 9.90초 |
+| `tests` | 645 passed, 2 skipped | 27.68초 |
+| `tests ai/tests` | 1937 passed, 3 skipped | 49.65초 |
+
+기존 입력 검증·문자·Q1 누적 동작을 유지하면서 D17 우선순위, contact_line,
+사례 발견/빈 검색/검색 오류/시간 초과, 유형 추측 금지, claim_note의 명시적 표시 조건을 검증했다.
+아래의 1926개 실행 기록은 최신 FE 반영 전 통합 기준에 대한 이력이다.
+
+AI HTML 예산 실패는 이번 전체 실행에서도 재현되지 않았다.
+`test_partial_html_preserves_observed_form_without_claiming_completion[element-limit]`의
+JUnit 테스트 총시간은 0.025초, `text-limit`은 0.005초였다(HTML 검사 단독 측정이 아님).
+XML은 Git에서 제외된 `.venv/voice-115-fe-alignment-results.xml`에만 생성했다.
+실제 녹음/STT·실기기·배포 검증을 수행한 것은 아니며, 100ms 예산도 변경하지 않았다.
 
 ## 개인정보
 
@@ -146,8 +172,8 @@ FE D18은 "답별 버튼 합치기"와 "앱 설치만이면 버튼 없음"을 �
 - [x] `mock_analyze_voice_case()` 를 `transcribe_call`/`analyze_call` 로 교체, `render_voice_result_card()` 를 `VoiceCaseResult` 기준(conclusion별 V1/VE3/VE4 분기 포함)으로 재작성
 - [x] 첫 응답 즉시, 이후 `transcribe_call` -> `analyze_call(time_budget_s)` 를 콜백 경로에서 실행. 예산은 `CALLBACK_DEADLINE_SECONDS(45) - 5` 에서 다운로드+STT+화자분리 경과 시간을 뺀 값, 5초 미만이면 `analyze_call` 에 0초를 줘 실제 분석을 사실상 건너뜀
 - [x] 결과를 콜백 전에 저장하고, `결과 확인` 이 저장본(처리 중 K1 / 실패 R4 / 없음 K4)을 보여줌
-- [x] V1/VE3/VE4 결과 카드와 Q1 리스트 카드 렌더링, Q1 답은 `apply_call_answers` 결과로 K6(D18)/A2 생성, 전용 블록(`block_answer`) 사용
-- [x] V1 버튼 `자세히 보기`·`다른 녹음 확인하기`(D15 재변경), K6 버튼은 녹음 전용 D18 규칙(문자 D17은 그대로 유지)
+- [x] V1/VE3/VE4 결과 카드와 Q1 리스트 카드 렌더링, Q1 답은 `apply_call_answers` 결과로 K6(D17)/A2 생성, 전용 블록(`block_answer`) 사용
+- [x] V1 버튼 `자세히 보기`·`다른 녹음 확인하기`(D15 재변경), K6 버튼은 최신 D17 규칙(문자 분석은 그대로 유지)
 - [x] lifespan 에서 `warm_up_voice_case_search()` 호출 (실패해도 기동) — 테스트로 확인됨
 - [x] 환경 변수 6개를 `.env.example` 에 반영. **Render 실제 설정은 별도 확인 필요**(`STT_BASE_URL`/`DIARIZE_BASE_URL` 미설정이면 전부 `ve3-unrecognized`(알아듣지 못함)로만 응답)
 - [x] 대본 저장·외부 전송 전 마스킹 — 엔드포인트 미정이라 대본 자체를 저장하지 않는 방식으로 조건 충족(`EliceMasker` 호출은 아직 안 함)
@@ -155,7 +181,7 @@ FE D18은 "답별 버튼 합치기"와 "앱 설치만이면 버튼 없음"을 �
 - [x] 한 사용자 동시 요청 K5 잠금
 - [x] 의존 방향 유지 (`backend` -> `ai`), `ai/` 는 카카오 payload 를 모름
 - [x] VE1/VE2/R4 테스트 38개 추가(`TestVoiceInputValidation`). 기존 V1/VE3/VE4·Q1/K6/A2·문자 테스트를 함께 실행하며 통합 결과는 아래 실제 실행 기록으로 구분
-- [x] K6 D18 네 가지 조합과 중립 답의 역순 조합을 현재 동작 재현 테스트로 추가. 미확정 전화 버튼 정책은 변경하지 않음
+- [x] K6 D17 누적 답 우선순위·중립 답 역순·정보+돈 조합을 회귀 테스트로 검증
 - [ ] 이 문서의 "FE/PM 확인 필요" 항목 결론 반영
 
 ## 통합 테스트 실행 기록 (2026-10-30)
@@ -189,9 +215,8 @@ AI 구현·테스트·100ms 예산은 변경하지 않았다.
 | 항목 | 지금 코드/문서 상태 | 확인할 것 |
 | --- | --- | --- |
 | `call_claims` 의 "내세운 사정 = `blockers` → `pretexts`" | 실제 AI 프롬프트(`ai/src/ai/prompts/v1/claims_call.md`)상 `pretexts`는 내세운 명분·사정, `blockers`는 원래 연락처로 확인하지 못하게 하는 사정(폰 고장/통화 불가)이다. 단순한 "말하지 말라" 일반 통제 발화로 정의하면 부정확하다. 두 모델은 각각 인용을 담고 `verify.py`가 대본에 존재하는 인용을 보존하며 blockers는 `CONTACT_BLOCKER` 근거도 생성한다. 현재 BE는 blockers의 첫 항목, 없으면 pretexts의 첫 항목을 표시한다 | FE copy는 "blockers 먼저, 이어서 pretexts", 이슈는 화살표 표기라 fallback/연결 여부가 불명확하다. FE/AI/PM이 둘 다 있을 때 표시 범위·순서·라벨을 확정해야 한다. 현재 매핑 변경 없음 |
-| K6 D18 "버튼 달 대응이 없음 → 1394" 조건 | `installed_app`+`not_yet` 조합처럼 `installed_app` 외에 무해한 답(`not_yet`)이 섞이면 "installed_app만"이 아니게 돼 1394 버튼이 붙음 — `response_actions_for()` 가 만들 수 있는 조합상 이 세 번째 행이 실제로 트리거되는 다른 입력이 있는지도 불분명 | "installed_app만"의 기준이 답 집합 전체인지, 응답에 영향 주는 답만인지 |
 | `.webm` 지원 여부 | 파일 첨부 인식은 `main.py::_VOICE_ATTACHMENT_EXTENSIONS`, 내용 검사는 `backend/src/server/voice_input.py`의 WebM 오디오 CodecID 검사로 유지한다. FE 카드(`v0-voice-check.json`)는 m4a·mp3·wav만 안내 | 실제 카카오 녹음·STT 코덱 실측과 카드 안내 정합성 확인. 이번 통합에서도 지원 제거/확대 없음 |
 | 녹음 길이 상한 | 미정(`MAX_VOICE_DURATION_SECONDS=None`). WAV 측정과 가상 상한 경계 테스트만 구현. ffprobe 없음. 압축 형식의 길이를 추정하지 않음 | 운영 상한 값, 전체 형식 측정 도구/실행 환경, 측정 실패 안내 정책을 확정해야 함 |
 | STT 서비스명 / W3v 배포 | `w3v-voice-consent.json` 의 `{{ external_service }}` 가 비어 있고, `block_voice_consent` 블록 ID는 이미 확정됨(`6ae335a8b074221a79bea79f`). 서비스명이 안 정해져 **W3v는 배포 보류**(이슈·README 모두 명시) | STT 서비스(엘리스 ML API 뒤의 실제 모델/제공자) 사용자 노출용 이름, 확정 후 W3v 배포 가능 여부 |
 
-이 표의 어느 항목도 이번 작업에서 임의로 결정하지 않았다 — 결론이 나기 전까지 관련 코드(`.webm` 목록, K6 세 번째 행, `blockers` 처리)는 지금 동작을 유지한다.
+K6는 최신 FE 합의 D17을 반영했다. 나머지 미확정 항목(`.webm` 안내, `blockers` 처리, 길이 상한)은 임의로 변경하지 않았다.

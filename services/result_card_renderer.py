@@ -57,7 +57,7 @@ def _truncate_evidence(evidence: str, max_length: int = _EVIDENCE_MAX_LENGTH) ->
 # ============================================================
 # 통화 녹음(보이스피싱) 결과 — VoiceCaseResult 기준
 # (docs/designs/chatbot-copy.md 3절 "V1 보이스피싱 결과",
-#  docs/designs/voice-phishing-flow.md D18, 이슈 #115)
+#  docs/designs/voice-phishing-flow.md D17, 이슈 #115)
 # ============================================================
 
 _VOICE_STOP_ACTION_JOIN = {
@@ -84,9 +84,7 @@ _VOICE_DEMAND_LABELS = {
     "other": "기타 요구",
 }
 
-# CheckItem -> "확인한 것" 줄. similar_cases는 V1에 쓰지 않는다(FE 결정,
-# 이슈 #115) — 분석 결과 데이터(VoiceCaseResult.similar_cases) 자체는
-# 그대로 저장되고, 카드에만 줄을 안 만든다.
+# CheckItem -> V1 확인 항목. similar_cases는 실제 검색 결과로 따로 조합한다.
 _VOICE_CHECKED_LABELS = {
     "transcript": "통화 내용 (받아 적은 글)",
     "phone_number": "상대가 말한 전화번호",
@@ -144,14 +142,8 @@ _VOICE_RESPONSE_ACTION_LINES = {
     "delete_downloaded_file": "받은 파일을 열지 말고 지우세요.",
 }
 
-# K6 버튼(D18, 2026-10-29). response_actions 코드가 아니라 "쌓인 Q1 답"
-# 기준이다 — sent_money·entered_info 중 하나라도 있으면 이 둘을 같이 단다.
-_D18_REPORT_BUTTONS = [
-    {"label": "112 신고", "action": "phone", "phoneNumber": "112"},
-    {"label": "금감원 상담", "action": "phone", "phoneNumber": "1332"},
-]
-_D18_FALLBACK_BUTTON = [{"label": "1394 상담", "action": "phone", "phoneNumber": "1394"}]
-_D18_CONTACT_LINE = "신고·상담: 112(경찰), 1332(금융감독원)"
+# K6: chatbot-copy.md D17. 누적 답에서 송금 > 정보 제공 > 앱 설치 순서.
+_VOICE_CONSULT_BUTTON = [{"label": "1394 상담", "action": "phone", "phoneNumber": "1394"}]
 
 # Q1 option_id -> 리스트 카드 항목 라벨(V1 녹음 결과 칸, chatbot-copy.md 3절 Q1)
 _VOICE_QA_OPTION_LABELS = {
@@ -206,15 +198,17 @@ def _voice_stop_line_excluding_hang_up(stop_actions: list[str]) -> str:
     return _voice_join_stop_actions(ordered)
 
 
-def _voice_verify_line(official_contact: dict | None) -> str:
+def _voice_verify_line(official_contact: dict | None, *, speaker_unknown: bool = False) -> str:
     if official_contact:
         org = official_contact.get("org", "")
         number = official_contact.get("number", "")
         return f"{org} 대표번호({number})로 직접 전화해 확인하세요."
+    if speaker_unknown:
+        return "통화에 나온 기관의 대표번호를 직접 찾아 전화해 확인하세요."
     return "상대가 말한 기관의 대표번호를 직접 찾아 전화해 확인하세요."
 
 
-def _voice_call_claims(claims: dict, caution: bool) -> str:
+def _voice_call_claims(claims: dict, caution: bool, *, speaker_unknown: bool = False) -> str:
     """"주의할 점"/"통화에서 들은 내용" 블록(이슈 #115 V1 call_claims 매핑).
 
     기관 = identity[].quote, 상대가 한 말 = 첫 demands[].quote, 내세운
@@ -252,6 +246,18 @@ def _voice_call_claims(claims: dict, caution: bool) -> str:
     if not lines:
         return ""
 
+    if speaker_unknown:
+        for index, line in enumerate(lines):
+            for original, replacement in (
+                ("상대가 내세운 기관:", "통화에 나온 기관:"),
+                ("상대가 한 말:", "통화에 나온 말:"),
+                ("내세운 사정:", "통화에 나온 사정:"),
+                ("요구한 것:", "통화에 나온 요구:"),
+            ):
+                if line.startswith(f"- {original}"):
+                    lines[index] = line.replace(original, replacement, 1)
+                    break
+
     title = "주의할 점" if caution else "통화에서 들은 내용"
     return f"{title}\n" + "\n".join(lines) + "\n\n"
 
@@ -271,6 +277,24 @@ def _voice_number_check_entries(number_checks: list[dict]) -> tuple[list[str], l
     return checked_lines, unchecked_lines
 
 
+def _voice_similar_cases_state(result: dict) -> str:
+    """검색 실패와 정상 검색의 빈 결과를 구분한다. 일치 유형은 추측하지 않는다."""
+    similar = result.get("similar_cases") or {}
+    if any(
+        entry.get("item") == "similar_cases" and entry.get("reason") in {"failed", "timeout"}
+        for entry in result.get("unchecked") or []
+    ):
+        return "failed"
+    if similar.get("status") == "completed" and similar.get("matches"):
+        return "found"
+    return "empty"
+
+
+def _voice_speaker_unknown(result: dict) -> bool:
+    # #116의 명시적인 표시만 읽는다. caution/claims로 화자 상태를 추측하지 않는다.
+    return any(entry.get("item") == "speaker" for entry in result.get("unchecked") or [])
+
+
 def _voice_checked_unchecked(result: dict) -> tuple[str, str]:
     number_checks = result.get("number_checks") or []
     nc_checked, nc_unchecked = _voice_number_check_entries(number_checks)
@@ -279,7 +303,7 @@ def _voice_checked_unchecked(result: dict) -> tuple[str, str]:
     checked_lines = list(nc_checked)
     for item in result.get("checked") or []:
         if item == "similar_cases" or (item == "phone_number" and skip_phone_number):
-            continue  # similar_cases는 V1에 안 씀(#115); number_checks가 있으면 그 줄로 대신한다
+            continue  # 유사 사례와 번호 확인은 각각 실제 결과로 따로 조합한다.
         label = _VOICE_CHECKED_LABELS.get(item)
         if label:
             checked_lines.append(f"- {label}")
@@ -288,6 +312,9 @@ def _voice_checked_unchecked(result: dict) -> tuple[str, str]:
     has_transcript_accuracy = False
     for entry in result.get("unchecked") or []:
         item, reason = entry.get("item"), entry.get("reason")
+        if item == "speaker":
+            unchecked_lines.append("- 누가 한 말인지 (말한 사람을 나누지 못했어요)")
+            continue
         if item == "similar_cases" or (item == "phone_number" and skip_phone_number):
             continue
         if item == "transcript_accuracy":
@@ -304,6 +331,16 @@ def _voice_checked_unchecked(result: dict) -> tuple[str, str]:
             continue
         reason_label = _VOICE_UNCHECKED_REASON_LABELS.get(reason)
         unchecked_lines.append(f"- {label} ({reason_label})" if reason_label else f"- {label}")
+
+    similar_state = _voice_similar_cases_state(result)
+    if similar_state == "found":
+        checked_lines.append("- 비슷한 사례")
+    else:
+        reason = (
+            "사례를 찾다가 문제가 생겼어요" if similar_state == "failed"
+            else "비교할 사례를 찾지 못했어요"
+        )
+        unchecked_lines.append(f"- 비슷한 사례 ({reason})")
 
     # 받아 적은 글은 늘 정확성을 장담할 수 없다고 적는다(V1 전용 규칙).
     if not has_transcript_accuracy:
@@ -350,8 +387,12 @@ def render_voice_result_card(result: dict, job_id: str | None = None) -> dict:
     card = render_card("v1-voice-result", {
         "headline": headline,
         "stop_line": _voice_stop_line(result.get("stop_actions") or []),
-        "verify_line": _voice_verify_line(result.get("official_contact")),
-        "call_claims": _voice_call_claims(result.get("claims") or {}, caution),
+        "verify_line": _voice_verify_line(
+            result.get("official_contact"), speaker_unknown=_voice_speaker_unknown(result)
+        ),
+        "call_claims": _voice_call_claims(
+            result.get("claims") or {}, caution, speaker_unknown=_voice_speaker_unknown(result)
+        ),
         "checked": checked,
         "unchecked": unchecked,
     })
@@ -398,18 +439,17 @@ def render_voice_qa_prompt_card(job_id: str | None, question: dict) -> dict | No
     return render_card("q1-already-acted", {"items": items})
 
 
-def _voice_d18_buttons(answers: list[str]) -> list[dict]:
-    """K6 버튼(D18). `response_actions` 코드가 아니라 **쌓인 Q1 답**
-    기준이다 — `sent_money`·`entered_info` 중 하나라도 있으면 112+금감원
-    버튼을 같이 달고, `installed_app`만 있으면 버튼이 없고, 그 외(버튼 달
-    대응이 없는 경우)엔 1394 하나를 단다."""
+def _voice_d17_buttons(answers: list[str]) -> list[dict]:
+    """D17 버튼 우선순위. not_yet은 앞서 선택한 행동을 철회하지 않는다."""
 
     given = set(answers)
-    if given & {"sent_money", "entered_info"}:
-        return list(_D18_REPORT_BUTTONS)
-    if given and given <= {"installed_app"}:
+    if "sent_money" in given:
+        return [{"label": "112 신고", "action": "phone", "phoneNumber": "112"}]
+    if "entered_info" in given:
+        return list(_VOICE_CONSULT_BUTTON)
+    if "installed_app" in given:
         return []
-    return list(_D18_FALLBACK_BUTTON)
+    return list(_VOICE_CONSULT_BUTTON)
 
 
 def render_voice_answer_card(result: dict, answers: list[str]) -> dict:
@@ -430,11 +470,12 @@ def render_voice_answer_card(result: dict, answers: list[str]) -> dict:
         for i, action in enumerate(response_actions, start=1)
         if action in _VOICE_RESPONSE_ACTION_LINES
     ]
-    buttons = _voice_d18_buttons(answers)
-    # contact_line은 112+1332가 함께 달릴 때만 채운다 — PC 카톡은 phone
-    # 버튼이 안 보이니 번호를 본문에도 적는다(1394 단독일 때는 안 적는다).
-    has_report_buttons = buttons == _D18_REPORT_BUTTONS
-    contact_line = _D18_CONTACT_LINE if has_report_buttons else ""
+    buttons = _voice_d17_buttons(answers)
+    # 1394 버튼이 있을 때만 PC 사용자에게도 상담 번호를 보여 준다.
+    contact_line = (
+        "상담: 피싱 통합 상담 1394 (24시간)"
+        if any(button.get("phoneNumber") == "1394" for button in buttons) else ""
+    )
 
     card = render_card("k6-response", {
         "response_lines": "\n".join(lines),
@@ -460,18 +501,38 @@ def render_voice_detail_carousel(result: dict) -> dict:
     """
 
     caution = bool(result.get("caution"))
-    claims_block = _voice_call_claims(result.get("claims") or {}, caution).strip()
+    speaker_unknown = _voice_speaker_unknown(result)
+    claims_block = _voice_call_claims(
+        result.get("claims") or {}, caution, speaker_unknown=speaker_unknown
+    ).strip()
     claim_lines = (
         "\n".join(claims_block.splitlines()[1:]) if claims_block else "확인된 의심 근거가 없어요."
     )
     _, unchecked = _voice_checked_unchecked(result)
-    verify_line = _voice_verify_line(result.get("official_contact"))
+    verify_line = _voice_verify_line(result.get("official_contact"), speaker_unknown=speaker_unknown)
 
-    return render_card("c-detail-carousel-voice", {
+    card = render_card("c-detail-carousel-voice", {
         "claim_lines": claim_lines,
+        "claim_note": (
+            "누가 한 말인지 가리지 못해 통화에 나온 말을 옮겼어요."
+            if speaker_unknown else "통화 상대가 한 말만 근거로 썼어요."
+        ),
+        "similar_type": "",
+        "similar_line": "",
         "unchecked": unchecked,
         "verify_line": verify_line,
     })
+    items = card["template"]["outputs"][0]["carousel"]["items"]
+    if _voice_similar_cases_state(result) == "found":
+        # #109: 현재 CaseMatch에는 type이 없다. matched_variant/categories로
+        # 수법을 추측하지 않고, 검색된 사례가 있다는 사실만 알린다.
+        items[1]["description"] = (
+            "이번 통화와 비슷한 예시 통화를 찾았어요.\n\n"
+            "비슷하다고 해서 사기라는 뜻은 아니에요.\n결과 판단에는 쓰지 않았어요."
+        )
+    else:
+        items.pop(1)
+    return card
 
 
 def _r9_org_label(brand: str | None) -> str:

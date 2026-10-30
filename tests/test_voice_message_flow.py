@@ -407,7 +407,7 @@ class TestVoiceResultConclusionBranching:
 
         assert card == main.render_card("ve4-no-claim")
         text_card = card["template"]["outputs"][0]["textCard"]
-        assert text_card["title"] == "🎙️ 의심할 말을 찾지 못했어요"
+        assert text_card["title"] == "🎙️ 녹음에 사칭·요구하는 말이 없어요"
 
     def test_input_required_never_gets_q1_attached(self):
         """AI 쪽 decide_call()은 input_required에 questions를 채우지
@@ -453,12 +453,13 @@ class TestVoiceDetailCarouselTemplate:
 
         card = main.render_voice_detail_carousel(result)
 
-        assert card == main.render_card("c-detail-carousel-voice", {
-            "claim_lines": "- 상대가 내세운 기관: '금융감독원입니다'",
-            "unchecked": "- 받아 적은 글이 정확한지 (말을 글로 옮겨 틀릴 수 있어요)",
-            "verify_line": "상대가 말한 기관의 대표번호를 직접 찾아 전화해 확인하세요.",
-        })
         items = card["template"]["outputs"][0]["carousel"]["items"]
+        assert "- 상대가 내세운 기관: '금융감독원입니다'" in items[0]["description"]
+        assert "통화 상대가 한 말만 근거로 썼어요." in items[0]["description"]
+        assert len(items) == 4  # no matches: omit only the similarity card
+        assert items[1]["title"] == "❔ 확인 범위"
+        assert "비교할 사례를 찾지 못했어요" in items[1]["description"]
+        assert "{{" not in str(card)
         # "통화에서 들은 내용"/"주의할 점" 칸 제목이 claim_lines에 남으면 안 된다.
         assert "통화에서 들은 내용" not in items[0]["description"]
         assert "주의할 점" not in items[0]["description"]
@@ -1038,17 +1039,15 @@ class TestVoiceAnswerFlow:
 
     @pytest.mark.parametrize("answers,phones", [
         (["installed_app"], []),
-        (["installed_app", "not_yet"], ["1394"]),
-        (["not_yet", "installed_app"], ["1394"]),
-        (["sent_money", "not_yet"], ["112", "1332"]),
-        (["entered_info", "installed_app"], ["112", "1332"]),
+        (["installed_app", "not_yet"], []),
+        (["not_yet", "installed_app"], []),
+        (["sent_money", "not_yet"], ["112"]),
+        (["entered_info", "installed_app"], ["1394"]),
+        (["entered_info", "sent_money"], ["112"]),
+        (["sent_money", "entered_info"], ["112"]),
     ])
-    def test_d18_accumulated_answers_current_behavior(self, answers, phones):
-        """Characterize current outputs; app+not_yet phone policy still needs FE/PM agreement.
-
-        D16 allows accumulated answers and not_yet does not retract prior actions.
-        Do not mistake the observed 1394 combination for a newly approved policy.
-        """
+    def test_d17_accumulated_answers_follow_action_precedence(self, answers, phones):
+        """D17 uses accumulated actions; not_yet does not retract a prior action."""
         job_id = self._seed_voice_job()
         original = main.ANALYSIS_JOBS[job_id]["final_payload"]
         for answer in answers:
@@ -1061,13 +1060,13 @@ class TestVoiceAnswerFlow:
         assert job["final_payload"]["response_actions"]
         assert job["final_payload"]["conclusion"] == original["conclusion"]
         assert job["final_payload"]["stop_actions"] == original["stop_actions"]
-        # All four combinations must remain K6, never an A2 retraction.
+        assert "1332" not in str(text_card)
+        assert ("상담: 피싱 통합 상담 1394 (24시간)" in text_card["description"]) == ("1394" in phones)
+        # Accumulated actions must remain K6, never an A2 retraction.
         assert "잘하셨어요" not in text_card["description"]
 
-    def test_sent_money_answer_returns_k6_with_112_and_geumgam_buttons(self, client):
-        """D18: sent_money·entered_info 중 하나라도 있으면 112 신고 +
-        금감원 상담(1332)을 같이 단다(response_actions 코드가 아니라
-        답 자체가 기준이다)."""
+    def test_sent_money_answer_returns_k6_with_only_112(self, client):
+        """D17: money takes precedence over the fallback consultation button."""
 
         job_id = self._seed_voice_job()
 
@@ -1085,12 +1084,13 @@ class TestVoiceAnswerFlow:
         text_card = response.json()["template"]["outputs"][0]["textCard"]
         assert text_card["title"] == "🚨 지금 먼저 하세요"
         labels = {b["label"] for b in text_card["buttons"]}
-        assert labels == {"112 신고", "금감원 상담"}
-        assert next(b for b in text_card["buttons"] if b["label"] == "금감원 상담")["phoneNumber"] == "1332"
-        assert "신고·상담: 112(경찰), 1332(금융감독원)" in text_card["description"]
+        assert labels == {"112 신고"}
+        assert [b["phoneNumber"] for b in text_card["buttons"]] == ["112"]
+        assert "상담:" not in text_card["description"]
+        assert "1332" not in str(text_card)
 
-    def test_entered_info_answer_also_returns_both_report_buttons(self, client):
-        """entered_info도 sent_money와 같은 버튼 조합을 받는다(D18)."""
+    def test_entered_info_answer_returns_1394_and_contact_line(self, client):
+        """D17: information-only answers get the consultation fallback."""
 
         job_id = self._seed_voice_job()
 
@@ -1106,7 +1106,9 @@ class TestVoiceAnswerFlow:
 
         text_card = response.json()["template"]["outputs"][0]["textCard"]
         labels = {b["label"] for b in text_card["buttons"]}
-        assert labels == {"112 신고", "금감원 상담"}
+        assert labels == {"1394 상담"}
+        assert "상담: 피싱 통합 상담 1394 (24시간)" in text_card["description"]
+        assert "1332" not in str(text_card)
 
     def test_not_yet_answer_with_no_prior_answers_returns_a2(self, client):
         job_id = self._seed_voice_job()
@@ -1170,7 +1172,7 @@ class TestVoiceAnswerFlow:
 
     def test_answers_accumulate_across_multiple_clicks(self, client):
         """먼저 '아직 안 했어요'를 눌러도, 그 뒤 '돈을 보냈어요'를 누르면
-        쌓인 답 전부로 K6가 다시 나간다(D16). 버튼도 쌓인 답(D18) 기준으로
+        쌓인 답 전부로 K6가 다시 나간다(D16). 버튼도 쌓인 답(D17) 기준으로
         다시 고른다."""
 
         job_id = self._seed_voice_job()
@@ -1180,12 +1182,12 @@ class TestVoiceAnswerFlow:
 
         text_card = card["template"]["outputs"][0]["textCard"]
         assert text_card["title"] == "🚨 지금 먼저 하세요"
-        assert {b["label"] for b in text_card["buttons"]} == {"112 신고", "금감원 상담"}
+        assert {b["label"] for b in text_card["buttons"]} == {"112 신고"}
         assert main.ANALYSIS_JOBS[job_id]["qa_answers"] == ["not_yet", "sent_money"]
 
     def test_installed_app_then_sent_money_upgrades_to_report_buttons(self, client):
         """installed_app만 골랐을 땐 버튼이 없다가, sent_money가 쌓이면
-        112+금감원으로 바뀐다 — 답 집합 전체를 기준으로 다시 고르기 때문."""
+        112로 바뀐다 — 답 집합 전체를 기준으로 다시 고르기 때문."""
 
         job_id = self._seed_voice_job()
 
@@ -1194,7 +1196,9 @@ class TestVoiceAnswerFlow:
 
         second = main.handle_voice_answer(job_id, "sent_money")
         labels = {b["label"] for b in second["template"]["outputs"][0]["textCard"]["buttons"]}
-        assert labels == {"112 신고", "금감원 상담"}
+        assert labels == {"112 신고"}
+        assert "상담:" not in str(second)
+        assert "1332" not in str(second)
 
     def test_answer_for_unknown_job_is_handled_safely(self, client):
         response = client.post(
@@ -1259,7 +1263,7 @@ class TestVoiceAnswerFlow:
 class TestV1NumberChecksAndSimilarCases:
     """`VoiceCaseResult.number_checks`/`similar_cases` 처리(이슈 #115).
     `number_checks`는 checked/unchecked 줄로 들어가고 phone_number 줄을
-    대신한다. `similar_cases`는 FE 결정으로 V1에 전혀 안 보여 준다 —
+    대신한다. `similar_cases`는 최신 FE 계약에 따라 V1 확인 상태와 실제 사례 장으로 보여 준다 —
     단, 분석 결과 데이터(모델 필드) 자체는 그대로 유지된다."""
 
     def test_official_number_check_replaces_phone_number_line_in_checked(self):
@@ -1323,8 +1327,8 @@ class TestV1NumberChecksAndSimilarCases:
 
         assert "- 상대가 말한 전화번호" in description
 
-    def test_similar_cases_are_never_shown_in_v1_even_with_matches(self):
-        """FE 결정(#115): similar_cases는 V1에 아예 쓰지 않는다."""
+    def test_similar_cases_are_checked_without_exposing_scores_or_guessing_type(self):
+        """Actual matches restore the checked item and the second carousel card."""
 
         from ai.types import AnalysisStatus, CaseMatch, CaseSearchResult
 
@@ -1340,8 +1344,75 @@ class TestV1NumberChecksAndSimilarCases:
         card = main.render_voice_result_card(result)
         description = card["template"]["outputs"][0]["textCard"]["description"]
 
-        assert "비슷한" not in description
+        assert "- 비슷한 사례" in description
+        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        assert items[1]["title"] == "📚 비슷한 사례"
+        assert "비슷한 예시 통화를 찾았어요" in items[1]["description"]
+        assert "결과 판단에는 쓰지 않았어요" in items[1]["description"]
+        assert "가족" not in str(items)
+        assert "family_impersonation" not in str(items)
+        assert "0.987654" not in str(items)
         assert "0.98" not in description
+
+
+class TestLatestVoice115Contract:
+    @pytest.mark.parametrize("status,reason,expected", [
+        ("completed", None, "비교할 사례를 찾지 못했어요"),
+        ("fallback", "kb_empty", "비교할 사례를 찾지 못했어요"),
+        (None, "failed", "사례를 찾다가 문제가 생겼어요"),
+        (None, "timeout", "사례를 찾다가 문제가 생겼어요"),
+        (None, "not_run", "비교할 사례를 찾지 못했어요"),
+    ])
+    def test_missing_and_failed_case_search_are_distinguished(self, status, reason, expected):
+        from ai.case.types import CheckItem
+        from ai.types import CaseSearchResult
+
+        similar = CaseSearchResult(status=status, matches=[]) if status else None
+        result = _voice_result(
+            similar_cases=similar,
+            # The gate marks a completed-but-empty search checked. FE must correct it.
+            checked=[CheckItem.SIMILAR_CASES] if status == "completed" else [],
+            unchecked=[Unchecked(item="similar_cases", reason=reason)] if reason else [],
+        ).model_dump(mode="json")
+        initial = main.render_voice_result_card(result)
+        description = initial["template"]["outputs"][0]["textCard"]["description"]
+        assert f"- 비슷한 사례 ({expected})" in description
+        assert description.count("- 비슷한 사례") == 1
+        carousel = main.render_voice_detail_carousel(result)
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
+        assert all(item["title"] != "📚 비슷한 사례" for item in items)
+        assert f"- 비슷한 사례 ({expected})" in items[1]["description"]
+        assert "{{" not in str(initial) + str(carousel)
+
+    @pytest.mark.parametrize("caution", [False, True])
+    def test_caution_does_not_imply_unknown_speaker(self, caution):
+        result = _voice_result(caution=caution).model_dump(mode="json")
+        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        assert "통화 상대가 한 말만 근거로 썼어요." in items[0]["description"]
+        assert "누가 한 말인지 가리지 못해" not in str(items)
+
+    def test_explicit_future_speaker_marker_changes_only_display(self):
+        # #116's AI schema/propagation is pending. Exercise the documented display
+        # boundary with a dict; do not infer the marker or change the AI model.
+        result = _voice_result(claims=ClaimView(
+            identity=[ClaimViewIdentity(kind=IdentityKind.INSTITUTION, name="검찰", quote="검찰입니다", listed_institution=True)],
+            demands=[ClaimViewDemand(kind=DemandKind.MONEY_TRANSFER, quote="돈을 보내세요")],
+            blockers=["전화가 안 돼요"],
+        )).model_dump(mode="json")
+        result["unchecked"].append({"item": "speaker", "reason": "speaker_unknown"})
+        initial = main.render_voice_result_card(result)
+        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        for label in ("통화에 나온 기관", "통화에 나온 말", "통화에 나온 사정", "통화에 나온 요구"):
+            assert label in str(initial)
+            assert label in items[0]["description"]
+        assert "누가 한 말인지 가리지 못해 통화에 나온 말을 옮겼어요." in items[0]["description"]
+        assert "통화에 나온 기관의 대표번호" in items[-1]["description"]
+        assert result["conclusion"] == "suspected"
+
+    def test_b2d_uses_only_112_and_1394(self):
+        card = main.render_card("b2d-call-acted")["template"]["outputs"][0]["textCard"]
+        assert [b["phoneNumber"] for b in card["buttons"]] == ["112", "1394"]
+        assert "1332" not in str(card)
 
 
 class TestExistingTextAndUrlFlowsAreUnaffected:
