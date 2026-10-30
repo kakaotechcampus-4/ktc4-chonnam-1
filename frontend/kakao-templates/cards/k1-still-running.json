@@ -5,7 +5,7 @@
       {
         "basicCard": {
           "title": "⏳ 아직 확인하고 있어요",
-          "description": "잠시 뒤 '결과 확인'을 다시 눌러 주세요.\n그동안 문자 속 링크는 누르지 마세요.",
+          "description": "잠시 뒤 '결과 확인'을 다시 눌러 주세요.\n그동안 링크·송금·앱 설치는 하지 마세요.",
           "thumbnail": {
             "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/k1-still-running.png",
             "altText": "링크가 담긴 화면을 돋보기로 살피고 진행 막대가 차오르는 동안 노트북으로 확인하는 기니피그",
