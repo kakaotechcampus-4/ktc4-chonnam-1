@@ -600,7 +600,7 @@ async def run_analysis(
 MAX_VOICE_FILE_BYTES = 25 * 1024 * 1024  # 25MB (whisper 한도)
 VOICE_DOWNLOAD_CHUNK_BYTES = 1024 * 1024  # 1MB
 VOICE_DOWNLOAD_TIMEOUT_SECONDS = 15.0
-# callbackUrl 없는 동기 경로(개발용) 예산. 실제 STT(최대 30초)+화자분리(최대 20초)+
+# callbackUrl 없는 동기 경로(개발용) 예산. 실제 STT(최대 30초)+
 # 다운로드(최대 15초)+분석을 콜백 상한 없이 넉넉하게 담는다 — 운영 경로(콜백)는
 # CALLBACK_DEADLINE_SECONDS를 따로 쓴다.
 VOICE_SYNC_TIMEOUT_SECONDS = 90.0
@@ -610,7 +610,7 @@ MAX_VOICE_DURATION_SECONDS: float | None = None
 
 # analyze_call()에 줄 예산(v3 B3, latency-budget.md). 전체 분석 상한
 # (CALLBACK_DEADLINE_SECONDS=45초)에서 카드 렌더링·콜백 전송 여유 5초를 뺀
-# 값에서, 이미 쓴 다운로드·STT·화자분리 시간을 뺀다. `CALLBACK_DEADLINE_SECONDS`
+# 값에서, 이미 쓴 다운로드·STT 시간을 뺀다. `CALLBACK_DEADLINE_SECONDS`
 # 그대로 넘기면 분석이 45초를 다 써서 카드를 만들기 전에 바깥 wait_for가
 # 작업을 취소해 결과가 시간 초과로 바뀐다.
 VOICE_ANALYZE_BUDGET_S = CALLBACK_DEADLINE_SECONDS - 5.0
@@ -670,7 +670,7 @@ async def download_voice_media(url: str) -> tuple[str, int]:
 
 
 async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
-    """음성 메시지 카드 생성: 다운로드 -> STT·화자분리 -> 통화 분석 -> 카드.
+    """음성 메시지 카드 생성: 다운로드 -> STT -> 통화 분석 -> 카드.
 
     입력 오류와 다운로드 실패는 콜백·동기 모두 VE1/VE2/R4로 안내한다.
     STT·분석의 예외는 기존 공용 실패 처리로 넘긴다(job_id가 없는 동기

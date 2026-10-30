@@ -41,13 +41,9 @@ class Calls:
 
 
 def _transcript(case: dict) -> TranscriptResult:
-    segments = [
-        Segment(side=Side.UNKNOWN, speaker=speaker, text=text)
-        for speaker, text in case["transcript"]
-    ]
+    # 화자 표기 없이 받아쓴 글 그대로다 (ADR 0008)
     return TranscriptResult(
-        segments=segments,
-        speaker_split_failed=bool(case["input"].get("speaker_split_failed", False)),
+        segments=[Segment(side=Side.UNKNOWN, text=text) for text in case["transcript"]]
     )
 
 
@@ -130,7 +126,7 @@ def _v1() -> dict:
 
 def test_search_query_is_whole_masked_transcript():
     case = _v1()
-    case["transcript"][0][1] = "여보세요 주민번호 900101-1234567"
+    case["transcript"][0] = "여보세요 주민번호 900101-1234567"
     calls = Calls()
 
     asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, calls)))
@@ -140,29 +136,26 @@ def test_search_query_is_whole_masked_transcript():
     assert "여보세요" in query and "안전계좌" in query and "어떻게 해야 하죠" in query
 
 
-def test_number_check_only_for_other_speaker_max_two():
+def test_number_check_skips_recipient_side_sentences_max_two():
     case = _v1()
-    case["transcript"][2][1] = "제 번호는 010-9999-8888 입니다"  # 내 발화 번호는 대조 안 함
-    case["transcript"][3][1] = (
+    # 받는 사람 쪽 말 꼴(자기 번호, 되묻기)의 번호는 대조하지 않는다
+    case["transcript"][2] = "제 번호는 010-9999-8888 입니다. 02-7777-6666 이요?"
+    case["transcript"][3] = (
         "안전계좌로 옮기셔야 합니다. 02-1234-5678 또는 02-111-2222 또는 1332 번호로 하세요"
     )
     calls = Calls()
 
     result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, calls)))
 
-    assert len(calls.numbers) == 2
-    assert all(n != "01099998888" for n, _ in calls.numbers)
+    assert [n for n, _ in calls.numbers] == ["0212345678", "021112222"]
     assert len(result.number_checks) == 2
 
 
 def test_empty_reading_on_normal_call_is_input_required_without_failures():
     case = {
-        "transcript": [
-            ["A", "여보세요"],
-            ["B", "국민은행입니다. 요청하신 통장 사본 발급이 완료되었습니다"],
-        ],
+        "transcript": ["여보세요", "국민은행입니다. 요청하신 통장 사본 발급이 완료되었습니다"],
         "input": {},
-        "runtime": {"reading": {"other_speaker": "B", "speaker_confidence": "high"}},
+        "runtime": {"reading": {}},
     }
     calls = Calls()
 
@@ -175,12 +168,9 @@ def test_empty_reading_on_normal_call_is_input_required_without_failures():
 
 def _spoken_link_case(reading: dict) -> dict:
     return {
-        "transcript": [
-            ["A", "여보세요"],
-            ["B", "조회를 위해 주소창에 ykics24.kr 입력하세요"],
-        ],
+        "transcript": ["여보세요", "조회를 위해 주소창에 ykics24.kr 입력하세요"],
         "input": {},
-        "runtime": {"reading": {"other_speaker": "B", "speaker_confidence": "high", **reading}},
+        "runtime": {"reading": reading},
     }
 
 
@@ -274,7 +264,7 @@ def test_official_contact_lookup_failure_keeps_result(monkeypatch):
 
 def test_unlisted_org_skips_number_check():
     case = yaml.safe_load((CASES_DIR / "N3.yaml").read_text(encoding="utf-8"))
-    case["transcript"][1][1] += " 문의는 02-1234-5678"
+    case["transcript"][1] += " 문의는 02-1234-5678"
     calls = Calls()
 
     asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, calls)))
@@ -283,9 +273,7 @@ def test_unlisted_org_skips_number_check():
 
 
 def test_transcript_failure_not_analyzable_without_llm():
-    transcript = TranscriptResult(
-        segments=[], speaker_split_failed=True, failure=FailureCode.LLM_ERROR
-    )
+    transcript = TranscriptResult(segments=[], failure=FailureCode.LLM_ERROR)
     calls = Calls()
 
     result = asyncio.run(
@@ -298,7 +286,7 @@ def test_transcript_failure_not_analyzable_without_llm():
 
 
 def test_default_runtime_does_not_need_injection_for_empty():
-    transcript = TranscriptResult(segments=[], speaker_split_failed=False)
+    transcript = TranscriptResult(segments=[])
 
     result = asyncio.run(analyze_call(transcript))
 
@@ -363,7 +351,7 @@ def _be_wrapper(deadline_s: float, margin_s: float, elapsed_s: float, runtime, t
     바깥 wait_for(deadline_s) 가 감싼다. 분석 예산은 deadline_s - margin_s - elapsed_s 다."""
 
     async def job():
-        await asyncio.sleep(elapsed_s)  # 다운로드·STT·화자 분리
+        await asyncio.sleep(elapsed_s)  # 다운로드·STT
         result = await analyze_call(
             transcript, runtime=runtime, time_budget_s=deadline_s - margin_s - elapsed_s
         )
@@ -528,11 +516,11 @@ def test_decide_call_failure_returns_minimal_result(monkeypatch):
     assert result.failures == [FailureCode.MISSING_RESULT]
 
 
-def test_fill_sides_failure_still_returns_result(monkeypatch):
+def test_number_text_failure_still_returns_result(monkeypatch):
     def boom(*a, **k):
-        raise RuntimeError("sides")
+        raise RuntimeError("numbers")
 
-    monkeypatch.setattr(voice, "_fill_sides", boom)
+    monkeypatch.setattr(voice, "find_numbers", boom)
     case = _v1()
 
     result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, Calls())))
@@ -667,3 +655,19 @@ def test_warm_up_fills_index_even_if_gate_model_fails(monkeypatch):
 
     assert voice.warm_up_voice_case_search() == _COMPLETED
     assert called == ["index"]
+
+
+@pytest.mark.parametrize(
+    ("line", "suspected"),
+    [
+        ("경찰입니다. 돈을 보내지 마세요", False),
+        ("경찰입니다. 앱을 깔지 마세요", False),
+        ("경찰입니다. 안내에 따라 안전계좌로 송금해 주세요", True),
+    ],
+)
+def test_lexicon_fallback_respects_which_action_is_negated(line, suspected):
+    # PR #114 리뷰: 어휘표 폴백에서 "보내지 마세요" 가 요구로 남아 설명이 거꾸로 나왔다
+    case = {"transcript": [line]}
+    result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, Calls())))
+
+    assert (result.conclusion is Conclusion.SUSPECTED) is suspected

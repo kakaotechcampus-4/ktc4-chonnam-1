@@ -1,7 +1,7 @@
 """통화 대본에서 상대의 주장·요구를 읽는다 (v3 §5, 통화 모드만).
 
-LLM 은 읽기만 한다. 위험·안전 판단은 없고, 인용이 실제 원문에 있는지는
-verify 가 확인한다. 실패하면 어휘표로 같은 모양의 결과를 돌려준다.
+LLM 은 읽기만 한다. 위험·안전 판단은 없고, 누가 말했는지도 고르지 않는다. 인용이 실제 원문에
+있는지, 받는 사람 쪽 말 꼴이 아닌지는 verify 가 확인한다. 실패하면 어휘표로 같은 모양의 결과를 돌려준다.
 """
 
 import asyncio
@@ -29,12 +29,12 @@ def _resolve_model(model: str | None) -> str:
 
 
 def _render_segments(source: ReadingSource) -> str:
-    """세그먼트를 한 줄씩 data 태그로 감싼다. 원문 안의 닫는 태그는 무력화한다."""
+    """세그먼트(문장)를 한 줄씩 data 태그로 감싼다. 화자 표기는 없다(ADR 0008).
+    원문 안의 닫는 태그는 무력화한다."""
     lines = []
     for seg in source.segments:
-        speaker = (seg.speaker or "알 수 없음").replace('"', "'")
         text = " ".join(seg.text.split()).replace("</data", "< /data")
-        lines.append(f'<data speaker="{speaker}">{text}</data>')
+        lines.append(f"<data>{text}</data>")
     return "\n".join(lines)
 
 

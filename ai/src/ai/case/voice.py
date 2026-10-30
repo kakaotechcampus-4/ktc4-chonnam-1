@@ -12,6 +12,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from ai.case import forms
 from ai.case.attach_gate import attach_score, load_model
 from ai.case.gate import decide_call
 from ai.case.lexicon import identity_kinds, read_with_lexicon
@@ -25,7 +26,6 @@ from ai.case.types import (
     OfficialContact,
     ReadingSource,
     Scenario,
-    Side,
     TranscriptResult,
     Unchecked,
     UncheckedItem,
@@ -56,17 +56,18 @@ IDENTITY_PREFERRED_TYPES: dict[IdentityKind, frozenset[str]] = {
 
 
 def search_by_identity(
-    transcript: str, *, top_k: int = 3, min_similarity: float | None = None
+    transcript: str, *, top_k: int = 3, min_similarity: float | None = None, use_embedding: bool = True
 ) -> CaseSearchResult:
     """대본의 신원 어휘로 사례 유형을 앞세워 검색한다. 어휘표만 쓰므로 읽기와 나란히 돌릴 수 있다.
 
-    top_k·min_similarity 는 평가가 기준값을 훑을 때만 바꾼다. 운영은 기본값이다.
+    top_k·min_similarity·use_embedding 은 평가가 기준값을 훑거나 TF-IDF 점수만 받을 때만 바꾼다. 운영은 기본값이다.
     """
     preferred = frozenset().union(
         *(IDENTITY_PREFERRED_TYPES.get(kind, frozenset()) for kind in identity_kinds(transcript))
     )
     return search_voice_cases(
-        transcript, top_k=top_k, min_similarity=min_similarity, preferred_types=preferred
+        transcript, top_k=top_k, min_similarity=min_similarity, preferred_types=preferred,
+        use_embedding=use_embedding,
     )
 
 
@@ -161,10 +162,10 @@ async def _read(
 def _check_numbers(
     runtime: VoiceRuntime, source: ReadingSource, verify: VerifyResult
 ) -> tuple[list[NumberCheck], bool]:
-    """받아들인 기관 주장이 KB 에 있고 상대 발화에 번호가 있으면 번호마다 대조한다."""
-    if verify.speaker_split_failed or verify.other_speaker is None:
-        # 누구의 말인지 몰라 상대가 말한 번호라고 할 수 없다
-        return [], False
+    """받아들인 기관 주장이 KB 에 있고 대본에 번호가 있으면 번호마다 대조한다.
+
+    화자를 나누지 않으므로(ADR 0008) 받는 사람 쪽 말 꼴의 문장("제 번호는 …", "02-… 이요?")은 뺀다.
+    """
     org = None
     for ident in verify.claims.identity:
         if ident.listed_institution:
@@ -174,7 +175,10 @@ def _check_numbers(
     if org is None:
         return [], False
     other_text = " ".join(
-        seg.text for seg in source.segments if seg.side == Side.OTHER
+        s
+        for seg in source.segments
+        for s in forms.sentences(seg.text)
+        if not forms.is_recipient_side(s)
     )
     checks: list[NumberCheck] = []
     failed = False
@@ -190,8 +194,7 @@ def _check_numbers(
 def _official_contact(verify: VerifyResult) -> OfficialContact | None:
     """받아들인 기관 주장 중 대표번호 KB 에 있는 첫 기관. V1 확인 안내에 쓴다.
 
-    번호는 KB 에서만 온다. 누가 말했는지와 상관없이 공식 번호로 직접 확인하라는 안내라서
-    화자 분리 실패 때도 붙인다.
+    번호는 KB 에서만 온다. 누가 말했는지와 상관없이 공식 번호로 직접 확인하라는 안내다.
     """
     for ident in verify.claims.identity:
         if ident.listed_institution:
@@ -201,23 +204,13 @@ def _official_contact(verify: VerifyResult) -> OfficialContact | None:
     return None
 
 
-def _fill_sides(source: ReadingSource, verify: VerifyResult) -> None:
-    """읽기 뒤에 세그먼트의 side 를 채운다. 화자를 모르면 unknown 으로 둔다."""
-    other = verify.other_speaker
-    for seg in source.segments:
-        if verify.speaker_split_failed or other is None or seg.speaker is None:
-            seg.side = Side.UNKNOWN
-        else:
-            seg.side = Side.OTHER if seg.speaker == other else Side.SELF
-
-
 async def analyze_call(
     transcript: TranscriptResult,
     *,
     runtime: VoiceRuntime | None = None,
     time_budget_s: float = DEFAULT_TIME_BUDGET_S,
 ) -> VoiceCaseResult:
-    """STT·화자 분리 결과를 분석한다. 질문으로 멈추지 않고 늘 결과를 낸다.
+    """STT 결과를 분석한다. 질문으로 멈추지 않고 늘 결과를 낸다.
 
     예기치 못한 오류가 나도 예외 대신 분석 불가 결과를 돌려준다(CancelledError 만 올린다).
     """
@@ -279,11 +272,7 @@ async def _analyze(
 
     try:
         masked = mask_transcript(transcript)
-        source = ReadingSource(
-            kind=InputKind.AUDIO,
-            segments=masked.segments,
-            speaker_split_failed=transcript.speaker_split_failed,
-        )
+        source = ReadingSource(kind=InputKind.AUDIO, segments=masked.segments)
     except Exception as exc:
         # 가리지 못한 대본은 읽기·검색에 넘기지 않는다
         LOGGER.warning("transcript masking failed: %s", type(exc).__name__)
@@ -332,7 +321,6 @@ async def _analyze(
     number_failed = False
     if not number_timeout:
         try:
-            _fill_sides(source, verify)
             number_checks, number_failed = _check_numbers(runtime, source, verify)
         except Exception as exc:
             LOGGER.warning("number step failed: %s", type(exc).__name__)

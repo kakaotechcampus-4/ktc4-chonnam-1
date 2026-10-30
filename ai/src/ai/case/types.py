@@ -169,34 +169,29 @@ class Unchecked(StrictModel):
     reason: UncheckedReason
 
 
-# ── 입력: STT·화자 분리 결과 ─────────────────────────────────
+# ── 입력: STT 결과 ───────────────────────────────────────────
 
 
 class Segment(StrictModel):
+    # 통화는 화자를 나누지 않아 늘 unknown 이다 (ADR 0008). 누구 말인지는 verify 가 문장 꼴로 가늠한다
     side: Side
-    # "화자1", "화자2", "기타" 같은 문자열 (스펙 D1)
-    speaker: str | None = None
     text: str
     start: float | None = None
     end: float | None = None
 
 
 class TranscriptResult(StrictModel):
-    """STT·화자 분리의 반환 형태. side 는 unknown 으로 두고 읽기 뒤에 채운다(v3 §4)."""
+    """STT 의 반환 형태. 세그먼트는 문장 하나씩이다(스펙 D1, ADR 0008)."""
 
     segments: list[Segment]
-    speaker_split_failed: bool
     failure: FailureCode | None = None
     stt_model: str | None = None
-    diarize_model: str | None = None
     audio_seconds: float | None = None
 
 
 class ReadingSource(StrictModel):
     kind: InputKind
     segments: list[Segment]
-    other_speaker: str | None = None
-    speaker_split_failed: bool = False
 
 
 # ── 주장·요구 읽기 (LLM 출력) ────────────────────────────────
@@ -227,8 +222,6 @@ class ClaimReading(StrictModel):
     pretexts: list[PretextClaim] = Field(default_factory=list, max_length=3)
     demands: list[DemandClaim] = Field(default_factory=list, max_length=6)
     blockers: list[BlockerClaim] = Field(default_factory=list, max_length=3)
-    other_speaker: str | None = None
-    speaker_confidence: Literal["high", "medium", "low"] = "low"
     spoken_hosts: list[str] = Field(default_factory=list, max_length=3)
 
 
@@ -253,6 +246,7 @@ class Evidence(StrictModel):
 class RejectedClaim(StrictModel):
     kind: Literal["identity", "pretext", "demand", "blocker", "spoken_host"]
     quote: str
+    # self_side: 받는 사람이 되묻거나 옮긴 말, 자기 일을 말한 문장 (forms.is_recipient_side)
     reason: Literal[
         "not_in_source",
         "too_short",

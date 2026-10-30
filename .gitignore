@@ -84,3 +84,7 @@ target/
 # 로컬에서만 쓴다. D:\voice 데이터셋에서 ai/eval/voice_rag_build.py 로 다시 만든다.
 ai/src/ai/kb/voice_cases/licensed/
 ai/eval/datasets/voice_rag_licensed.jsonl
+
+# ── 재배포 금지 메신저 대화 (AI Hub 71343 SNS 데이터 고도화) ──────────
+# D:\text\raw\aihub\71343\VL.zip 에서 ai/eval/messenger_normal_build.py 로 다시 만든다.
+ai/eval/datasets/rag_testset_licensed.jsonl

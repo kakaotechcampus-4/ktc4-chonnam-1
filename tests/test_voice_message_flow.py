@@ -107,9 +107,9 @@ def _card_body(card: dict) -> dict:
     return output.get("textCard") or output["basicCard"]
 
 
-def _transcript(text: str = "안녕하세요", failure=None, speaker_split_failed: bool = False) -> TranscriptResult:
-    segments = [] if failure is not None else [Segment(side=Side.UNKNOWN, speaker="화자1", text=text)]
-    return TranscriptResult(segments=segments, speaker_split_failed=speaker_split_failed, failure=failure)
+def _transcript(text: str = "안녕하세요", failure=None) -> TranscriptResult:
+    segments = [] if failure is not None else [Segment(side=Side.UNKNOWN, text=text)]
+    return TranscriptResult(segments=segments, failure=failure)
 
 
 def _voice_result(
@@ -596,32 +596,6 @@ class TestTranscribeAndAnalyzeWiring:
         assert captured["transcript"] is failed_transcript
         text_card = _card_body(card)
         assert text_card["title"] == "🎙️ 녹음 내용을 알아듣지 못했어요"
-
-    async def test_speaker_split_failed_transcript_is_passed_through(self, monkeypatch):
-        """화자 분리 실패는 대본을 살려서 넘긴다(speaker_split_failed=True) —
-        분석 쪽이 그 정보로 caution·unchecked를 정한다."""
-
-        split_failed_transcript = _transcript("텍스트는 있음", speaker_split_failed=True)
-        captured = {}
-
-        async def fake_download(url):
-            return _real_temp_voice_file(), 10
-
-        async def fake_transcribe(audio, filename):
-            return split_failed_transcript
-
-        async def fake_analyze(transcript_result, *, time_budget_s):
-            captured["speaker_split_failed"] = transcript_result.speaker_split_failed
-            return _voice_result(conclusion=Conclusion.INCONCLUSIVE, caution=True)
-
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-        monkeypatch.setattr(main, "analyze_call", fake_analyze)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
-
-        await main.run_voice_analysis(SIGNED_CDN_URL)
-
-        assert captured["speaker_split_failed"] is True
 
     async def test_cancelled_error_during_transcribe_is_not_swallowed(self, monkeypatch):
         async def fake_download(url):
@@ -1458,3 +1432,49 @@ class TestExistingTextAndUrlFlowsAreUnaffected:
 
         assert response.status_code == 200
         assert response.json() == main.render_card("r6-input-required")
+
+
+class TestVoiceDownloadCancellation:
+    async def test_cancel_mid_chunk_removes_partial_temp_file(self, monkeypatch):
+        """바깥 wait_for 타임아웃(CancelledError)이 청크를 받는 도중 들어와도 임시 파일을 지운다."""
+
+        import asyncio
+
+        import httpx
+
+        second_chunk_started = asyncio.Event()
+
+        async def slow_body():
+            yield b"x" * 10
+            second_chunk_started.set()
+            await asyncio.sleep(60)
+            yield b"y"
+
+        def handler(request):
+            return httpx.Response(200, content=slow_body())
+
+        created = []
+        real_mkstemp = main.tempfile.mkstemp
+
+        def tracking_mkstemp(*args, **kwargs):
+            fd, path = real_mkstemp(*args, **kwargs)
+            created.append(path)
+            return fd, path
+
+        async def public_ip(host):
+            return None
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        monkeypatch.setattr(main, "get_http_client", lambda: client)
+        monkeypatch.setattr(main, "assert_resolves_to_public_ip", public_ip)
+        monkeypatch.setattr(main.tempfile, "mkstemp", tracking_mkstemp)
+
+        task = asyncio.create_task(main.download_voice_media(SIGNED_CDN_URL))
+        await asyncio.wait_for(second_chunk_started.wait(), timeout=5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await client.aclose()
+
+        assert len(created) == 1
+        assert not os.path.exists(created[0])
