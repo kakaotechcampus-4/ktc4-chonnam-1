@@ -21,15 +21,28 @@
 
 | 값 | 쓰는 카드 | 채우는 주체 |
 | --- | --- | --- |
-| `block_b1` `block_b1a` `block_b2` `block_b2a` `block_b2b` `block_w2` `block_w2a` `block_r1a` `block_detail` | 버튼 `blockId` | **채움** (2026-10-01). 아래 "블록 ID" 표 |
+| `block_b1` `block_b1a` `block_b2` `block_b2a` `block_b2b` `block_w2` `block_w2a` `block_detail` | 버튼 `blockId` | **채움** (2026-10-01). 아래 "블록 ID" 표 |
 | `block_consent` | W3 `동의하고 확인하기` | 동의 기록 후 보류한 문자로 분석을 잇는 스킬 블록 (BE 미구현) |
 | `block_detail` | R1·R9 `자세히 보기` | 2026-10-14 되살림(이슈 #69). BE가 버튼의 `extra.job_id`를 채우고, 이 블록의 스킬이 `/kakao/skill`을 부르면 저장한 결과로 캐러셀을 보낸다. 관리자센터 스킬 연결은 확인 필요 |
 | `block_retry` | (지금 안 씀) R4 `다시 시도` | 재검사 미구현이라 R4에서 버튼을 뺐다. 구현하면 되살린다 |
-| `kisa_chatbot_url` `kisa_chat_url` | B2a(`kisa_chatbot_url`만)·B2b·R1a 상담 버튼 | KISA 인계 방법 확인 후 |
+| (KISA 상담 주소) | B2a·B2b·C3 `KISA 상담하기` | **채움** (2026-10-27). 빈칸이던 `kisa_chatbot_url`·`kisa_chat_url`을 `https://www.kisa.or.kr/118`로 바꿨다. 관리자센터 카드에 넣은 값과 같다. B2b의 `챗봇 상담`·`채팅 상담`은 같은 페이지를 열어 `KISA 상담하기` 하나로 합쳤다. 새 A2·K6 카드도 같은 주소를 쓴다 |
 | `org_name` `official_url` | R2 · R8(`org_name`만) | `org_name`은 `message.brand`. `official_url`은 결과에 없다. 브랜드별 공식 홈페이지 주소를 BE 목록(`services/official_domains.py`, 지금은 도메인만 있음)에 더해야 한다. 문자 속 URL은 쓰지 않는다 |
 | `signal_title` `observed` `reason` `unverified` | 자세히 보기 캐러셀 | 결과의 `details.signals`(검증된 근거)만. 채우는 규칙과 신호별 문구는 `docs/designs/chatbot-copy.md` 4절 "빈칸 채우는 규칙". 128자 안 |
-| `org_label` `checked` `unchecked` `message_reason` | R9 | BE가 분석 결과로 채운다. 규칙은 `docs/designs/chatbot-copy.md` 3절 R9 "빈칸 채우는 규칙". `message_reason`은 `message.details.reason.text`(이슈 #68). 채우기 전에 배포하면 빈칸이 글자 그대로 보인다 |
+| `headline` `action_guide` `message_claims` `checked` `unchecked` | R9 | BE가 분석 결과로 채운다. 규칙은 `docs/designs/chatbot-copy.md` 3절 R9 "빈칸 채우는 규칙". 문자에서 의심 정황(민감한 요구 행동)을 확인하면 `headline`·`action_guide`가 주의 갈래로 바뀐다(PR #86 멘토 리뷰). `message_claims`는 칸 제목까지 포함하고, 줄이 없으면 빈 문자열이다. 이전 `org_label`은 `action_guide` 안으로, `message_reason`은 `message_claims`로 합쳤다. 채우기 전에 배포하면 빈칸이 글자 그대로 보인다. **지금 `r9-uncertain.json`은 옛 빈칸(`org_label`·`checked`·`unchecked`·`message_reason`) 버전이다**(2026-10-27 `73d3fc6`). BE가 렌더러를 구현할 때 `git revert 73d3fc6`으로 새 빈칸 버전을 되살린다 |
 | `guidance_text` | 자세히 보기 공식 확인 방법(C4) | BE가 `find_guidance()` 결과로 채운다(이슈 #69). 규칙은 `docs/designs/chatbot-copy.md` 4절 C4 |
+| `block_v0` `block_v0a_iphone` `block_v0a_galaxy` `block_b2c` `block_b2d` | 보이스피싱 카드 버튼·B2 항목 | **채움** (2026-10-29). 아래 "블록 ID" 표 |
+| `block_answer` `items` | Q1 (`q1-already-acted.json`) | `block_answer`는 **채움**(2026-10-29, 아래 "블록 ID" 표). `items`는 문자열 통째 빈칸이라 렌더러가 리스트로 바꾼다. BE가 `option_ids` 순서로 `{title, action: "block", blockId: block_answer, extra: {case_id, question_id: "already_acted", option_id}}`를 만든다. 라벨은 `chatbot-copy.md` 3절 Q1 표 |
+| `response_lines` `contact_line` `buttons` | K6 (`k6-response.json`, 문자·녹음 공용) | `buttons`는 통째 빈칸(버튼 객체 목록, 없으면 빈 목록). 버튼은 `chatbot-copy.md` D17(녹음은 3절 "녹음 결과 버튼 (D17)" 표). `contact_line`은 녹음에서 `1394 상담` 버튼을 달 때만 넣고, 없으면 빈 문자열이고 남는 빈 줄은 BE가 정리한다 |
+| `headline` `stop_line` `verify_line` `call_claims` `checked` `unchecked` | V1 (`v1-voice-result.json`) | `verify_line`은 `official_contact`, `call_claims`는 `claims`. `number_checks`는 `checked`·`unchecked` 줄로 넣는다. 규칙은 `chatbot-copy.md` 3절 V1·"확인한 것·확인하지 못한 것" |
+| `claim_lines` `unchecked` `verify_line` | 녹음 캐러셀 (`c-detail-carousel-voice.json`) | V1과 같은 값. `claim_lines`는 `call_claims`에서 칸 제목을 뺀 줄들 |
+| `claim_note` | 녹음 캐러셀 1번째 장 | 평소 `통화 상대가 한 말만 근거로 썼어요.`, 말한 사람을 가리지 못했으면 다른 문장. 규칙은 `chatbot-copy.md` 4절 "녹음 캐러셀의 비슷한 사례" (2026-10-30) |
+| `similar_type` `similar_line` | 녹음 캐러셀 2번째 장 (비슷한 사례) | 가장 닮은 사례의 유형으로 고른다. 사례가 없으면 이 장을 통째로 뺀다. 유형별 문구는 `chatbot-copy.md` 4절 같은 절 (2026-10-30) |
+| `headline` `stop_line` `verify_line` `basis_note` `message_claims` `checked` `unchecked` | R6b (`r6b-warning.json`, `r6b-uncertain.json`) | 결론이 `suspected`면 `r6b-warning`, `inconclusive`면 `r6b-uncertain`. 두 카드는 같은 모양이고 `headline`만 다르다. `basis_note`가 없으면 빈 문자열이고 남는 빈 줄은 BE가 정리한다. `message_claims`는 칸 제목까지 포함하고, 줄이 없으면 빈 문자열이다(R9와 같음). 규칙은 `chatbot-copy.md` 3절 R6b (2026-10-30) |
+| `items` | Q2 (`q2-called-known-number.json`) | Q1과 같은 방식이다. BE가 `{title, action: "block", blockId: block_answer, extra: {case_id, question_id: "called_known_number", option_id}}`를 만든다. 답변 블록은 Q1과 같이 쓴다. 라벨은 `chatbot-copy.md` 3절 Q2 표 (2026-10-30) |
+| `stop_line` | A2 녹음 (`a2-not-yet-voice.json`) | `hang_up`을 뺀 멈출 행동 문장. 없으면 빈 문자열 |
+| `stop_line` | A2 문자 (`a2-not-yet.json`) | `잘하셨어요. 지금처럼 ` 뒤에 붙는 멈출 행동 문장(`paste_text` 뺌). 규칙은 `chatbot-copy.md` 3절 A2 (2026-10-29). A3(`a3-clicked-link.json`)은 빈칸 없음 |
+| `reason_line` | VE2 | 크기·형식·길이 중 걸린 이유 한 줄 |
+| `external_service` | W3v | STT 서비스가 정해진 뒤. 확정 전 배포 금지. 동의 버튼 블록(`block_voice_consent`)은 2026-10-29 채움 |
 | `sent_items` `external_service` | W3 | 개인정보 정책 확인 후. 확정 전 배포 금지 (W2a는 2026-10-14부터 빈칸 없는 시험 운영 문구) |
 
 ### 블록 ID
@@ -47,8 +60,15 @@
 | `block_b2b` | 신고 > 링크를 눌렀어요 | `6ab78d883dd52f826f111e49` |
 | `block_w2` | 개인정보 처리 안내 | `6aad5d0387c6230d77feeda2` |
 | `block_w2a` | 개인정보 처리 상세 안내 | `6abe5d6a5402049514861b78` |
-| `block_r1a` | 신고 행동 안내 ("지금 이렇게 하세요") | `6abba220c841065f2fe49628` |
+| (`block_r1a`) | 신고 행동 안내 ("지금 이렇게 하세요") | `6abba220c841065f2fe49628` — 2026-10-27 카드에서 뺐다(`chatbot-flow.md` 11절). 대화방에 남은 옛 R1 카드가 아직 부르므로 관리자센터 블록은 시험 운영이 끝난 뒤 지운다 |
 | `block_detail` | 자세히 보기 (스킬 블록) | `6aad3abfe745d3358bd90c8d` |
+| `block_v0` | 보이스피싱 확인 (V0) | `6ae3302425d4bc48e2bb8a61` (2026-10-29) |
+| `block_v0a_iphone` | 아이폰에서 녹음 보내는 법 (V0a) | `6ae3305d80857534c13f81ea` (2026-10-29) |
+| `block_v0a_galaxy` | 갤럭시에서 녹음 보내는 법 (V0a) | `6ae330850100875ffb658da9` (2026-10-29) |
+| `block_b2c` | 신고 > 전화만 받았어요 | `6ae330ff25d4bc48e2bb8c57` (2026-10-29) |
+| `block_b2d` | 신고 > 통화 중 돈·정보를 줬어요 | `6ae331f080857534c13f8390` (2026-10-29) |
+| `block_voice_consent` | 녹음 전송 동의 (스킬 블록) | `6ae335a8b074221a79bea79f` (2026-10-29) |
+| `block_answer` | Q1 답변 (스킬 블록) | `6ae336cd25d4bc48e2bb8f2a` (2026-10-29, 다른 블록과 시나리오가 다름) |
 
 - 이미지가 없는 카드는 썸네일 없는 `textCard`로 둔다(`chatbot-flow.md` 9절 (3)).
   이미지가 준비되면 해당 카드를 `basicCard` + `thumbnail`로 바꾼다.
@@ -56,7 +76,7 @@
   `raw.githubusercontent.com` 주소라 **develop에 머지된 뒤에야 보인다.**
   지금 적용한 카드: W1, B1a, B2, B2a, B2b, R1~R4, 자세히 보기 캐러셀(C1~C3).
   이미지 파일 이름은 카드 파일 이름을 따른다(R1만 `r1-danger.png`, 캐러셀은 `c1-signal` `c2-scope` `c3-action`).
-  B1은 W1 이미지(`w1-welcome.png`)를, R1a는 B2 이미지(`b2-report.png`)를 같이 쓴다.
+  B1은 W1 이미지(`w1-welcome.png`)를 같이 쓴다.
 - R5는 `template`이 없어 이미지를 붙일 수 없으므로 그대로 둔다. R5용으로 받은 "분석 중"
   이미지는 K1(`k1-still-running.png`)에 쓴다.
 - R5(`r5-analyzing.json`)는 콜백 대기 응답이라 `template` 없이 `useCallback`과 `data.text`만 있다.

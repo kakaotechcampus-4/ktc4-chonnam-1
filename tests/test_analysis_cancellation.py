@@ -13,7 +13,9 @@ from scanner.models import CollectResult
 
 @pytest.mark.parametrize("link", ["https://example.test/", "https://bit.ly/test"])
 @pytest.mark.parametrize("finish_collection", [False, True])
-async def test_cancel_reaps_message_and_only_collection(monkeypatch, link, finish_collection):
+async def test_cancel_reaps_message_and_only_collection(
+    monkeypatch, stub_read_message, link, finish_collection,
+):
     started = {name: asyncio.Event() for name in ("message", "collector")}
     stopped = {name: asyncio.Event() for name in started}
     children = []
@@ -28,13 +30,14 @@ async def test_cancel_reaps_message_and_only_collection(monkeypatch, link, finis
         finally:
             stopped[name].set()
 
-    monkeypatch.setattr(main, "analyze_message_part", lambda text: hold("message"))
+    stub_read_message([link], "취소")
+    monkeypatch.setattr(main, "analyze_message_part", lambda text, **_: hold("message"))
     monkeypatch.setattr(main, "collect_url_isolated", lambda url: hold("collector"))
     monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
     monkeypatch.setattr(main, "RUNNING_USERS", {"cancel-user"})
     job_id = main.create_analysis_job("cancel-user")
     parent = asyncio.create_task(main.run_analysis_and_callback(
-        [link], "취소", "https://bot-api.kakao.com/callback", "cancel-user", job_id,
+        f"취소 {link}", "https://bot-api.kakao.com/callback", "cancel-user", job_id,
     ))
     try:
         await asyncio.wait_for(asyncio.gather(*(event.wait() for event in started.values())), 1)
@@ -50,14 +53,14 @@ async def test_cancel_reaps_message_and_only_collection(monkeypatch, link, finis
         await asyncio.gather(parent, return_exceptions=True)
 
 
-async def test_shortener_collection_and_message_run_concurrently_once(monkeypatch):
+async def test_shortener_collection_and_message_run_concurrently_once(monkeypatch, stub_read_message):
     from ai.pipeline.results import build_message_part
 
     message_started = asyncio.Event()
     collector_started = asyncio.Event()
     calls = []
 
-    async def message(text):
+    async def message(text, **_):
         message_started.set()
         await asyncio.wait_for(collector_started.wait(), 1)
         return build_message_part("", ExtractedMessage(), CaseSearchResult(), None)
@@ -73,15 +76,16 @@ async def test_shortener_collection_and_message_run_concurrently_once(monkeypatc
     monkeypatch.setattr(main, "collect_url_isolated", collector)
     monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
     job_id = main.create_analysis_job("u")
-    await asyncio.wait_for(main.run_analysis(["https://bit.ly/test"], "", job_id), 2)
+    stub_read_message(["https://bit.ly/test"])
+    await asyncio.wait_for(main.run_analysis("https://bit.ly/test", job_id), 2)
     payload = main.ANALYSIS_JOBS[job_id]["final_payload"]
     assert calls == ["https://bit.ly/test"]
     assert payload["url"]["domain"] == "attacker.test"
     assert payload["env"]["answer"] == "failed"
 
 
-async def test_message_exception_still_finalizes_collection(monkeypatch):
-    async def message(text):
+async def test_message_exception_still_finalizes_collection(monkeypatch, stub_read_message):
+    async def message(text, **_):
         raise RuntimeError("synthetic message failure")
 
     async def collector(link):
@@ -91,14 +95,17 @@ async def test_message_exception_still_finalizes_collection(monkeypatch):
     monkeypatch.setattr(main, "collect_url_isolated", collector)
     monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
     job_id = main.create_analysis_job("u")
-    await main.run_analysis(["https://example.test/"], "m", job_id)
+    stub_read_message(["https://example.test/"], "m")
+    await main.run_analysis("m https://example.test/", job_id)
     payload = main.ANALYSIS_JOBS[job_id]["final_payload"]
     assert payload["message"]["answer"] == "not_run"
     assert payload["message"]["details"]["reason"]["failures"] == ["missing_result"]
     assert payload["env"]["answer"] == "failed"
 
 
-async def test_callback_deadline_cancels_collection_and_preserves_timeout_result(monkeypatch):
+async def test_callback_deadline_cancels_collection_and_preserves_timeout_result(
+    monkeypatch, stub_read_message,
+):
     stopped = set()
     delivered = []
 
@@ -112,7 +119,8 @@ async def test_callback_deadline_cancels_collection_and_preserves_timeout_result
         delivered.append(json.loads(request.content))
         return httpx.Response(200, json={"status": "SUCCESS"})
 
-    monkeypatch.setattr(main, "analyze_message_part", lambda text: hold("message"))
+    stub_read_message(["https://bit.ly/test"], "m")
+    monkeypatch.setattr(main, "analyze_message_part", lambda text, **_: hold("message"))
     monkeypatch.setattr(main, "collect_url_isolated", lambda url: hold("collector"))
     monkeypatch.setattr(main, "CALLBACK_DEADLINE_SECONDS", 0.1)
     monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
@@ -122,7 +130,7 @@ async def test_callback_deadline_cancels_collection_and_preserves_timeout_result
     async with httpx.AsyncClient(transport=httpx.MockTransport(callback)) as client:
         monkeypatch.setattr(main, "get_http_client", lambda: client)
         await asyncio.wait_for(main.run_analysis_and_callback(
-            ["https://bit.ly/test"], "m", "https://bot-api.kakao.com/cb", "timeout-user", job_id,
+            "m https://bit.ly/test", "https://bot-api.kakao.com/cb", "timeout-user", job_id,
         ), 2)
     job = main.ANALYSIS_JOBS[job_id]
     assert stopped == {"message", "collector"}

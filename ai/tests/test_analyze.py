@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from openai import APIResponseValidationError, APITimeoutError, LengthFinishReasonError
+from openai import APIResponseValidationError, APIStatusError, APITimeoutError, LengthFinishReasonError
 from pydantic import ValidationError
 
 import ai.llm.analyze as analyze_module
@@ -29,6 +29,7 @@ EXPECTED_ANALYSIS_KEYS = {
     "claimed_purpose",
     "requested_actions",
     "persuasion_signals",
+    "urls",
 }
 
 
@@ -146,6 +147,25 @@ async def test_uncited_fields_are_removed_but_valid_fields_survive():
         PersuasionCode.AUTHORITY
     ]
     assert_fixed_analysis_keys(result)
+
+
+@pytest.mark.asyncio
+async def test_urls_must_be_written_in_message():
+    text = "택배 확인: bit.ly/abc 또는 cjlogistlcs.com"
+    parsed = ExtractedMessage(urls=["bit.ly/abc", "cjlogistics.com", "bit.ly/abc", " "])
+    client, _ = fake_client(parsed=parsed)
+
+    result = await analyze_message(text, client=client, model="test-model")
+
+    # 글자를 고친 주소는 원문에 없어 버리고, 같은 구간은 한 번만 남긴다
+    assert result.urls == ["bit.ly/abc"]
+
+
+def test_prompt_forbids_correcting_links():
+    prompt = analyze_module.PROMPT_PATH.read_text(encoding="utf-8")
+
+    assert "`urls`" in prompt
+    assert "keep `cjlogistlcs.com` as written" in prompt
 
 
 @pytest.mark.asyncio
@@ -326,6 +346,42 @@ async def test_extraction_failure_preserves_cause(error, expected):
     assert result.analysis_status is AnalysisStatus.FALLBACK
     assert result.failure is expected
     assert_fixed_analysis_keys(result)
+
+
+@pytest.mark.asyncio
+async def test_api_status_error_logs_status_code_and_keeps_existing_fallback(caplog):
+    """이슈: Render 로그에 'APIStatusError'만 찍히고 상태 코드가 없어 원인을
+    알 수 없었다. 예외 클래스 이름과 상태 코드만 로그에 남으면서, 기존
+    fallback 동작(FailureCode.LLM_ERROR)은 그대로인지 확인한다.
+
+    exc.code/exc.type/exc.request_id는 민감정보 노출 가능성을 더 줄이기
+    위해 의도적으로 로그에서 뺐다 — 리더 리뷰 반영.
+    """
+
+    error = APIStatusError(
+        "insufficient quota",
+        response=httpx.Response(
+            402, request=httpx.Request("POST", "https://example.invalid"),
+        ),
+        body={"code": "insufficient_quota", "type": "billing_error"},
+    )
+    client, _ = fake_client(side_effect=error)
+
+    with caplog.at_level("WARNING", logger="ai.llm.analyze"):
+        result = await analyze_message("Confirm now.", client=client, model="test-model")
+
+    assert result.analysis_status is AnalysisStatus.FALLBACK
+    assert result.failure is FailureCode.LLM_ERROR
+    assert_fixed_analysis_keys(result)
+
+    [record] = caplog.records
+    assert "APIStatusError" in record.message
+    assert "status=402" in record.message
+    # 민감정보·부가 정보는 절대 로그에 없어야 한다.
+    assert "Confirm now." not in record.message
+    assert "insufficient quota" not in record.message  # exc.message(자유 텍스트)
+    assert "insufficient_quota" not in record.message  # exc.code(제외 대상)
+    assert "billing_error" not in record.message  # exc.type(제외 대상)
 
 
 @pytest.mark.asyncio

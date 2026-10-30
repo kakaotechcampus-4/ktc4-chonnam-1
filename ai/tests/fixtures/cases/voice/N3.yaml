@@ -1,0 +1,16 @@
+id: N3
+scenario: voice_phishing
+input: {kind: audio}
+transcript:
+  - "여보세요"
+  - "국민은행 고객센터입니다. 이번 달 카드 대금이 미납되어 오늘까지 이체 부탁드립니다"
+runtime:
+  reading:
+    identity: [{kind: institution, name: 국민은행, quote: "국민은행 고객센터입니다"}]
+    demands: [{kind: money_transfer, quote: "오늘까지 이체 부탁드립니다"}]
+expect:
+  conclusion: inconclusive
+  caution: true
+  floors: []
+  stop_actions: [dont_send_money, hang_up]
+  number_checks: []

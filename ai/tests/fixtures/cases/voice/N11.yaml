@@ -1,0 +1,24 @@
+id: N11
+scenario: voice_phishing
+# 받는 사람이 되묻고 옮긴 말에만 기관·요구가 있다. 읽기가 그 문장을 잘못 골라도 하한을 세우지 않는다 (ADR 0008)
+input: {kind: audio}
+transcript:
+  - "여보세요"
+  - "고객님 명의 계좌가 범죄에 연루돼서 확인차 연락드렸습니다"
+  - "검찰이라면서 송금하라고요?"
+  - "제가 왜 돈을 옮겨야 돼요?"
+  - "확인은 02-1234-5678로 하세요"
+runtime:
+  reading:
+    identity: [{kind: institution, name: 검찰, quote: "검찰이라면서 송금하라고요?"}]
+    demands:
+      - {kind: money_transfer, quote: "검찰이라면서 송금하라고요?"}
+      - {kind: money_transfer, quote: "제가 왜 돈을 옮겨야 돼요?"}
+      - {kind: call_number, quote: "확인은 02-1234-5678로 하세요"}
+expect:
+  conclusion: inconclusive
+  caution: true
+  floors: []
+  stop_actions: [dont_call_number_in_message, hang_up]
+  rejected: [self_side, self_side, self_side]
+  number_checks: []

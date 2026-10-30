@@ -1,0 +1,724 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kakaotechcampus-4/ktc4-chonnam-1/blob/develop/contracts/schemas/voice-case-result.schema.json",
+  "title": "통화 녹음 분석 결과 (VoiceCaseResult)",
+  "description": "ai.case.analyze_call 이 돌려주는 통화 녹음 분석 결과. 백엔드가 저장해 두었다가 카카오 콜백 카드와 '결과 확인' 조회에 쓴다. 판정은 결정적 로직이 하며 LLM 설명(explanation)은 부가 정보다.",
+  "$defs": {
+    "AnalysisStatus": {
+      "enum": [
+        "completed",
+        "fallback"
+      ],
+      "title": "AnalysisStatus",
+      "type": "string"
+    },
+    "AttachedQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "question_id": {
+          "$ref": "#/$defs/QuestionId"
+        },
+        "option_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Option Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "question_id",
+        "option_ids"
+      ],
+      "title": "AttachedQuestion",
+      "type": "object"
+    },
+    "CaseMatch": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "title": "Case Id",
+          "type": "string"
+        },
+        "similarity": {
+          "title": "Similarity",
+          "type": "number"
+        },
+        "matched_variant": {
+          "title": "Matched Variant",
+          "type": "string"
+        },
+        "categories": {
+          "items": {
+            "$ref": "#/$defs/CategoryCode"
+          },
+          "title": "Categories",
+          "type": "array"
+        }
+      },
+      "required": [
+        "case_id",
+        "similarity",
+        "matched_variant"
+      ],
+      "title": "CaseMatch",
+      "type": "object"
+    },
+    "CaseSearchResult": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/AnalysisStatus"
+        },
+        "matches": {
+          "items": {
+            "$ref": "#/$defs/CaseMatch"
+          },
+          "title": "Matches",
+          "type": "array"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "CaseSearchResult",
+      "type": "object"
+    },
+    "CategoryCode": {
+      "description": "메시지의 **주제** 분류입니다. 위험 신호가 아닙니다.\n\n정상 택배 알림도 delivery로 분류됩니다. decide()의 판정 입력으로\n쓰지 마세요.",
+      "enum": [
+        "delivery",
+        "address_correction",
+        "payment",
+        "penalty",
+        "card_or_account",
+        "public_refund",
+        "public_support",
+        "acquaintance_impersonation",
+        "invitation",
+        "obituary",
+        "prize_or_event",
+        "health_check",
+        "telecom_refund",
+        "account_security",
+        "other",
+        "unknown"
+      ],
+      "title": "CategoryCode",
+      "type": "string"
+    },
+    "CheckItem": {
+      "enum": [
+        "message_text",
+        "screenshot_text",
+        "transcript",
+        "link_address",
+        "official_domain",
+        "domain_age",
+        "page_static",
+        "page_rendered",
+        "phone_number",
+        "similar_cases",
+        "user_answer"
+      ],
+      "title": "CheckItem",
+      "type": "string"
+    },
+    "ClaimView": {
+      "additionalProperties": false,
+      "description": "받아들인 주장만 원문 순서로 담는다.",
+      "properties": {
+        "identity": {
+          "items": {
+            "$ref": "#/$defs/ClaimViewIdentity"
+          },
+          "title": "Identity",
+          "type": "array"
+        },
+        "pretexts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Pretexts",
+          "type": "array"
+        },
+        "demands": {
+          "items": {
+            "$ref": "#/$defs/ClaimViewDemand"
+          },
+          "title": "Demands",
+          "type": "array"
+        },
+        "blockers": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Blockers",
+          "type": "array"
+        }
+      },
+      "title": "ClaimView",
+      "type": "object"
+    },
+    "ClaimViewDemand": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/DemandKind"
+        },
+        "quote": {
+          "title": "Quote",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "quote"
+      ],
+      "title": "ClaimViewDemand",
+      "type": "object"
+    },
+    "ClaimViewIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/IdentityKind"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "quote": {
+          "title": "Quote",
+          "type": "string"
+        },
+        "listed_institution": {
+          "title": "Listed Institution",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "quote",
+        "listed_institution"
+      ],
+      "title": "ClaimViewIdentity",
+      "type": "object"
+    },
+    "Conclusion": {
+      "enum": [
+        "suspected",
+        "official_domain",
+        "inconclusive",
+        "not_analyzable",
+        "input_required"
+      ],
+      "title": "Conclusion",
+      "type": "string"
+    },
+    "DemandKind": {
+      "enum": [
+        "money_transfer",
+        "cash_withdrawal",
+        "gift_card",
+        "auth_code",
+        "personal_info",
+        "app_install",
+        "remote_control",
+        "call_number",
+        "move_messenger",
+        "visit_link",
+        "other"
+      ],
+      "title": "DemandKind",
+      "type": "string"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/EvidenceCode"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "quote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quote"
+        },
+        "record_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Record Id"
+        },
+        "derived_by": {
+          "enum": [
+            "llm",
+            "lexicon",
+            "code",
+            "answer"
+          ],
+          "title": "Derived By",
+          "type": "string"
+        },
+        "counts_for_floor": {
+          "title": "Counts For Floor",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "origin",
+        "derived_by",
+        "counts_for_floor"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "EvidenceCode": {
+      "enum": [
+        "unofficial_number",
+        "institution_claim",
+        "acquaintance_claim",
+        "contact_blocker",
+        "money_request",
+        "cash_delivery_request",
+        "gift_card_request",
+        "auth_code_request",
+        "info_request",
+        "app_install_request",
+        "remote_app_mention",
+        "call_request",
+        "messenger_move"
+      ],
+      "title": "EvidenceCode",
+      "type": "string"
+    },
+    "FailureCode": {
+      "enum": [
+        "empty_input",
+        "missing_result",
+        "collection_failed",
+        "timeout",
+        "llm_error",
+        "refused",
+        "invalid_output",
+        "input_too_large",
+        "partial_content"
+      ],
+      "title": "FailureCode",
+      "type": "string"
+    },
+    "IdentityKind": {
+      "enum": [
+        "institution",
+        "company",
+        "acquaintance",
+        "other"
+      ],
+      "title": "IdentityKind",
+      "type": "string"
+    },
+    "LinkCandidate": {
+      "additionalProperties": false,
+      "description": "조사할 링크. 위험 여부가 아니라 조사 대상이다.",
+      "properties": {
+        "url": {
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        },
+        "domain": {
+          "minLength": 1,
+          "title": "Domain",
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/LinkOrigin"
+        }
+      },
+      "required": [
+        "url",
+        "domain",
+        "origin"
+      ],
+      "title": "LinkCandidate",
+      "type": "object"
+    },
+    "LinkOrigin": {
+      "enum": [
+        "message",
+        "spoken"
+      ],
+      "title": "LinkOrigin",
+      "type": "string"
+    },
+    "NumberCheck": {
+      "additionalProperties": false,
+      "description": "상대가 말한 번호를 내세운 기관의 공식 대표번호와 맞춰 본 결과 (v3 §6.3).",
+      "properties": {
+        "number": {
+          "title": "Number",
+          "type": "string"
+        },
+        "org": {
+          "title": "Org",
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "official",
+            "not_official",
+            "org_not_listed"
+          ],
+          "title": "Result",
+          "type": "string"
+        },
+        "source_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Url"
+        }
+      },
+      "required": [
+        "number",
+        "org",
+        "result"
+      ],
+      "title": "NumberCheck",
+      "type": "object"
+    },
+    "OfficialContact": {
+      "additionalProperties": false,
+      "description": "상대가 내세운 기관의 공식 대표번호. V1 확인 안내(`verify_line`)에 쓴다.\n\n번호는 대표번호 KB 에서만 온다. 녹음 속 번호는 사기범 번호일 수 있어 쓰지 않는다.",
+      "properties": {
+        "org": {
+          "title": "Org",
+          "type": "string"
+        },
+        "number": {
+          "title": "Number",
+          "type": "string"
+        },
+        "source_url": {
+          "title": "Source Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "org",
+        "number",
+        "source_url"
+      ],
+      "title": "OfficialContact",
+      "type": "object"
+    },
+    "Origin": {
+      "enum": [
+        "message",
+        "image_text",
+        "transcript",
+        "tool",
+        "user_answer"
+      ],
+      "title": "Origin",
+      "type": "string"
+    },
+    "QuestionId": {
+      "enum": [
+        "already_acted"
+      ],
+      "title": "QuestionId",
+      "type": "string"
+    },
+    "RejectedClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "identity",
+            "pretext",
+            "demand",
+            "blocker",
+            "spoken_host"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "quote": {
+          "title": "Quote",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "not_in_source",
+            "too_short",
+            "self_side",
+            "notice_sentence",
+            "negated",
+            "not_url"
+          ],
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "quote",
+        "reason"
+      ],
+      "title": "RejectedClaim",
+      "type": "object"
+    },
+    "ResponseAction": {
+      "enum": [
+        "contact_gift_card_issuer",
+        "report_112",
+        "request_payment_stop",
+        "contact_card_issuer",
+        "change_password",
+        "register_info_exposure",
+        "isolate_phone",
+        "use_other_device",
+        "remove_app_and_check_device",
+        "delete_downloaded_file"
+      ],
+      "title": "ResponseAction",
+      "type": "string"
+    },
+    "Scenario": {
+      "enum": [
+        "link_smishing",
+        "voice_phishing",
+        "impersonation_no_link",
+        "unknown"
+      ],
+      "title": "Scenario",
+      "type": "string"
+    },
+    "StopAction": {
+      "enum": [
+        "dont_click_link",
+        "dont_enter_info",
+        "dont_install_app",
+        "dont_send_money",
+        "dont_send_gift_card",
+        "dont_share_auth_code",
+        "dont_call_number_in_message",
+        "hang_up",
+        "paste_text"
+      ],
+      "title": "StopAction",
+      "type": "string"
+    },
+    "Unchecked": {
+      "additionalProperties": false,
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/UncheckedItem"
+        },
+        "reason": {
+          "$ref": "#/$defs/UncheckedReason"
+        }
+      },
+      "required": [
+        "item",
+        "reason"
+      ],
+      "title": "Unchecked",
+      "type": "object"
+    },
+    "UncheckedItem": {
+      "enum": [
+        "actual_sender",
+        "phone_number",
+        "similar_cases",
+        "transcript",
+        "transcript_accuracy",
+        "link_spelling",
+        "link_address",
+        "official_domain",
+        "domain_age",
+        "page_static",
+        "page_rendered"
+      ],
+      "title": "UncheckedItem",
+      "type": "string"
+    },
+    "UncheckedReason": {
+      "enum": [
+        "skipped_enough_evidence",
+        "not_run",
+        "not_allowed",
+        "no_link",
+        "not_applicable",
+        "failed",
+        "timeout",
+        "kb_empty",
+        "read_from_image",
+        "read_from_voice",
+        "cannot_verify"
+      ],
+      "title": "UncheckedReason",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "scenario": {
+      "$ref": "#/$defs/Scenario"
+    },
+    "conclusion": {
+      "$ref": "#/$defs/Conclusion"
+    },
+    "caution": {
+      "default": false,
+      "title": "Caution",
+      "type": "boolean"
+    },
+    "floors": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Floors",
+      "type": "array"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "claims": {
+      "$ref": "#/$defs/ClaimView"
+    },
+    "links": {
+      "items": {
+        "$ref": "#/$defs/LinkCandidate"
+      },
+      "title": "Links",
+      "type": "array"
+    },
+    "stop_actions": {
+      "items": {
+        "$ref": "#/$defs/StopAction"
+      },
+      "title": "Stop Actions",
+      "type": "array"
+    },
+    "response_actions": {
+      "items": {
+        "$ref": "#/$defs/ResponseAction"
+      },
+      "title": "Response Actions",
+      "type": "array"
+    },
+    "questions": {
+      "items": {
+        "$ref": "#/$defs/AttachedQuestion"
+      },
+      "title": "Questions",
+      "type": "array"
+    },
+    "checked": {
+      "items": {
+        "$ref": "#/$defs/CheckItem"
+      },
+      "title": "Checked",
+      "type": "array"
+    },
+    "unchecked": {
+      "items": {
+        "$ref": "#/$defs/Unchecked"
+      },
+      "title": "Unchecked",
+      "type": "array"
+    },
+    "number_checks": {
+      "items": {
+        "$ref": "#/$defs/NumberCheck"
+      },
+      "title": "Number Checks",
+      "type": "array"
+    },
+    "official_contact": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OfficialContact"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "similar_cases": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CaseSearchResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "rejected": {
+      "items": {
+        "$ref": "#/$defs/RejectedClaim"
+      },
+      "title": "Rejected",
+      "type": "array"
+    },
+    "reading_status": {
+      "default": "ok",
+      "enum": [
+        "ok",
+        "fallback"
+      ],
+      "title": "Reading Status",
+      "type": "string"
+    },
+    "explanation": {
+      "default": "",
+      "title": "Explanation",
+      "type": "string"
+    },
+    "failures": {
+      "items": {
+        "$ref": "#/$defs/FailureCode"
+      },
+      "title": "Failures",
+      "type": "array"
+    }
+  },
+  "required": [
+    "scenario",
+    "conclusion"
+  ],
+  "type": "object"
+}

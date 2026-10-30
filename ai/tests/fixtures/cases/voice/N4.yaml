@@ -1,0 +1,17 @@
+id: N4
+scenario: voice_phishing
+input: {kind: audio}
+transcript:
+  - "여보세요"
+  - "금융감독원 수사관입니다. 고객님 명의 계좌가 범죄에 연루됐습니다"
+runtime:
+  reading:
+    identity: [{kind: institution, name: 금융감독원, quote: "금융감독원 수사관입니다"}]
+    demands: [{kind: money_transfer, quote: "고객님 명의 계좌가 범죄에 연루됐습니다"}]
+expect:
+  conclusion: inconclusive
+  caution: true
+  floors: []
+  stop_actions: [hang_up]
+  questions: {already_acted: [entered_info, installed_app, sent_money, not_yet]}
+  rejected: [notice_sentence]
