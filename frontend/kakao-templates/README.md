@@ -37,6 +37,8 @@
 | `claim_lines` `unchecked` `verify_line` | 녹음 캐러셀 (`c-detail-carousel-voice.json`) | V1과 같은 값. `claim_lines`는 `call_claims`에서 칸 제목을 뺀 줄들 |
 | `claim_note` | 녹음 캐러셀 1번째 장 | 평소 `통화 상대가 한 말만 근거로 썼어요.`, 말한 사람을 가리지 못했으면 다른 문장. 규칙은 `chatbot-copy.md` 4절 "녹음 캐러셀의 비슷한 사례" (2026-10-30) |
 | `similar_type` `similar_line` | 녹음 캐러셀 2번째 장 (비슷한 사례) | 가장 닮은 사례의 유형으로 고른다. 사례가 없으면 이 장을 통째로 뺀다. 유형별 문구는 `chatbot-copy.md` 4절 같은 절 (2026-10-30) |
+| `headline` `stop_line` `verify_line` `basis_note` `message_claims` `checked` `unchecked` | R6b (`r6b-warning.json`, `r6b-uncertain.json`) | 결론이 `suspected`면 `r6b-warning`, `inconclusive`면 `r6b-uncertain`. 두 카드는 같은 모양이고 `headline`만 다르다. `basis_note`가 없으면 빈 문자열이고 남는 빈 줄은 BE가 정리한다. `message_claims`는 칸 제목까지 포함하고, 줄이 없으면 빈 문자열이다(R9와 같음). 규칙은 `chatbot-copy.md` 3절 R6b (2026-10-30) |
+| `items` | Q2 (`q2-called-known-number.json`) | Q1과 같은 방식이다. BE가 `{title, action: "block", blockId: block_answer, extra: {case_id, question_id: "called_known_number", option_id}}`를 만든다. 답변 블록은 Q1과 같이 쓴다. 라벨은 `chatbot-copy.md` 3절 Q2 표 (2026-10-30) |
 | `stop_line` | A2 녹음 (`a2-not-yet-voice.json`) | `hang_up`을 뺀 멈출 행동 문장. 없으면 빈 문자열 |
 | `stop_line` | A2 문자 (`a2-not-yet.json`) | `잘하셨어요. 지금처럼 ` 뒤에 붙는 멈출 행동 문장(`paste_text` 뺌). 규칙은 `chatbot-copy.md` 3절 A2 (2026-10-29). A3(`a3-clicked-link.json`)은 빈칸 없음 |
 | `reason_line` | VE2 | 크기·형식·길이 중 걸린 이유 한 줄 |
