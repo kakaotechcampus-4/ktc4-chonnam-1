@@ -106,8 +106,7 @@ async def test_callback_success(monkeypatch):
     )
 
     await main.run_analysis_and_callback(
-        links=["https://example.com"],
-        message="테스트 문자",
+        utterance="테스트 문자 https://example.com",
         callback_url="https://bot-api.kakao.com/callback/test",
         user_id="test-user",
         job_id=job_id,
@@ -169,8 +168,7 @@ async def test_callback_failure_status(monkeypatch):
     )
 
     await main.run_analysis_and_callback(
-        links=["https://example.com"],
-        message="테스트 문자",
+        utterance="테스트 문자 https://example.com",
         callback_url="https://bot-api.kakao.com/callback/test",
         user_id="test-user",
         job_id=job_id,
@@ -230,8 +228,7 @@ async def test_callback_invalid_json_response(
     )
 
     await main.run_analysis_and_callback(
-        links=["https://example.com"],
-        message="테스트 문자",
+        utterance="테스트 문자 https://example.com",
         callback_url="https://bot-api.kakao.com/callback/test",
         user_id="test-user",
         job_id=job_id,
@@ -289,8 +286,7 @@ async def test_callback_request_exception(
     )
 
     await main.run_analysis_and_callback(
-        links=["https://example.com"],
-        message="테스트 문자",
+        utterance="테스트 문자 https://example.com",
         callback_url="https://bot-api.kakao.com/callback/test",
         user_id="test-user",
         job_id=job_id,

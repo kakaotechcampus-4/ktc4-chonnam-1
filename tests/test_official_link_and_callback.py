@@ -140,6 +140,6 @@ class TestKakaoSkillCallback:
         monkeypatch.setattr(main, "get_http_client", lambda: Client())
         monkeypatch.setattr(main, "run_analysis", fake_run)
         job_id = main.create_analysis_job("u-x")
-        await main.run_analysis_and_callback(["https://a"], "m", "http://127.0.0.1:8000/x", "u-x", job_id)
+        await main.run_analysis_and_callback("m https://a", "http://127.0.0.1:8000/x", "u-x", job_id)
         assert posted == []
         assert main.ANALYSIS_JOBS[job_id]["callback_status"] == "failed"

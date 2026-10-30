@@ -12,7 +12,6 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 
 from backend.src.server.http_client import get_http_client
 from backend.src.server.lifespan import app_lifespan
-from backend.src.server.url_utils import split_message
 from backend.src.server.callback_guard import callback_host, is_allowed_callback_url
 from backend.src.server.media_guard import (
     MediaDownloadBlocked,
@@ -35,8 +34,8 @@ from services.result_card_renderer import (
 )
 
 # AI 연결
-from ai.pipeline import analyze_message_part, finalize_analysis
-from ai.types import UrlAnalysis
+from ai.pipeline import analyze_message_part, finalize_analysis, read_message
+from ai.types import AnalysisStatus, FailureCode, MessageReading, UrlAnalysis
 
 # 통화(음성) 분석 연결. ai.case 는 카카오 payload를 모른다 (CLAUDE.md 의존 방향).
 from ai.case import transcribe_call, analyze_call, apply_call_answers
@@ -114,6 +113,13 @@ ANALYSIS_JOBS: dict[str, dict] = {}
 
 # 콜백 URL 유효 시간을 고려한 안전 마진
 CALLBACK_DEADLINE_SECONDS = 45.0
+
+# 링크는 요구 분석 LLM 이 찾고(ADR 0007) 수집은 그 뒤에 시작한다. 추출 기본 상한 30초를
+# 다 쓰면 45초 안에 수집(15초)·페이지 분석·카드 여유가 남지 않는다 (docs/latency-budget.md)
+READ_MESSAGE_TIMEOUT_SECONDS = 15.0
+
+# 카카오 SkillResponse 한 번에 담을 수 있는 outputs 수
+KAKAO_MAX_OUTPUTS = 3
 
 
 # ============================================================
@@ -430,7 +436,7 @@ async def kakao_skill(
         return handle_check_result(user_id)
 
     # 카카오톡 음성 메시지. utterance에도 음성 파일의 서명된 CDN URL이
-    # 그대로 실려 올 수 있으므로, 반드시 split_message() 호출 **전에**
+    # 그대로 실려 올 수 있으므로, 반드시 문자 분석(read_message()) **전에**
     # 분기한다 — utterance를 링크로 보고 기존 문자·URL 분석으로
     # 흘려보내면 안 된다(다운로드 주소 출처는 오직 media.url이어야 함).
     if is_voice_message:
@@ -438,15 +444,12 @@ async def kakao_skill(
             media, user_id, callback_url, background_tasks
         )
 
-    # 문자 내용에서 URL과 일반 메시지 분리
-    links, message = split_message(utterance)
-
-    print(f"[LINK COUNT] {len(links)}")
-    print(f"[MESSAGE] {message!r}")
-
-    # URL이 없는 경우 즉시 응답
-    if not links:
+    # 빈 문자는 LLM 을 부를 것도 없이 바로 입력 요청 카드
+    if not isinstance(utterance, str) or not utterance.strip():
         return render_card("r6-input-required")
+
+    # 링크는 요구 분석 LLM 이 문자를 읽으며 찾는다(ADR 0007). 수 초가 걸려 첫 응답(5초)
+    # 전에는 링크가 있는지 모른다. 그래서 링크가 없는 문자도 콜백 뒤에 결과를 보낸다.
 
     # 같은 사용자의 이전 분석이 아직 진행 중인 경우
     if user_id and user_id in RUNNING_USERS:
@@ -456,10 +459,7 @@ async def kakao_skill(
     if not callback_url:
         print("[CALLBACK] callbackUrl 없음 - 동기 처리")
 
-        return await run_analysis(
-            links,
-            message
-        )
+        return await run_analysis(utterance)
 
     # 사용자 분석 시작 상태 저장
     if user_id:
@@ -473,8 +473,7 @@ async def kakao_skill(
     # 오래 걸리는 분석은 background task에서 수행
     background_tasks.add_task(
         run_analysis_and_callback,
-        links,
-        message,
+        utterance,
         callback_url,
         user_id,
         job_id
@@ -488,16 +487,71 @@ async def kakao_skill(
 # Main Analysis
 # ============================================================
 
+# read_message() 가 링크를 다 받지 못했을 때의 안내. 판정이 아니라 안내에만 쓴다 (ADR 0007)
+_UNREAD_LINKS_TEXT = (
+    "문자에서 주소처럼 보이는 부분을 찾았지만 정확히 읽지 못해 검사하지 못했어요.\n\n"
+    "확인하고 싶은 주소를 그대로 복사해 다시 보내 주세요.\n"
+    "※ 확인 전까지 링크는 누르지 마세요."
+)
+_PARTLY_READ_LINKS_TEXT = (
+    "문자에 있는 주소 중 일부는 정확히 읽지 못해 검사하지 못했어요. "
+    "아래 결과는 읽은 주소만 확인한 거예요.\n"
+    "※ 검사하지 못한 주소는 누르지 마세요."
+)
+_TOO_LONG_TEXT = (
+    "문자가 너무 길어서 확인하지 못했어요.\n\n"
+    "확인하고 싶은 주소가 있는 부분만 복사해 다시 보내 주세요."
+)
+
+
+def _response_without_links(reading: MessageReading) -> dict | None:
+    """조사할 링크가 없을 때의 응답. 링크가 있으면 None.
+
+    LLM 이 실패하면 링크가 있는지 모르므로 "링크 없음"(R6)으로 안내하지 않는다.
+    받지 못한 링크(`unverified_links`)가 있을 때도 마찬가지다.
+    """
+
+    extracted = reading.extracted
+    if extracted.analysis_status is not AnalysisStatus.COMPLETED:
+        failure = extracted.failure
+        print(f"[READ MESSAGE FAILED] {failure.value if failure else 'unknown'}")
+        if failure is FailureCode.EMPTY_INPUT:
+            return render_card("r6-input-required")
+        if failure is FailureCode.INPUT_TOO_LARGE:
+            return kakao_response(_TOO_LONG_TEXT)
+        return render_card("r4-unavailable")
+    if reading.links:
+        return None
+    if reading.unverified_links:
+        return kakao_response(_UNREAD_LINKS_TEXT)
+    return render_card("r6-input-required")
+
+
 async def run_analysis(
-    links: list[str],
-    message: str,
+    utterance: str,
     job_id: str | None = None,
 ) -> dict:
-    """Collect each link once while message analysis runs, then save the final evidence."""
+    """Read links from the message, then collect each once while message analysis runs."""
+    reading = await read_message(utterance, timeout_s=READ_MESSAGE_TIMEOUT_SECONDS)
+    print(
+        f"[LINK COUNT] {len(reading.links)} "
+        f"unverified={reading.unverified_links}"
+    )
+    response = _response_without_links(reading)
+    if response is not None:
+        return response
+
     cards: list[dict] = []
-    message_task = asyncio.create_task(analyze_message_part(message))
+    # 결과 카드는 링크마다 output 1개. 안내까지 카카오 output 상한(3개)을 넘기지 않는다
+    if reading.unverified_links and len(reading.links) < KAKAO_MAX_OUTPUTS:
+        cards.append(kakao_response(_PARTLY_READ_LINKS_TEXT))
+    # 같은 읽기를 넘겨 추출 LLM 을 다시 부르지 않는다
+    message_task = asyncio.create_task(
+        analyze_message_part(reading.message, extracted=reading.extracted)
+    )
     try:
-        for link in links:
+        for candidate in reading.links:
+            link = candidate.url
             try:
                 try:
                     collected = await collect_url_isolated(link)
@@ -537,7 +591,7 @@ async def run_analysis(
 # ============================================================
 # Voice Message (카카오톡 내부 음성 메시지)
 #
-# URL·문자 분석과 완전히 분리된 경로다. 음성은 split_message()를 거치지
+# URL·문자 분석과 완전히 분리된 경로다. 음성은 read_message()를 거치지
 # 않고(kakao_skill()에서 미리 분기), 다운로드 주소는 반드시
 # media.url에서만 가져온다(utterance에 실려 오는 서명된 CDN URL은
 # 출처로 쓰지 않는다).
@@ -754,7 +808,6 @@ async def handle_voice_message(
     # 그대로 타므로 여기서 따로 처리하지 않는다.
     background_tasks.add_task(
         run_analysis_and_callback,
-        [],
         "",
         callback_url,
         user_id,
@@ -866,8 +919,7 @@ def _safe_callback_error(error: Exception) -> str:
 
 
 async def run_analysis_and_callback(
-    links: list[str],
-    message: str,
+    utterance: str,
     callback_url: str,
     user_id: str | None,
     job_id: str,
@@ -887,7 +939,7 @@ async def run_analysis_and_callback(
         if voice_media_url is not None:
             analysis_coro = run_voice_analysis(voice_media_url, job_id=job_id)
         else:
-            analysis_coro = run_analysis(links, message, job_id=job_id)
+            analysis_coro = run_analysis(utterance, job_id=job_id)
 
         try:
             result = await asyncio.wait_for(
@@ -913,8 +965,7 @@ async def run_analysis_and_callback(
         except asyncio.TimeoutError:
             print(
                 f"[ANALYSIS TIMEOUT] "
-                f"user={user_id} "
-                f"links={links}"
+                f"user={user_id}"
             )
 
             result = render_card("r4-unavailable") if voice_media_url is not None else kakao_response(
