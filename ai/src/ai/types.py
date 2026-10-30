@@ -241,6 +241,9 @@ class MessageReading:
     links: tuple[LinkCandidate, ...]
     message: str                 # 링크 구간을 뗀 본문. analyze_message_part 의 입력
     extracted: MessageAnalysis   # 같은 LLM 호출의 요구 분석. 인용은 모두 message 안에 있다
+    # 링크로 보이지만 받지 못한 글자가 있다. LLM 이 고치거나 잘라 낸 구간, 본문에 남은 `://`·`www.`.
+    # True 면 links 가 비어도 "링크 없음"이 아니고, links 가 있어도 빠진 링크가 있을 수 있다
+    unverified_links: bool = False
 
 
 # ── 외부 입력 (백엔드가 채워서 넘긴다) ──────────────────────────

@@ -426,7 +426,8 @@ def test_public_surface_is_independent_and_assembly_is_pure():
     assert not inspect.iscoroutinefunction(public.assemble_analysis)
     assert inspect.iscoroutinefunction(public.finalize_analysis)
     assert inspect.iscoroutinefunction(public.read_message)
-    assert set(inspect.signature(public.read_message).parameters) == {"text", "client", "model"}
+    assert set(inspect.signature(public.read_message).parameters) == {
+        "text", "client", "model", "timeout_s"}
     assert set(inspect.signature(public.analyze_message_part).parameters) == {
         "text", "extracted", "client", "model",
     }

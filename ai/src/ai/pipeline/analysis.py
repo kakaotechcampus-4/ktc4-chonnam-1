@@ -8,7 +8,7 @@ from contextlib import AsyncExitStack
 from openai import APITimeoutError, AsyncOpenAI
 
 from ai.kb.search import search_cases
-from ai.links import message_links, remove_spans
+from ai.links import has_link_mark, message_links, remove_spans
 from ai.llm._client import create_client
 from ai.llm.analyze import TIMEOUT_SECONDS as EXTRACTION_TIMEOUT_SECONDS
 from ai.llm.analyze import analyze_message, fallback_analysis, ground_analysis
@@ -56,12 +56,14 @@ def _failure_code(error: Exception) -> FailureCode:
 
 async def read_message(
     text: str, *, client: AsyncOpenAI | None = None, model: str | None = None,
+    timeout_s: float = EXTRACTION_TIMEOUT_SECONDS,
 ) -> MessageReading:
     """Read the original message once for its requests and links (ADR 0007).
 
     Replaces BE's `split_message`: the extraction model lists the links and
     code keeps only those written whole in `text`. There is no regex fallback,
     so a failed extraction returns no links with a fallback status.
+    `unverified_links` tells BE that some link-like text was not accepted.
     """
     failure = (FailureCode.EMPTY_INPUT if not text.strip()
         else FailureCode.INPUT_TOO_LARGE if len(text) > MAX_MESSAGE_CHARS else None)
@@ -73,18 +75,26 @@ async def read_message(
                 llm = client
                 if llm is None:
                     llm = await stack.enter_async_context(
-                        create_client(EXTRACTION_TIMEOUT_SECONDS))
-                extracted = await analyze_message(text, client=llm, model=model)
+                        create_client(timeout_s))
+                extracted = await analyze_message(
+                    text, client=llm, model=model, timeout_s=timeout_s, ground_urls=False)
         except Exception as error:
             extracted = fallback_analysis(_failure_code(error))
     found = message_links(text, extracted.urls)
     message = remove_spans(text, [span for span, _ in found])
+    # A span the model changed or cut short stays out of `links`, and a link it
+    # skipped leaves its mark in the body. Neither may read as "no link".
+    unverified = (
+        any(span not in text or span in message for span in extracted.urls)
+        or has_link_mark(message)
+    )
     # Links now live in `links`; later steps read only the body without them.
     grounded = ground_analysis(message, extracted.model_copy(update={"urls": []}))
     return MessageReading(
         links=tuple({link.url: link for _, link in found}.values()),
         message=message,
         extracted=grounded,
+        unverified_links=unverified,
     )
 
 

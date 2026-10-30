@@ -142,10 +142,25 @@ def message_links(text: str, spans: Iterable[str]) -> list[tuple[str, LinkCandid
     return [(span, link) for _, span, link in sorted(found, key=lambda item: item[0])]
 
 
+# 링크를 뗀 본문에 남으면 링크가 남았다는 표지. 링크를 찾는 데는 쓰지 않는다
+_LINK_MARKS = ("://", "www.")
+# 구간 바로 앞에 남는 스킴. 무력화 표기(hxxps, [:])까지
+_LEFT_SCHEME = r"(?i:h(?:tt|xx)ps?(?::|\[:\])//)?"
+
+
+def has_link_mark(text: str) -> bool:
+    """`://` 나 `www.` 가 남았는가. 무력화 표기(`hxxp`, `[.]`)도 되살려 본다."""
+    flat = defang(text).lower()
+    return any(mark in flat for mark in _LINK_MARKS)
+
+
 def remove_spans(text: str, spans: Iterable[str]) -> str:
-    """받아들인 링크 구간을 본문에서 뗀다. split_message 처럼 지우고 앞뒤 공백을 다듬는다."""
+    """받아들인 링크 구간을 본문에서 뗀다. split_message 처럼 지우고 앞뒤 공백을 다듬는다.
+
+    LLM 이 스킴을 빼고 짚은 구간("https://bit.ly/a" 의 "bit.ly/a")은 바로 앞 스킴도 함께 뗀다.
+    """
     for span in sorted(set(spans), key=len, reverse=True):
-        text = text.replace(span, "")
+        text = re.sub(_LEFT_SCHEME + re.escape(span), "", text)
     return text.strip()
 
 

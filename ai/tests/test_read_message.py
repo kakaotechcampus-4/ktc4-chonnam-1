@@ -162,3 +162,86 @@ async def test_part_without_reading_still_extracts():
     await analyze_message_part("[CJ대한통운] 배송 조회하세요", client=client, model="test")
 
     assert client.formats == [ExtractedMessage, SignalProposal]
+
+
+async def test_clean_reading_has_no_unverified_links():
+    reading = await read_message(TEXT, client=FakeClient(READING), model="test")
+
+    assert reading.unverified_links is False
+
+
+async def test_no_link_message_is_not_unverified():
+    reading = await read_message(
+        "[CJ대한통운] 오늘 배송 예정입니다", client=FakeClient(ExtractedMessage()), model="test")
+
+    assert reading.links == ()
+    assert reading.unverified_links is False
+
+
+@pytest.mark.parametrize("text, urls", [
+    # LLM 이 철자를 고쳤다
+    ("[CJ대한통운] 배송 조회 cjlogistlcs.com", ["cjlogistics.com"]),
+    # 긴 주소의 앞만 떼어 왔다
+    ("[CJ대한통운] 배송 조회 cjlogistics.com.evil.top/a", ["cjlogistics.com"]),
+    # 링크를 통째로 빠뜨렸다
+    ("주소 수정: https://evil.top/a", []),
+    ("주소 수정: hxxps://evil[.]top/a", []),
+    ("주소 수정: www.evil.top", []),
+], ids=["corrected", "cut_short", "missed_scheme", "missed_defanged", "missed_www"])
+async def test_link_like_text_left_behind_is_unverified(text, urls):
+    reading = await read_message(
+        text, client=FakeClient(ExtractedMessage(urls=urls)), model="test")
+
+    assert reading.extracted.analysis_status is AnalysisStatus.COMPLETED
+    assert reading.links == ()
+    assert reading.unverified_links is True
+
+
+async def test_second_link_missed_keeps_first_and_flags():
+    text = "1차 https://a-cj.top/x 2차 https://b-cj.top/y"
+    client = FakeClient(ExtractedMessage(urls=["https://a-cj.top/x"]))
+
+    reading = await read_message(text, client=client, model="test")
+
+    assert [link.domain for link in reading.links] == ["a-cj.top"]
+    assert reading.unverified_links is True
+
+
+async def test_span_without_scheme_takes_scheme_out_of_body():
+    text = "확인: https://bit.ly/abc123 부탁드립니다"
+    client = FakeClient(ExtractedMessage(urls=["bit.ly/abc123"]))
+
+    reading = await read_message(text, client=client, model="test")
+
+    assert [link.url for link in reading.links] == ["https://bit.ly/abc123"]
+    assert reading.message == "확인:  부탁드립니다"
+    assert reading.unverified_links is False
+
+
+async def test_span_inside_accepted_link_is_not_unverified():
+    text = "https://bit.ly/abc123 확인"
+    client = FakeClient(ExtractedMessage(urls=["https://bit.ly/abc123", "bit.ly/abc123"]))
+
+    reading = await read_message(text, client=client, model="test")
+
+    assert [link.url for link in reading.links] == ["https://bit.ly/abc123"]
+    assert reading.unverified_links is False
+
+
+async def test_timeout_is_the_callers(monkeypatch):
+    client = FakeClient(READING)
+    factory = Mock(return_value=client)
+    monkeypatch.setattr(module, "create_client", factory)
+    seen = []
+    real_wait_for = analyze_module.asyncio.wait_for
+
+    async def wait_for(awaitable, timeout):
+        seen.append(timeout)
+        return await real_wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(analyze_module.asyncio, "wait_for", wait_for)
+
+    await read_message(TEXT, model="test", timeout_s=12.0)
+
+    assert factory.call_args_list == [call(12.0)]
+    assert seen == [12.0]
