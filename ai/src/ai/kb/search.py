@@ -9,13 +9,14 @@ import math
 import re
 import threading
 from collections import Counter
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
 import yaml
 
+from ai.kb import semantic
 from ai.kb.normalize import normalize
 from ai.types import AnalysisStatus, CaseMatch, CaseSearchResult, CategoryCode
 
@@ -53,6 +54,14 @@ VOICE_MIN_SIMILARITY = 0.0807
 VOICE_IDENTITY_BOOST = 0.03
 # 관문 점수(보이스피싱 같음, 0~1)가 이 값 미만이면 사례를 붙이지 않는다. 판정에는 쓰지 않는다.
 VOICE_GATE_MIN = 0.89
+
+# 임베딩 혼합 검색 값. 점수 = ALPHA * TF-IDF + (1 - ALPHA) * 임베딩 코사인. 임베딩이 실패하면 위의 TF-IDF
+# 값으로 돌아간다. 문자는 ai/eval/embed_rag_experiment.py, 통화는 embed_voice_experiment.py 의 dev 로 정했다
+# (리포트 ai/eval/reports/2026-10-31-rag-embedding.md). 기준값은 같은 규칙(dev 정상 부착 5% 이하)으로 다시 골랐다.
+HYBRID_ALPHA = 0.3
+HYBRID_MIN_SIMILARITY = 0.5463
+VOICE_HYBRID_ALPHA = 0.5
+VOICE_HYBRID_MIN_SIMILARITY = 0.3042
 
 
 @dataclass(frozen=True)
@@ -261,6 +270,32 @@ def boost_types(
     return boosted
 
 
+def fuse(matches: Sequence[CaseMatch], embedded: Mapping[str, float], alpha: float) -> list[CaseMatch]:
+    """TF-IDF 점수와 임베딩 코사인을 섞어 다시 정렬한다. 임베딩이 없는 사례는 TF-IDF 몫만 받는다."""
+    fused = [
+        match.model_copy(
+            update={"similarity": round(alpha * match.similarity + (1 - alpha) * embedded.get(match.case_id, 0.0), 4)}
+        )
+        for match in matches
+    ]
+    fused.sort(key=lambda item: item.similarity, reverse=True)
+    return fused
+
+
+def _embedded_scores(
+    cases_dir: Path, kind: str, cases: Sequence[Case], text: str, embed: Callable[[str], tuple[float, ...]]
+) -> dict[str, float] | None:
+    """임베딩 점수. 설정이 없거나 KB·질의 임베딩이 실패하면 None 이다(TF-IDF 만으로 검색)."""
+    index = semantic.load_index(cases_dir, kind, cases)
+    if index is None:
+        return None
+    try:
+        return semantic.scores(index, embed(text))
+    except Exception as exc:
+        LOGGER.warning("query embedding failed: %s", type(exc).__name__)
+        return None
+
+
 def _search(
     index: CaseIndex,
     text: str,
@@ -268,6 +303,8 @@ def _search(
     min_similarity: float,
     preferred_types: Collection[str] = (),
     boost: float = 0.0,
+    embedded: Mapping[str, float] | None = None,
+    alpha: float = 1.0,
 ) -> CaseSearchResult:
     if not index.cases:
         return CaseSearchResult(status=AnalysisStatus.FALLBACK, matches=[])
@@ -275,6 +312,8 @@ def _search(
     if preferred_types:
         types = {case.case_id: case.case_type for case in index.cases}
         ranked = boost_types(ranked, types, preferred_types, boost)
+    if embedded is not None:
+        ranked = fuse(ranked, embedded, alpha)
     matches = [match for match in ranked if match.similarity >= min_similarity]
     return CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=matches[:top_k])
 
@@ -284,16 +323,27 @@ def search_cases(
     *,
     cases_dir: Path = CASES_DIR,
     top_k: int = 3,
-    min_similarity: float = DEFAULT_MIN_SIMILARITY,
+    min_similarity: float | None = None,
+    use_embedding: bool = True,
 ) -> CaseSearchResult:
     """링크를 제외하고 마스킹한 본문으로 검색합니다.
 
     기준값은 보고하는 유사도(소수 넷째 자리 반올림)와 비교합니다. 평가 도구가
-    고른 기준값이 운영에서도 같은 사례를 남기게 하기 위해서입니다.
+    고른 기준값이 운영에서도 같은 사례를 남기게 하기 위해서입니다. 기준값을 주지 않으면
+    임베딩 혼합 점수일 때 HYBRID_MIN_SIMILARITY, TF-IDF 만일 때 DEFAULT_MIN_SIMILARITY 를 씁니다.
+    use_embedding=False 는 평가가 TF-IDF 점수만 받을 때 쓴다.
     """
     if not masked_text.strip():
         return CaseSearchResult(status=AnalysisStatus.FALLBACK, matches=[])
-    return _search(load_index(cases_dir), masked_text, top_k, min_similarity)
+    index = load_index(cases_dir)
+    embedded = (
+        _embedded_scores(cases_dir, "text", index.cases, masked_text, semantic.embed_query) if use_embedding else None
+    )
+    if embedded is None:
+        threshold = DEFAULT_MIN_SIMILARITY if min_similarity is None else min_similarity
+        return _search(index, masked_text, top_k, threshold)
+    threshold = HYBRID_MIN_SIMILARITY if min_similarity is None else min_similarity
+    return _search(index, masked_text, top_k, threshold, embedded=embedded, alpha=HYBRID_ALPHA)
 
 
 def search_voice_cases(
@@ -303,6 +353,7 @@ def search_voice_cases(
     top_k: int = 3,
     min_similarity: float | None = None,
     preferred_types: Collection[str] = (),
+    use_embedding: bool = True,
 ) -> CaseSearchResult:
     """통화 대본으로 보이스피싱 통화 사례를 찾습니다.
 
@@ -310,12 +361,24 @@ def search_voice_cases(
     통화 유형은 CategoryCode 가 아니어서 matches 의 categories 는 비어 있고,
     유형은 KB 레코드의 type 에 있습니다. 기준값은 호출할 때 모듈 값을 읽습니다.
     preferred_types 의 유형 사례에는 VOICE_IDENTITY_BOOST 를 더해 순위와 기준값 비교에 반영합니다.
+    가점은 TF-IDF 점수에 더한 뒤 임베딩과 섞는다(평가와 같은 순서). 임베딩이 실패하면 TF-IDF 만 쓴다.
     """
     if not transcript.strip():
         return CaseSearchResult(status=AnalysisStatus.FALLBACK, matches=[])
     index = load_index(cases_dir, ngram_sizes=VOICE_NGRAM_SIZES, sublinear_tf=VOICE_SUBLINEAR_TF)
-    threshold = VOICE_MIN_SIMILARITY if min_similarity is None else min_similarity
-    return _search(index, transcript, top_k, threshold, preferred_types, VOICE_IDENTITY_BOOST)
+    embedded = (
+        _embedded_scores(cases_dir, "voice", index.cases, transcript, semantic.embed_transcript)
+        if use_embedding
+        else None
+    )
+    if embedded is None:
+        threshold = VOICE_MIN_SIMILARITY if min_similarity is None else min_similarity
+        return _search(index, transcript, top_k, threshold, preferred_types, VOICE_IDENTITY_BOOST)
+    threshold = VOICE_HYBRID_MIN_SIMILARITY if min_similarity is None else min_similarity
+    return _search(
+        index, transcript, top_k, threshold, preferred_types, VOICE_IDENTITY_BOOST,
+        embedded=embedded, alpha=VOICE_HYBRID_ALPHA,
+    )
 
 
 def warm_up_voice_case_search() -> CaseSearchResult:

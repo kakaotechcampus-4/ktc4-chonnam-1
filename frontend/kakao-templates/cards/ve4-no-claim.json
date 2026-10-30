@@ -1,0 +1,31 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "basicCard": {
+          "title": "🎙️ 녹음에 사칭·요구하는 말이 없어요",
+          "description": "기관이나 가족을 내세우거나\n돈·정보·앱 설치를 요구한 말이 나오지 않았어요.\n상대가 누구인지는 확인하지 못했어요.\n\n다시 전화가 와서 돈을 보내거나\n앱을 설치하라고 하면 따르지 마세요.",
+          "thumbnail": {
+            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/ve4-no-claim.png",
+            "altText": "체크 표시가 붙은 녹음 파일 옆에서 돋보기를 든 기니피그",
+            "fixedRatio": false
+          },
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "다른 녹음 확인하기",
+              "action": "block",
+              "blockId": "6ae3302425d4bc48e2bb8a61"
+            },
+            {
+              "label": "1394 상담",
+              "action": "phone",
+              "phoneNumber": "1394"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

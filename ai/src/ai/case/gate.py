@@ -26,11 +26,12 @@ from ai.case.types import (
     VoiceCaseResult,
 )
 from ai.case.verify import VerifyResult
+from ai.links import spoken_link
 from ai.types import AnalysisStatus, CaseSearchResult, FailureCode
 
 _E = EvidenceCode
 
-# L-3 기관 사칭의 짝. counts_for_floor 가 아니라 이 목록으로 하한을 정한다.
+# L-3 기관 사칭의 짝. counts_for_floor 인 근거 중 이 목록에 든 것만 짝이 된다(gift_card 는 빠진다).
 _L3_DEMANDS = frozenset(
     {
         _E.MONEY_REQUEST,
@@ -210,8 +211,12 @@ def decide_call(
     codes = {e.code for e in verify.accepted}
     unofficial = any(e.code == _E.UNOFFICIAL_NUMBER for e in evidence)
     common.update(evidence=evidence, claims=verify.claims, rejected=verify.rejected)
+    # 읽기에서 함께 뽑은 주소를 BE 가 조사할 수 있게 넘긴다 (ADR 0007)
+    common["links"] = [
+        link for host in verify.spoken_hosts if (link := spoken_link(host)) is not None
+    ]
 
-    # 말로 부른 주소나 "주소로 들어가라"는 요구(R16). 링크는 조사하지 않는다
+    # 말로 부른 주소나 "주소로 들어가라"는 요구(R16). 여기서는 링크를 조사하지 않는다
     link_spoken = bool(verify.spoken_hosts) or any(
         d.kind == DemandKind.VISIT_LINK for d in verify.claims.demands
     )
@@ -235,11 +240,12 @@ def decide_call(
             **common,
         )
 
-    # L-3. U-4: 화자 분리가 실패하면 누구의 말인지 몰라 쓰지 않는다
+    # L-3. 화자를 나누지 않으므로(ADR 0008) 꼴까지 맞은 근거(counts_for_floor)만 쓴다:
+    # 자기소개 꼴의 신원 주장 + 부탁 꼴의 요구. 받는 사람이 되풀이한 말은 verify 가 이미 뺐다
+    floor_codes = {e.code for e in verify.accepted if e.counts_for_floor}
     floors: list[str] = []
-    if not verify.speaker_split_failed and (
-        (_E.INSTITUTION_CLAIM in codes and codes & _L3_DEMANDS)
-        or (_E.ACQUAINTANCE_CLAIM in codes and _E.MONEY_REQUEST in codes)
+    if (_E.INSTITUTION_CLAIM in floor_codes and floor_codes & _L3_DEMANDS) or (
+        _E.ACQUAINTANCE_CLAIM in floor_codes and _E.MONEY_REQUEST in floor_codes
     ):
         floors.append("L-3")
 
@@ -250,7 +256,6 @@ def decide_call(
         conclusion = Conclusion.INCONCLUSIVE
         caution = bool(
             codes & _RISK_DEMANDS
-            or verify.speaker_split_failed
             or unofficial
             or link_spoken
             or _E.INSTITUTION_CLAIM in codes

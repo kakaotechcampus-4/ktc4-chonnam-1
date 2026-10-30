@@ -23,27 +23,33 @@ from ai.case.types import (
     UncheckedReason,
 )
 from ai.case.verify import VerifyResult
-from ai.types import AnalysisStatus, CaseMatch, CaseSearchResult, FailureCode
+from ai.types import (
+    AnalysisStatus,
+    CaseMatch,
+    CaseSearchResult,
+    FailureCode,
+    LinkCandidate,
+    LinkOrigin,
+)
 
 
-def _ev(code: E, quote: str = "인용 문장입니다") -> Evidence:
+def _ev(code: E, quote: str = "인용 문장입니다", *, floor: bool = True) -> Evidence:
     return Evidence(
         code=code,
         origin=Origin.TRANSCRIPT,
         quote=quote,
         derived_by="llm",
-        counts_for_floor=True,
+        counts_for_floor=floor,
     )
 
 
 def _verify(
-    *codes: E, split_failed: bool = False, spoken_hosts: list[str] | None = None
+    *codes: E, unshaped: tuple[E, ...] = (), spoken_hosts: list[str] | None = None
 ) -> VerifyResult:
+    """unshaped: 받아들였지만 자기소개·부탁 꼴이 아니라 하한에 쓰지 않는 근거 (ADR 0008)."""
     return VerifyResult(
-        accepted=[_ev(c) for c in codes],
+        accepted=[_ev(c) for c in codes] + [_ev(c, floor=False) for c in unshaped],
         rejected=[],
-        other_speaker="화자2",
-        speaker_split_failed=split_failed,
         spoken_hosts=spoken_hosts or [],
         claims=ClaimView(),
     )
@@ -113,8 +119,17 @@ def test_demand_without_claim_is_inconclusive_caution():
     assert r.caution is True
 
 
-def test_u4_split_failed_blocks_l3():
-    r = _decide(_verify(E.INSTITUTION_CLAIM, E.MONEY_REQUEST, split_failed=True))
+@pytest.mark.parametrize(
+    "shaped,unshaped",
+    [
+        ((E.MONEY_REQUEST,), (E.INSTITUTION_CLAIM,)),  # 기관을 말하기만 함
+        ((E.INSTITUTION_CLAIM,), (E.MONEY_REQUEST,)),  # 요구가 부탁 꼴이 아님
+        ((E.ACQUAINTANCE_CLAIM,), (E.MONEY_REQUEST,)),
+        ((E.MONEY_REQUEST,), (E.ACQUAINTANCE_CLAIM,)),  # "우리 아들이" 같은 남 이야기
+    ],
+)
+def test_l3_needs_shaped_evidence_on_both_sides(shaped, unshaped):
+    r = _decide(_verify(*shaped, unshaped=unshaped))
     assert r.conclusion == Conclusion.INCONCLUSIVE
     assert r.caution is True
     assert r.floors == []
@@ -140,6 +155,18 @@ def test_u5_spoken_host_counts_as_demand():
     assert Unchecked(
         item=UncheckedItem.LINK_SPELLING, reason=UncheckedReason.READ_FROM_VOICE
     ) in r.unchecked
+
+
+def test_spoken_host_is_passed_on_as_spoken_link():
+    r = _decide(_verify(spoken_hosts=["ykics24.kr"]))
+    assert r.links == [
+        LinkCandidate(url="https://ykics24.kr/", domain="ykics24.kr", origin=LinkOrigin.SPOKEN)
+    ]
+
+
+def test_no_spoken_host_no_links():
+    assert _decide(_verify(E.INSTITUTION_CLAIM, E.MONEY_REQUEST)).links == []
+    assert _decide(None, empty=True).links == []
 
 
 def test_u6_empty_transcript_is_not_analyzable():
@@ -242,11 +269,9 @@ def test_stop_actions_no_dont_click_link_without_spoken_link():
     assert all(u.item != UncheckedItem.LINK_SPELLING for u in r.unchecked)
 
 
-def test_n11_split_failed_keeps_hang_up_and_q1():
+def test_unshaped_floor_codes_keep_stop_actions_and_q1():
     r = _decide(
-        _verify(
-            E.INSTITUTION_CLAIM, E.MONEY_REQUEST, E.CALL_REQUEST, split_failed=True
-        )
+        _verify(E.CALL_REQUEST, unshaped=(E.INSTITUTION_CLAIM, E.MONEY_REQUEST))
     )
     assert r.conclusion == Conclusion.INCONCLUSIVE and r.caution is True
     assert r.floors == []
@@ -258,9 +283,9 @@ def test_n11_split_failed_keeps_hang_up_and_q1():
     ]
 
 
-def test_split_failed_nothing_accepted_is_input_required():
-    r = _decide(_verify(split_failed=True))
-    assert r.conclusion == Conclusion.INPUT_REQUIRED
+def test_unshaped_acquaintance_alone_has_no_caution():
+    r = _decide(_verify(unshaped=(E.ACQUAINTANCE_CLAIM,)))
+    assert r.conclusion == Conclusion.INCONCLUSIVE and r.caution is False
 
 
 def test_no_caution_inconclusive_stop_is_hang_up_only():

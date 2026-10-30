@@ -1,0 +1,31 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "basicCard": {
+          "title": "🎙️ 통화 녹음 파일만 확인할 수 있어요",
+          "description": "m4a, mp3, wav 파일을 보내 주세요.",
+          "thumbnail": {
+            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/ve1-not-audio.png",
+            "altText": "물음표가 붙은 사진 파일과 녹음 파일을 돋보기로 비교하는 기니피그",
+            "fixedRatio": false
+          },
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "아이폰에서 보내는 법",
+              "action": "block",
+              "blockId": "6ae3305d80857534c13f81ea"
+            },
+            {
+              "label": "갤럭시에서 보내는 법",
+              "action": "block",
+              "blockId": "6ae330850100875ffb658da9"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

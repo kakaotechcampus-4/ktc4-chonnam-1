@@ -31,7 +31,7 @@ async def test_callbacks_reuse_shared_client(monkeypatch):
     async with service.http_client_lifespan(None):
         for user in ("a", "b"):
             job_id = main.create_analysis_job(user)
-            await main.run_analysis_and_callback([], "", "https://bot-api.kakao.com/cb", user, job_id)
+            await main.run_analysis_and_callback("", "https://bot-api.kakao.com/cb", user, job_id)
             assert main.ANALYSIS_JOBS[job_id]["callback_status"] == "success"
         assert len(constructions) == 1
         assert not constructions[0].is_closed

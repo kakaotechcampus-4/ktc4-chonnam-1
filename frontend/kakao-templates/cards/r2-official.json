@@ -4,7 +4,7 @@
     "outputs": [
       {
         "basicCard": {
-          "title": "문자 속 주소가 {{ org_name }} 공식 주소와 같아요",
+          "title": "🔗 문자 속 주소가 {{ org_name }} 공식 주소와 같아요",
           "description": "확인할 일이 있다면 아래 버튼으로\n{{ org_name }} 공식 홈페이지에서 직접 확인해 주세요.\n이번 결과는 주소 일치 여부에 대한 확인이에요.\n보낸 사람과 문자 내용의 진위는 확인하지 못했어요.",
           "thumbnail": {
             "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/r2-official.png",

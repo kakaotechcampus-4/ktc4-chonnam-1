@@ -1,0 +1,26 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "basicCard": {
+          "title": "🎙️ 이 녹음은 확인할 수 없어요",
+          "description": "{{ reason_line }}\n조건에 맞는 녹음을 다시 보내 주세요.\n\n※ 확인 전에 돈을 보내거나 앱을 설치하지 마세요.",
+          "thumbnail": {
+            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/ve2-invalid-audio.png",
+            "altText": "시계, 문서, 자 표시에 둘러싸인 녹음 파일을 돋보기로 살펴보는 기니피그",
+            "fixedRatio": false
+          },
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "녹음 다시 보내기",
+              "action": "block",
+              "blockId": "6ae3302425d4bc48e2bb8a61"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

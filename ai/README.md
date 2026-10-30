@@ -28,6 +28,18 @@ payload = result.model_dump(mode="json")
 분석 결과의 근거는 입력 본문에서 확인된 문자열만 포함하며, 호출 실패나 빈
 입력에서는 동일한 JSON 구조의 `fallback` 결과를 반환한다.
 
+링크도 같은 호출에서 함께 뽑는다([ADR 0007](../docs/adr/0007-llm-link-extraction.md)).
+원문을 넘기면 `ai.pipeline.read_message()` 가 원문 대조를 통과한 링크와 링크를 뗀 본문을
+돌려준다. 백엔드의 `split_message()` 를 대신하며, 연동 방법은
+[BE 연동 문서 §0](../docs/ai-be-python-integration.md)에 있다.
+
+```python
+from ai.pipeline import read_message
+
+reading = await read_message(masked_text)
+links = [link.url for link in reading.links]
+```
+
 문자 추출 실패의 원인은 Python 반환 객체의 `failure`에 보존한다.
 이 내부 필드는 직렬화에서 제외되어 기존 추출 JSON과 모델 입력은 유지된다.
 문자 파이프라인은 이를 최종 `message.details.reason.failures`에 담는다.
