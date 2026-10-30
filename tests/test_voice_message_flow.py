@@ -935,7 +935,7 @@ class TestVoiceInputValidation:
         monkeypatch.setattr(main, "CALLBACK_DEADLINE_SECONDS", 0.01)
         job_id = main.create_analysis_job("voice-user")
         main.RUNNING_USERS.add("voice-user")
-        await main.run_analysis_and_callback([], "", "https://untrusted.example/cb", "voice-user", job_id,
+        await main.run_analysis_and_callback("", "https://untrusted.example/cb", "voice-user", job_id,
                                              voice_media_url=SIGNED_CDN_URL)
         assert main.ANALYSIS_JOBS[job_id]["result"] == main.render_card("r4-unavailable")
         assert main.ANALYSIS_JOBS[job_id]["status"] == "timeout"
