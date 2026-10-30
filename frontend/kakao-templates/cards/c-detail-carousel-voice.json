@@ -11,6 +11,10 @@
               "description": "{{ claim_lines }}\n\n상대 화자의 말만 근거로 썼어요."
             },
             {
+              "title": "📚 비슷한 사례",
+              "description": "이번 통화는 '{{ similar_type }}' 수법의 예시 통화와 비슷해요.\n{{ similar_line }}\n\n비슷하다고 해서 사기라는 뜻은 아니에요.\n결과 판단에는 쓰지 않았어요."
+            },
+            {
               "title": "❔ 확인 범위",
               "description": "{{ unchecked }}\n\n결과는 확인한 자료로만 안내했어요. 확인하지 못한 부분은 판단에 넣지 않았어요."
             },

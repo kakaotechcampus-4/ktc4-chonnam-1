@@ -141,8 +141,9 @@
     사칭·요구를 못 찾음     → VE4 (신규)  [다른 녹음 확인하기] → V0  [1394 상담]   (input_required)
     확인 실패             → R4  버튼 없음
 
-[자세히 보기] — V1에서만. 캐러셀 4장 (녹음용, 스미싱 C1~C4 짝)
+[자세히 보기] — V1에서만. 캐러셀 5장 (녹음용, 스미싱 C1~C4 짝에 비슷한 사례 한 장)
   C1  의심 근거      — 상대가 내세운 기관, 상대가 한 말 인용, 요구한 것
+  C1a 비슷한 사례     - 가장 닮은 예시 통화의 수법 유형 (사례가 없으면 이 장을 뺌)
   C2  확인 범위      — 실제로 건 곳, 받아 적은 글이 정확한지
   C3  행동 안내      — 통화 끊기, 송금·앱 설치·정보 알려 주기 금지
       [1394 상담] → ☎ 1394   [다른 녹음 확인하기] → V0   ← 버튼은 C3에만
@@ -242,7 +243,7 @@ V0로 들어오는 다른 길
                                                                      ▼
 Q1 항목 누름 → apply_answer (즉답, 콜백 없음)
    대응 있음 → K6        not_yet 만 → A2 (V1 녹음 문구)
-V1 [자세히 보기] → 캐러셀 4장 (녹음용. C1 근거 = 상대 화자 인용, C4 = 기관 대표번호로 확인)
+V1 [자세히 보기] → 캐러셀 5장 (녹음용. C1 근거 = 상대 화자 인용, C1a = 비슷한 사례, C4 = 기관 대표번호로 확인)
 V1 [다른 녹음 확인하기] → V0   신고·피해 대응은 Q1 → K6·A2 (결과 카드에 신고 버튼 없음)
 ```
 
@@ -258,7 +259,7 @@ V1 [다른 녹음 확인하기] → V0   신고·피해 대응은 Q1 → K6·A2 
 
 | 화면 | 메모 |
 | --- | --- |
-| V1 보이스피싱 결과 | 제목 세 갈래·본문 그대로. **버튼 변경**: `112 신고` 를 빼고 `자세히 보기` · `다른 녹음 확인하기`(1.5절, 결과 카드에 신고 버튼 없음). 2026-10-29 AI 칸에 맞춤: `verify_line` = `official_contact`(`org`, `number`, `source_url`. 번호는 대표번호 KB에서만, `null`이면 일반 문장, `source_url`은 카드에 안 씀), 주장 요약 = `claims`(`pretexts`는 `내세운 사정` 줄), `phone_number` = `상대가 말한 전화번호`, `받아 적은 글이 정확한지` = `transcript_accuracy`. `similar_cases`는 쓰지 않음. 1332는 넣지 않음 |
+| V1 보이스피싱 결과 | 제목 세 갈래·본문 그대로. **버튼 변경**: `112 신고` 를 빼고 `자세히 보기` · `다른 녹음 확인하기`(1.5절, 결과 카드에 신고 버튼 없음). 2026-10-29 AI 칸에 맞춤: `verify_line` = `official_contact`(`org`, `number`, `source_url`. 번호는 대표번호 KB에서만, `null`이면 일반 문장, `source_url`은 카드에 안 씀), 주장 요약 = `claims`(`pretexts`는 `내세운 사정` 줄), `phone_number` = `상대가 말한 전화번호`, `받아 적은 글이 정확한지` = `transcript_accuracy`. `similar_cases`는 녹음 캐러셀 2번째 장에 씀(2026-10-30, `chatbot-copy.md` 4절). 1332는 넣지 않음 |
 | Q1 (녹음 항목) | `정보를 알려 줬어요` · `앱을 설치했어요` · `돈이나 상품권을 보냈어요` · `아직 안 했어요` |
 | K6 | `response_actions`를 쓴다(분석 직후에는 비고 Q1 답 뒤에 채워짐). 앱 설치: `request_payment_stop` → `isolate_phone` → `use_other_device` → `remove_app_and_check_device`. 정보: 주민번호면 `register_info_exposure`, 그 밖이면 `change_password` → `register_info_exposure`. 버튼은 D17(1.5절 표) |
 | A2(녹음) | `다시 전화가 와도 받지 말고 번호를 차단하세요.` + 멈출 행동(hang_up 뺌) + 1394 안내 · `1394 상담`. 2026-10-29 `잘하셨어요`를 뺐다. 녹음을 보낸 때는 통화가 이미 끝났으므로 `통화를 끊고`는 쓰지 않는다 |
@@ -385,7 +386,7 @@ VE3을 R4로 합칠지는 4절 Q-4.
 | VE3 내용을 알아듣지 못함 | `ve3-unrecognized.json` (신규) | 빈칸 없음 |
 | VE4 사칭·요구하는 말이 없음 | `ve4-no-claim.json` (신규) | `input_required`. 빈칸 없음. 버튼 `다른 녹음 확인하기` · `1394 상담` |
 | V1 보이스피싱 결과 | `v1-voice-result.json` (신규) | |
-| 자세히 보기 (녹음용 C1~C4) | `c-detail-carousel-voice.json` (신규) | 이미지 없는 `textCard` 캐러셀. `claim_lines`·`unchecked`·`verify_line` |
+| 자세히 보기 (녹음용 C1~C4) | `c-detail-carousel-voice.json` (신규) | 이미지 없는 `textCard` 캐러셀. `claim_lines`·`unchecked`·`verify_line`. 2026-10-30 비슷한 사례 장(`similar_type`, `similar_line`)을 더함 |
 | Q1 이미 하신 게 있나요? | `q1-already-acted.json` (신규, 문자·녹음 공용) | `items` 통째 빈칸 |
 | K6 지금 먼저 하세요 | `k6-response.json` (신규, 공용) | `response_lines`·`contact_line`·`buttons` |
 | A2 아직 안 했어요 (녹음) | `a2-not-yet-voice.json` (신규) | |
