@@ -12,8 +12,13 @@ URL이 로그에 노출되지 않는지, Q1→K6/A2 대응이 쌓이는지, 기�
 """
 
 import asyncio
+import io
 import os
 import tempfile
+import wave
+
+import httpx
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -67,8 +72,18 @@ def _real_temp_voice_file() -> str:
     다운로드도 디스크에 진짜 존재하는 파일 경로를 돌려줘야 한다."""
     fd, path = tempfile.mkstemp(suffix="_test_voice.m4a")
     with os.fdopen(fd, "wb") as file:
-        file.write(b"fake-audio-bytes")
+        file.write(_wav_bytes())
     return path
+
+
+def _wav_bytes(seconds=1, rate=8000):
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(rate)
+        audio.writeframes(b"\x00\x00" * round(seconds * rate))
+    return buffer.getvalue()
 
 
 def _voice_skill_payload(user_id: str = "voice-user", callback_url: str | None = None) -> dict:
@@ -702,6 +717,217 @@ class TestDownloadVoiceMediaCleansUpOnCancellation:
 
 async def _noop():
     return None
+
+
+def _m4a_header():
+    # Container metadata fixture, not a codec/decode fixture.
+    def atom(kind, body):
+        return (len(body) + 8).to_bytes(4, "big") + kind + body
+    return atom(b"ftyp", b"M4A \x00\x00\x00\x00M4A isom") + atom(
+        b"moov", atom(b"trak", atom(b"mdia", atom(b"hdlr", b"\x00" * 8 + b"soun" + b"\x00" * 12))))
+
+
+def _webm_header():
+    # EBML DocType + audio TrackEntry CodecID, without claiming a real decode.
+    return b"\x1aE\xdf\xa3\x87\x42\x82\x84webm\x18\x53\x80\x67\xff\x16\x54\xae\x6b\x89\xae\x87\x86\x86A_OPUS"
+
+
+class TestVoiceInputValidation:
+    @pytest.mark.parametrize("extra_byte", [False, True])
+    async def test_actual_wav_at_25mib_reaches_stt_but_one_extra_byte_does_not(self, monkeypatch, tmp_path, extra_byte):
+        # PCM header is 44 bytes; keep the full original production size boundary.
+        data = _wav_bytes((main.MAX_VOICE_FILE_BYTES - 44) // 2, rate=1)
+        assert len(data) == main.MAX_VOICE_FILE_BYTES
+        if extra_byte:
+            data += b"x"
+        path = tmp_path / "download"
+        path.write_bytes(data)
+        async def download(url):
+            return str(path), len(data)
+        transcribe = AsyncMock(return_value=_transcript())
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        result = await main.run_voice_analysis(SIGNED_CDN_URL)
+        if extra_byte:
+            assert "25MB보다 커요" in str(result)
+            transcribe.assert_not_awaited()
+        else:
+            assert "보이스피싱이 의심" in str(result)
+            transcribe.assert_awaited_once_with(data, "voice.wav")
+        assert not path.exists()
+
+    async def test_sync_deadline_returns_r4_and_cleans_running_user(self, monkeypatch):
+        stopped = asyncio.Event()
+        async def download(url):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "VOICE_SYNC_TIMEOUT_SECONDS", 0.01)
+        from fastapi import BackgroundTasks
+        response = await main.handle_voice_message({"type": "audio", "url": SIGNED_CDN_URL},
+                                                  "voice-user", None, BackgroundTasks())
+        assert response == main.render_card("r4-unavailable")
+        assert "voice-user" not in main.RUNNING_USERS and stopped.is_set()
+
+    @pytest.mark.parametrize("data,expected_card,reason", [
+        (b"%PDF-1.7\nnot audio", "ve1-not-audio", None),
+        (b"\x89PNG\r\n\x1a\nimage", "ve1-not-audio", None),
+        (b"<html>not audio</html>", "ve1-not-audio", None),
+        (b"fLaC\x00\x00\x00\x22" + b"\x00" * 34, "ve2-invalid-audio", "지원하지 않는"),
+        (b"OggS\x00\x00OpusHead", "ve2-invalid-audio", "지원하지 않는"),
+        (b"RIFF\x00\x00\x00\x00WAVEbroken", "ve2-invalid-audio", "읽을 수 없어요"),
+        (b"ID3\x04\x00\x00\x00\x00\x00\x00", "ve2-invalid-audio", "읽을 수 없어요"),
+        (b"", "ve2-invalid-audio", "비어 있어요"),
+    ])
+    @pytest.mark.parametrize("with_job", [False, True])
+    async def test_rejected_bytes_produce_ve_card_before_stt(self, monkeypatch, tmp_path, data, expected_card, reason, with_job):
+        path = tmp_path / "looks-like-audio.m4a"
+        path.write_bytes(data)
+        async def download(url):
+            return str(path), len(data)
+        transcribe, analyze = AsyncMock(), AsyncMock()
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        monkeypatch.setattr(main, "analyze_call", analyze)
+        job_id = main.create_analysis_job("voice-user") if with_job else None
+        result = await main.run_voice_analysis(SIGNED_CDN_URL, job_id=job_id)
+        if reason is None:
+            assert result == main.render_card(expected_card)
+        else:
+            description = result["template"]["outputs"][0]["textCard"]["description"]
+            assert reason in description and "{{ reason_line }}" not in description
+            assert result["template"]["outputs"][0]["textCard"]["title"] == "🎙️ 이 녹음은 확인할 수 없어요"
+        assert not path.exists()
+        transcribe.assert_not_awaited()
+        analyze.assert_not_awaited()
+
+    @pytest.mark.parametrize("data,filename", [
+        (_wav_bytes(), "voice.wav"), (_m4a_header(), "voice.m4a"), (_webm_header(), "voice.webm"),
+        (b"\xff\xfb\x90\x00" + b"\x00" * 413, "voice.mp3"),
+        (b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x00" + b"\x00" * 413, "voice.mp3"),
+    ])
+    async def test_supported_content_controls_stt_filename_not_url_extension(self, monkeypatch, tmp_path, data, filename):
+        path = tmp_path / "download"
+        path.write_bytes(data)
+        async def download(url):
+            return str(path), len(data)
+        transcribe = AsyncMock(return_value=_transcript())
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        result = await main.run_voice_analysis(SIGNED_CDN_URL)
+        assert "보이스피싱이 의심" in str(result)
+        transcribe.assert_awaited_once_with(data, filename)
+        assert not path.exists()
+
+    @pytest.mark.parametrize("limit,seconds,reason", [(None, 3, None), (2, 2, None), (2, 3, "2초보다 길어요")])
+    async def test_wav_duration_limit_unset_boundary_and_violation(self, monkeypatch, tmp_path, limit, seconds, reason):
+        data = _wav_bytes(seconds)
+        path = tmp_path / "download"
+        path.write_bytes(data)
+        async def download(url):
+            return str(path), len(data)
+        transcribe = AsyncMock(return_value=_transcript())
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "MAX_VOICE_DURATION_SECONDS", limit)
+        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        result = await main.run_voice_analysis(SIGNED_CDN_URL)
+        if reason:
+            assert reason in str(result)
+            transcribe.assert_not_awaited()
+        else:
+            assert "보이스피싱이 의심" in str(result)
+            transcribe.assert_awaited_once()
+        assert not path.exists()
+
+    async def test_unknown_compressed_duration_is_not_silently_accepted_when_limit_configured(self, monkeypatch, tmp_path):
+        path = tmp_path / "download.webm"
+        path.write_bytes(_webm_header())
+        async def download(url):
+            return str(path), path.stat().st_size
+        transcribe = AsyncMock()
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "MAX_VOICE_DURATION_SECONDS", 60)
+        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        result = await main.run_voice_analysis(SIGNED_CDN_URL)
+        assert "녹음 길이를 확인할 수 없어요" in str(result)
+        transcribe.assert_not_awaited()
+        assert not path.exists()
+
+    @pytest.mark.parametrize("failure", [httpx.ConnectError("signed token must not leak"), httpx.ReadTimeout("signed token must not leak")])
+    @pytest.mark.parametrize("with_job", [False, True])
+    async def test_network_errors_and_timeouts_are_r4_in_both_paths(self, monkeypatch, failure, with_job, capsys):
+        download = AsyncMock(side_effect=failure)
+        transcribe = AsyncMock()
+        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        job_id = main.create_analysis_job("voice-user") if with_job else None
+        assert await main.run_voice_analysis(SIGNED_CDN_URL, job_id=job_id) == main.render_card("r4-unavailable")
+        assert "signed token must not leak" not in capsys.readouterr().out
+        transcribe.assert_not_awaited()
+
+    @pytest.mark.parametrize("extra_byte", [False, True])
+    async def test_real_download_25mib_boundary_is_streamed_and_cleaned(self, monkeypatch, tmp_path, extra_byte):
+        assert main.MAX_VOICE_FILE_BYTES == 25 * 1024 * 1024
+        class Stream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                for _ in range(25):
+                    yield b"\x00" * (1024 * 1024)
+                if extra_byte:
+                    yield b"x"
+        def respond(request):
+            return httpx.Response(200, stream=Stream(), headers={"Content-Type": "audio/mp4"})
+        original = main.tempfile.mkstemp
+        monkeypatch.setattr(main.tempfile, "mkstemp", lambda **kwargs: original(dir=tmp_path, **kwargs))
+        monkeypatch.setattr(main, "assert_resolves_to_public_ip", AsyncMock())
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            monkeypatch.setattr(main, "get_http_client", lambda: client)
+            if extra_byte:
+                result = await main.run_voice_analysis(SIGNED_CDN_URL)
+                assert "25MB보다 커요" in str(result)
+                assert not list(tmp_path.iterdir())
+            else:
+                path, size = await main.download_voice_media(SIGNED_CDN_URL)
+                assert size == main.MAX_VOICE_FILE_BYTES
+                assert os.path.getsize(path) == size
+                os.remove(path)
+
+    @pytest.mark.parametrize("data,mime,expected", [
+        (_wav_bytes(), "etc/m4a", "⚠️ 보이스피싱이 의심돼요"),
+        (b"%PDF-1.7 fake audio", "audio/mp4", "🎙️ 통화 녹음 파일만 확인할 수 있어요"),
+        (b"", "audio/mp4", "🎙️ 이 녹음은 확인할 수 없어요"),
+    ])
+    async def test_real_download_mime_does_not_override_content(self, monkeypatch, data, mime, expected):
+        def respond(request):
+            return httpx.Response(200, content=data, headers={"Content-Type": mime})
+        monkeypatch.setattr(main, "assert_resolves_to_public_ip", AsyncMock())
+        monkeypatch.setattr(main, "transcribe_call", AsyncMock(return_value=_transcript()))
+        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            monkeypatch.setattr(main, "get_http_client", lambda: client)
+            result = await main.run_voice_analysis(SIGNED_CDN_URL)
+        assert result["template"]["outputs"][0]["textCard"]["title"] == expected
+
+    async def test_outer_voice_deadline_uses_r4_and_cleans_running_user(self, monkeypatch):
+        stopped = asyncio.Event()
+        async def wait_for_download(url):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+        monkeypatch.setattr(main, "download_voice_media", wait_for_download)
+        monkeypatch.setattr(main, "CALLBACK_DEADLINE_SECONDS", 0.01)
+        job_id = main.create_analysis_job("voice-user")
+        main.RUNNING_USERS.add("voice-user")
+        await main.run_analysis_and_callback([], "", "https://untrusted.example/cb", "voice-user", job_id,
+                                             voice_media_url=SIGNED_CDN_URL)
+        assert main.ANALYSIS_JOBS[job_id]["result"] == main.render_card("r4-unavailable")
+        assert main.ANALYSIS_JOBS[job_id]["status"] == "timeout"
+        assert "voice-user" not in main.RUNNING_USERS and stopped.is_set()
 
 
 class TestVoiceMessageAsyncCallbackPath:
