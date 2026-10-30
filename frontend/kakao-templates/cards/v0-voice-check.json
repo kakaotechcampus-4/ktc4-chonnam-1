@@ -3,9 +3,14 @@
   "template": {
     "outputs": [
       {
-        "textCard": {
+        "basicCard": {
           "title": "🎙️ 확인할 통화 녹음을 보내주세요",
           "description": "의심스러운 통화의 녹음 파일을 보내 주세요.\n※ 확인 전에 돈을 보내거나 앱을 설치하지 마세요.\n※ 파일 1개, 25MB 이하 (m4a, mp3, wav)\n\n결과가 오지 않으면 「결과 확인」을 보내 주세요.",
+          "thumbnail": {
+            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/v0-voice-check.png",
+            "altText": "전화 아이콘이 붙은 녹음 파일 옆에서 돋보기를 든 경찰 모자 기니피그",
+            "fixedRatio": false
+          },
           "buttonLayout": "vertical",
           "buttons": [
             {

@@ -100,6 +100,13 @@ def _voice_skill_payload(user_id: str = "voice-user", callback_url: str | None =
     return payload
 
 
+def _card_body(card: dict) -> dict:
+    """첫 카드의 본문. FE 가 이미지를 넣으며 textCard 를 basicCard 로 바꾼 카드가 있다."""
+
+    output = card["template"]["outputs"][0]
+    return output.get("textCard") or output["basicCard"]
+
+
 def _transcript(text: str = "안녕하세요", failure=None, speaker_split_failed: bool = False) -> TranscriptResult:
     segments = [] if failure is not None else [Segment(side=Side.UNKNOWN, speaker="화자1", text=text)]
     return TranscriptResult(segments=segments, speaker_split_failed=speaker_split_failed, failure=failure)
@@ -271,7 +278,7 @@ class TestVoiceMessageSyncPath:
         response = client.post("/kakao/skill", json=_voice_skill_payload())
 
         assert response.status_code == 200
-        text_card = response.json()["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(response.json())
         assert text_card["title"] == "⚠️ 보이스피싱이 의심돼요"
         assert "금융감독원 대표번호(1332)로 직접 전화해 확인하세요." in text_card["description"]
         assert "통화를 끊고" in text_card["description"]
@@ -321,7 +328,7 @@ class TestV1CallClaimsFieldMapping:
         ).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(card)["description"]
 
         assert "상대가 내세운 기관: '금융감독원 조사국입니다'" in description
 
@@ -336,7 +343,7 @@ class TestV1CallClaimsFieldMapping:
         ).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(card)["description"]
 
         assert "상대가 한 말: '지금 바로 입금하세요'" in description
 
@@ -346,7 +353,7 @@ class TestV1CallClaimsFieldMapping:
         ).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(card)["description"]
 
         assert "내세운 사정: '계좌가 범죄에 연루됐습니다'" in description
 
@@ -356,7 +363,7 @@ class TestV1CallClaimsFieldMapping:
         ).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(card)["description"]
 
         assert "내세운 사정: '다른 사람에게 말하지 마세요'" in description
         assert "계좌가 범죄에 연루됐습니다" not in description
@@ -372,7 +379,7 @@ class TestV1CallClaimsFieldMapping:
         ).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(card)["description"]
 
         assert "요구한 것: 송금·입금, 앱 설치, 인증번호 전달" in description
         assert "개인정보 제공" not in description
@@ -381,7 +388,7 @@ class TestV1CallClaimsFieldMapping:
         result = _voice_result(claims=ClaimView()).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(card)["description"]
 
         assert "통화에서 들은 내용" not in description
         assert "주의할 점" not in description
@@ -397,7 +404,7 @@ class TestVoiceResultConclusionBranching:
         card = main.render_voice_result_card(result)
 
         assert card == main.render_card("ve3-unrecognized")
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(card)
         assert text_card["title"] == "🎙️ 녹음 내용을 알아듣지 못했어요"
 
     def test_input_required_uses_ve4_no_claim_card(self):
@@ -406,7 +413,7 @@ class TestVoiceResultConclusionBranching:
         card = main.render_voice_result_card(result)
 
         assert card == main.render_card("ve4-no-claim")
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(card)
         assert text_card["title"] == "🎙️ 녹음에 사칭·요구하는 말이 없어요"
 
     def test_input_required_never_gets_q1_attached(self):
@@ -432,7 +439,7 @@ class TestVoiceResultConclusionBranching:
         result = _voice_result(conclusion=Conclusion.SUSPECTED).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(card)
         labels = {b["label"] for b in text_card["buttons"]}
 
         assert labels == {"자세히 보기", "다른 녹음 확인하기"}
@@ -583,7 +590,7 @@ class TestTranscribeAndAnalyzeWiring:
         card = await main.run_voice_analysis(SIGNED_CDN_URL)
 
         assert captured["transcript"] is failed_transcript
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(card)
         assert text_card["title"] == "🎙️ 녹음 내용을 알아듣지 못했어요"
 
     async def test_speaker_split_failed_transcript_is_passed_through(self, monkeypatch):
@@ -798,9 +805,9 @@ class TestVoiceInputValidation:
         if reason is None:
             assert result == main.render_card(expected_card)
         else:
-            description = result["template"]["outputs"][0]["textCard"]["description"]
+            description = _card_body(result)["description"]
             assert reason in description and "{{ reason_line }}" not in description
-            assert result["template"]["outputs"][0]["textCard"]["title"] == "🎙️ 이 녹음은 확인할 수 없어요"
+            assert _card_body(result)["title"] == "🎙️ 이 녹음은 확인할 수 없어요"
         assert not path.exists()
         transcribe.assert_not_awaited()
         analyze.assert_not_awaited()
@@ -911,7 +918,7 @@ class TestVoiceInputValidation:
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             monkeypatch.setattr(main, "get_http_client", lambda: client)
             result = await main.run_voice_analysis(SIGNED_CDN_URL)
-        assert result["template"]["outputs"][0]["textCard"]["title"] == expected
+        assert _card_body(result)["title"] == expected
 
     async def test_outer_voice_deadline_uses_r4_and_cleans_running_user(self, monkeypatch):
         stopped = asyncio.Event()
@@ -1053,7 +1060,7 @@ class TestVoiceAnswerFlow:
         for answer in answers:
             card = main.handle_voice_answer(job_id, answer)
         job = main.ANALYSIS_JOBS[job_id]
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(card)
         assert text_card["title"] == "🚨 지금 먼저 하세요"
         assert [button["phoneNumber"] for button in text_card.get("buttons", [])] == phones
         assert job["qa_answers"] == answers
@@ -1081,7 +1088,7 @@ class TestVoiceAnswerFlow:
         )
 
         assert response.status_code == 200
-        text_card = response.json()["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(response.json())
         assert text_card["title"] == "🚨 지금 먼저 하세요"
         labels = {b["label"] for b in text_card["buttons"]}
         assert labels == {"112 신고"}
@@ -1104,7 +1111,7 @@ class TestVoiceAnswerFlow:
             },
         )
 
-        text_card = response.json()["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(response.json())
         labels = {b["label"] for b in text_card["buttons"]}
         assert labels == {"1394 상담"}
         assert "상담: 피싱 통합 상담 1394 (24시간)" in text_card["description"]
@@ -1149,7 +1156,7 @@ class TestVoiceAnswerFlow:
             },
         )
 
-        text_card = response.json()["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(response.json())
         assert "돈을 보내지 마세요." in text_card["description"]
         assert "끊" not in text_card["description"]
 
@@ -1166,7 +1173,7 @@ class TestVoiceAnswerFlow:
             },
         )
 
-        text_card = response.json()["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(response.json())
         assert text_card["buttons"] == []
         assert "신고·상담:" not in text_card["description"]
 
@@ -1180,7 +1187,7 @@ class TestVoiceAnswerFlow:
         main.handle_voice_answer(job_id, "not_yet")
         card = main.handle_voice_answer(job_id, "sent_money")
 
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = _card_body(card)
         assert text_card["title"] == "🚨 지금 먼저 하세요"
         assert {b["label"] for b in text_card["buttons"]} == {"112 신고"}
         assert main.ANALYSIS_JOBS[job_id]["qa_answers"] == ["not_yet", "sent_money"]
@@ -1192,10 +1199,10 @@ class TestVoiceAnswerFlow:
         job_id = self._seed_voice_job()
 
         first = main.handle_voice_answer(job_id, "installed_app")
-        assert first["template"]["outputs"][0]["textCard"]["buttons"] == []
+        assert _card_body(first)["buttons"] == []
 
         second = main.handle_voice_answer(job_id, "sent_money")
-        labels = {b["label"] for b in second["template"]["outputs"][0]["textCard"]["buttons"]}
+        labels = {b["label"] for b in _card_body(second)["buttons"]}
         assert labels == {"112 신고"}
         assert "상담:" not in str(second)
         assert "1332" not in str(second)
@@ -1275,7 +1282,7 @@ class TestV1NumberChecksAndSimilarCases:
         ).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(card)["description"]
 
         assert "상대가 말한 번호(1332): 금융감독원 대표번호와 같아요" in description
         assert "번호가 같아도 본인이라는 뜻은 아니에요" in description
@@ -1290,7 +1297,7 @@ class TestV1NumberChecksAndSimilarCases:
         ).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(card)["description"]
 
         assert "상대가 말한 번호(010-1234-5678): 금융감독원 대표번호가 아니에요" in description
 
@@ -1306,7 +1313,7 @@ class TestV1NumberChecksAndSimilarCases:
         ).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(card)["description"]
 
         assert "공식 번호가 아니에요" not in description
         assert "상대가 말한 번호가 알 수 없는 기관 번호인지 (대표번호 자료에 없는 기관이에요)" in description
@@ -1323,7 +1330,7 @@ class TestV1NumberChecksAndSimilarCases:
         result = _voice_result(checked=[CheckItem.PHONE_NUMBER]).model_dump(mode="json")
 
         card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(card)["description"]
 
         assert "- 상대가 말한 전화번호" in description
 
@@ -1342,7 +1349,7 @@ class TestV1NumberChecksAndSimilarCases:
         assert result["similar_cases"]["matches"][0]["case_id"] == "c1"
 
         card = main.render_voice_result_card(result)
-        description = card["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(card)["description"]
 
         assert "- 비슷한 사례" in description
         items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
@@ -1375,7 +1382,7 @@ class TestLatestVoice115Contract:
             unchecked=[Unchecked(item="similar_cases", reason=reason)] if reason else [],
         ).model_dump(mode="json")
         initial = main.render_voice_result_card(result)
-        description = initial["template"]["outputs"][0]["textCard"]["description"]
+        description = _card_body(initial)["description"]
         assert f"- 비슷한 사례 ({expected})" in description
         assert description.count("- 비슷한 사례") == 1
         carousel = main.render_voice_detail_carousel(result)
@@ -1410,7 +1417,7 @@ class TestLatestVoice115Contract:
         assert result["conclusion"] == "suspected"
 
     def test_b2d_uses_only_112_and_1394(self):
-        card = main.render_card("b2d-call-acted")["template"]["outputs"][0]["textCard"]
+        card = _card_body(main.render_card("b2d-call-acted"))
         assert [b["phoneNumber"] for b in card["buttons"]] == ["112", "1394"]
         assert "1332" not in str(card)
 

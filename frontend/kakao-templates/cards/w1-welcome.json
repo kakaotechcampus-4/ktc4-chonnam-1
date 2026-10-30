@@ -8,7 +8,7 @@
           "description": "반가워요, 피싱 확인을 도와주는 화기니예요.\n의심스러운 문자나 통화 녹음을 보내주시면,\n확인해서 결과와 이유를 알려드려요.",
           "thumbnail": {
             "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/w1-welcome.png",
-            "altText": "링크가 담긴 의심 문자를 돋보기로 살펴보는 경찰 모자 기니피그",
+            "altText": "링크가 담긴 의심 문자와 걸려 온 전화 화면 옆에서 돋보기를 든 경찰 모자 기니피그",
             "fixedRatio": false
           },
           "buttonLayout": "vertical",

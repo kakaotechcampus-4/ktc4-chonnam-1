@@ -1,0 +1,20 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "description": "눌렀던 페이지는 닫고, 정보를 입력하거나 앱을 설치하지 마세요.\n받은 파일이 있다면 열지 말고 지우세요.\n걱정되면 118에 문의하세요.\n\n나중에 무언가 했다면 위 목록에서 다시 골라 주세요.",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "118 상담",
+              "action": "phone",
+              "phoneNumber": "118"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

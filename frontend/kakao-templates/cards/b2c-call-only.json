@@ -3,9 +3,14 @@
   "template": {
     "outputs": [
       {
-        "textCard": {
+        "basicCard": {
           "title": "📵 다시 전화가 와도 받지 마세요",
           "description": "번호를 차단하고, 상대가 말한 기관은\n대표번호로 직접 확인하세요.\n\n의심 번호는 피싱 통합 상담 1394에\n제보할 수 있어요. (24시간)\n\n통화를 녹음했다면 '보이스피싱 확인하기'로\n먼저 확인해 보세요.",
+          "thumbnail": {
+            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2c-call-only.png",
+            "altText": "전화 아이콘에 금지 표시가 있는 휴대폰 옆에서 팔로 X 자를 만든 기니피그",
+            "fixedRatio": false
+          },
           "buttonLayout": "vertical",
           "buttons": [
             {

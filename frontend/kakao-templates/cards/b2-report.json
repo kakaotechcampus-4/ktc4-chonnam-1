@@ -10,21 +10,25 @@
           "items": [
             {
               "title": "문자만 받았어요",
+              "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2-list-1-message-only.png",
               "action": "block",
               "blockId": "6ab78d64322b97a3a1cc9567"
             },
             {
               "title": "링크를 눌렀어요",
+              "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2-list-2-link-clicked.png",
               "action": "block",
               "blockId": "6ab78d883dd52f826f111e49"
             },
             {
               "title": "전화만 받았어요",
+              "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2-list-3-call-only.png",
               "action": "block",
               "blockId": "6ae330ff25d4bc48e2bb8c57"
             },
             {
               "title": "통화 중 돈·정보를 줬어요",
+              "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2-list-4-call-acted.png",
               "action": "block",
               "blockId": "6ae331f080857534c13f8390"
             }
