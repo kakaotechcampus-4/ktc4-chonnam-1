@@ -7,8 +7,11 @@ BE 배포 없이 반영되게 하려는 경계다 (backend/README.md의 소유 �
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Any
+
+_WHOLE_PLACEHOLDER_RE = re.compile(r"^\{\{\s*[^{}]+\s*\}\}$")
 
 CARDS_DIR = (
     Path(__file__).resolve().parent.parent
@@ -48,8 +51,11 @@ def _substitute(node: Any, values: dict[str, str]) -> Any:
 def _substitute_string(text: str, values: dict[str, str]) -> Any:
     stripped = text.strip()
 
-    # 문자열 전체가 하나의 placeholder뿐이면, 값의 원래 타입을 보존한다.
-    if stripped.startswith("{{") and stripped.endswith("}}") and text == stripped:
+    # 문자열 전체가 정확히 placeholder 하나뿐이면, 값의 원래 타입을 보존한다.
+    # startswith("{{")/endswith("}}")만 보면, 다른 placeholder나 글이 사이에
+    # 낀 긴 문자열(예: "{{ a }}...{{ b }}")도 "하나뿐"으로 오판해 통째로
+    # 치환 없이 돌려보낸다 — 정규식으로 중괄호가 중첩·반복되지 않는지까지 본다.
+    if _WHOLE_PLACEHOLDER_RE.match(stripped) and text == stripped:
         key = stripped[2:-2].strip()
         if key in values:
             return values[key]

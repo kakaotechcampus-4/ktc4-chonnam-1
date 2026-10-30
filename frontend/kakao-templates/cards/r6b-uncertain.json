@@ -4,15 +4,10 @@
     "outputs": [
       {
         "textCard": {
-          "title": "📞 {{ conclusion }}",
-          "description": "확인한 내용\n{{ evidence_lines }}\n\n{{ guidance }}",
+          "title": "{{ headline }}",
+          "description": "{{ stop_line }}\n{{ verify_line }}\n{{ basis_note }}\n\n{{ message_claims }}확인한 것\n{{ checked }}\n\n확인하지 못한 것\n{{ unchecked }}",
           "buttonLayout": "vertical",
           "buttons": [
-            {
-              "label": "신고·상담하기",
-              "action": "block",
-              "blockId": "6aad5cc1d29c9829bcc2adb6"
-            },
             {
               "label": "다른 문자 확인하기",
               "action": "block",

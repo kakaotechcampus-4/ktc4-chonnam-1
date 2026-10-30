@@ -1,0 +1,26 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "{{ headline }}",
+          "description": "{{ stop_line }}\n{{ verify_line }}\n\n{{ call_claims }}확인한 것\n{{ checked }}\n\n확인하지 못한 것\n{{ unchecked }}",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "자세히 보기",
+              "action": "block",
+              "blockId": "6aad3abfe745d3358bd90c8d"
+            },
+            {
+              "label": "다른 녹음 확인하기",
+              "action": "block",
+              "blockId": "6ae3302425d4bc48e2bb8a61"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

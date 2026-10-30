@@ -64,3 +64,52 @@ def test_main_app_warms_kb_on_startup(warm_up_calls):
 
     with TestClient(main.app):
         assert warm_up_calls == ["warm_up"]
+
+
+@pytest.fixture
+def voice_warm_up_calls(monkeypatch):
+    calls = []
+
+    def fake():
+        calls.append("voice_warm_up")
+        return CaseSearchResult(status=AnalysisStatus.COMPLETED)
+
+    monkeypatch.setattr(lifespan, "warm_up_voice_case_search", fake)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_voice_case_search_is_warmed_before_serving(voice_warm_up_calls, warm_up_calls, capsys):
+    async with lifespan.app_lifespan(None):
+        pass
+
+    assert voice_warm_up_calls == ["voice_warm_up"]
+    assert "[VOICE KB WARMUP]" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_voice_warm_up_failure_does_not_block_startup(warm_up_calls, monkeypatch, capsys):
+    def broken():
+        raise OSError("voice index gone")
+
+    monkeypatch.setattr(lifespan, "warm_up_voice_case_search", broken)
+
+    async with lifespan.app_lifespan(None):
+        client = service.get_http_client()
+        assert not client.is_closed
+
+    assert client.is_closed
+    assert "[VOICE KB WARMUP FAILED] OSError: voice index gone" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_voice_empty_case_search_is_reported(warm_up_calls, monkeypatch, capsys):
+    monkeypatch.setattr(
+        lifespan, "warm_up_voice_case_search",
+        lambda: CaseSearchResult(status=AnalysisStatus.FALLBACK),
+    )
+
+    async with lifespan.app_lifespan(None):
+        pass
+
+    assert "[VOICE KB WARMUP EMPTY] status=fallback" in capsys.readouterr().out
