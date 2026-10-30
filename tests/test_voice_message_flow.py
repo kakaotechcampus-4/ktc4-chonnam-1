@@ -1,6 +1,6 @@
 """카카오톡 내부 음성 메시지 처리 흐름 테스트.
 
-핵심 검증: 음성 메시지는 split_message()/기존 문자·URL 분석으로
+핵심 검증: 음성 메시지는 read_message()/기존 문자·URL 분석으로
 흘러가지 않고 완전히 분리된 경로를 타는지, 다운로드 주소는 반드시
 media.url에서만 오는지(utterance의 서명된 URL을 출처로 쓰지 않는지),
 다운로드 실패·콜백 실패가 안전하게 끝나는지, 임시 파일이 정리되는지.
@@ -50,10 +50,10 @@ def _voice_skill_payload(user_id: str = "voice-user", callback_url: str | None =
     return payload
 
 
-class TestVoiceMessageIsRoutedBeforeSplitMessage:
-    def test_split_message_is_never_called_for_a_voice_message(self, client, monkeypatch):
-        def unexpected_split(utterance):
-            pytest.fail("split_message()가 음성 메시지에도 호출됨")
+class TestVoiceMessageIsRoutedBeforeReadMessage:
+    def test_read_message_is_never_called_for_a_voice_message(self, client, monkeypatch):
+        async def unexpected_read(utterance, **_kwargs):
+            pytest.fail("read_message()가 음성 메시지에도 호출됨")
 
         async def fake_download(url):
             assert url == SIGNED_CDN_URL
@@ -62,7 +62,7 @@ class TestVoiceMessageIsRoutedBeforeSplitMessage:
         async def fake_mock_analyze(path, filename):
             return {"scenario": "voice_phishing", "conclusion": "주의 필요", "evidence": [], "guidance": "g"}
 
-        monkeypatch.setattr(main, "split_message", unexpected_split)
+        monkeypatch.setattr(main, "read_message", unexpected_read)
         monkeypatch.setattr(main, "download_voice_media", fake_download)
         monkeypatch.setattr(main, "mock_analyze_voice_case", fake_mock_analyze)
 
@@ -188,7 +188,7 @@ class TestVoiceMessageAsyncCallbackPath:
         job_id = main.create_analysis_job("voice-user")
 
         await main.run_analysis_and_callback(
-            [], "", "https://bot-api.kakao.com/callback/test", "voice-user", job_id,
+            "", "https://bot-api.kakao.com/callback/test", "voice-user", job_id,
             voice_media_url=SIGNED_CDN_URL,
         )
 
@@ -205,7 +205,7 @@ class TestVoiceMessageAsyncCallbackPath:
         job_id = main.create_analysis_job("voice-user")
 
         await main.run_analysis_and_callback(
-            [], "", "https://untrusted.example.test/callback", "voice-user", job_id,
+            "", "https://untrusted.example.test/callback", "voice-user", job_id,
             voice_media_url=SIGNED_CDN_URL,
         )
 
@@ -215,11 +215,11 @@ class TestVoiceMessageAsyncCallbackPath:
 
 
 class TestExistingTextAndUrlFlowsAreUnaffected:
-    def test_text_message_without_media_still_works(self, client):
-        """URL 없는 일반 문자는 음성 분기를 타지 않고 기존 흐름(빈 입력
-        처리)을 그대로 탄다 — 이 격리 브랜치에는 문자 전용 분석 시나리오가
-        포함되지 않으므로, origin/test/render의 기존 동작(r6-input-required)을
-        기준으로 검증한다."""
+    def test_text_message_without_media_still_works(self, client, stub_read_message):
+        """URL 없는 일반 문자는 음성 분기를 타지 않고 문자 분석(read_message)을
+        탄다. 링크가 없다고 읽히면 r6-input-required 다."""
+
+        calls = stub_read_message()
 
         response = client.post(
             "/kakao/skill",
@@ -228,6 +228,7 @@ class TestExistingTextAndUrlFlowsAreUnaffected:
 
         assert response.status_code == 200
         assert response.json() == main.render_card("r6-input-required")
+        assert [text for text, _ in calls] == ["평범한 문자"]
 
     def test_media_dict_without_audio_type_falls_through_to_normal_flow(self, client):
         """media가 있어도 type이 audio가 아니면 기존 흐름(빈 입력 처리)을 탄다."""
