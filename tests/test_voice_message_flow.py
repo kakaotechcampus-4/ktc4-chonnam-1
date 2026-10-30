@@ -107,9 +107,9 @@ def _card_body(card: dict) -> dict:
     return output.get("textCard") or output["basicCard"]
 
 
-def _transcript(text: str = "안녕하세요", failure=None, speaker_split_failed: bool = False) -> TranscriptResult:
-    segments = [] if failure is not None else [Segment(side=Side.UNKNOWN, speaker="화자1", text=text)]
-    return TranscriptResult(segments=segments, speaker_split_failed=speaker_split_failed, failure=failure)
+def _transcript(text: str = "안녕하세요", failure=None) -> TranscriptResult:
+    segments = [] if failure is not None else [Segment(side=Side.UNKNOWN, text=text)]
+    return TranscriptResult(segments=segments, failure=failure)
 
 
 def _voice_result(
@@ -592,32 +592,6 @@ class TestTranscribeAndAnalyzeWiring:
         assert captured["transcript"] is failed_transcript
         text_card = _card_body(card)
         assert text_card["title"] == "🎙️ 녹음 내용을 알아듣지 못했어요"
-
-    async def test_speaker_split_failed_transcript_is_passed_through(self, monkeypatch):
-        """화자 분리 실패는 대본을 살려서 넘긴다(speaker_split_failed=True) —
-        분석 쪽이 그 정보로 caution·unchecked를 정한다."""
-
-        split_failed_transcript = _transcript("텍스트는 있음", speaker_split_failed=True)
-        captured = {}
-
-        async def fake_download(url):
-            return _real_temp_voice_file(), 10
-
-        async def fake_transcribe(audio, filename):
-            return split_failed_transcript
-
-        async def fake_analyze(transcript_result, *, time_budget_s):
-            captured["speaker_split_failed"] = transcript_result.speaker_split_failed
-            return _voice_result(conclusion=Conclusion.INCONCLUSIVE, caution=True)
-
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-        monkeypatch.setattr(main, "analyze_call", fake_analyze)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
-
-        await main.run_voice_analysis(SIGNED_CDN_URL)
-
-        assert captured["speaker_split_failed"] is True
 
     async def test_cancelled_error_during_transcribe_is_not_swallowed(self, monkeypatch):
         async def fake_download(url):
