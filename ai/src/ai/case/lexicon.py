@@ -1,14 +1,16 @@
 """읽기(LLM)가 실패했을 때 어휘표로 같은 모양의 ClaimReading 을 만든다 (v3 §5.6).
 
 어휘표로는 바꿔 말한 요구를 다 잡을 수 없다. 그래서 이 결과도 verify 의
-V-1~V-8 을 그대로 거친다. 인용은 원문 문장을 그대로 쓴다(V-1을 통과하려면 필요).
+V-1~V-7 을 그대로 거친다. 인용은 원문 문장을 그대로 쓴다(V-1을 통과하려면 필요).
 """
 
 from __future__ import annotations
 
 import re
-from collections import Counter
+from collections.abc import Callable
+from typing import TypeVar
 
+from ai.case.forms import asserts_acquaintance, asserts_institution, is_recipient_side, is_request
 from ai.case.types import (
     BlockerClaim,
     ClaimReading,
@@ -18,9 +20,10 @@ from ai.case.types import (
     IdentityClaim,
     IdentityKind,
     ReadingSource,
-    Segment,
 )
 from ai.types import FailureCode
+
+T = TypeVar("T")
 
 
 # 순위가 앞선 것이 이긴다. 상품권을 "보내"라고 해도 money_transfer 가 아니라 gift_card 다.
@@ -97,45 +100,18 @@ def demand_kinds(text: str) -> set[DemandKind]:
     return {kind for s in _sentences(text) if (kind := classify_demand(s)) is not None}
 
 
-def _hit_count(text: str) -> int:
-    """요구·기관·관계 어휘에 걸린 문장 수. 상대 화자를 고르는 기준이다."""
-    return sum(
-        1
-        for s in _sentences(text)
-        if classify_demand(s)
-        or INSTITUTION_PATTERN.search(s)
-        or ACQUAINTANCE_PATTERN.search(s)
-    )
-
-
-def pick_other_speaker(segments: list[Segment]) -> str | None:
-    """걸린 수가 가장 많은 화자. 없거나 동률이면 None (화자 분리 실패와 같이 다룬다)."""
-    counts: Counter[str] = Counter()
-    for seg in segments:
-        if seg.speaker:
-            counts[seg.speaker] += _hit_count(seg.text)
-    ranked = counts.most_common()
-    if not ranked or ranked[0][1] == 0:
-        return None
-    if len(ranked) > 1 and ranked[1][1] == ranked[0][1]:
-        return None
-    return ranked[0][0]
-
-
 def read_with_lexicon(
     source: ReadingSource, failure: FailureCode | None = None
 ) -> ClaimReadingResult:
-    other = pick_other_speaker(source.segments)
-    # 상대를 못 골랐으면 전체를 읽는다. 걸러내기는 verify 의 V-2 가 한다.
-    texts = [
-        seg.text for seg in source.segments if other is None or seg.speaker == other
-    ]
-
+    # 화자 구분이 없어 전체를 읽는다(ADR 0007). 받는 사람 쪽 말은 verify 의 V-2 도 다시 거른다
     identity: list[IdentityClaim] = []
     demands: list[DemandClaim] = []
     blockers: list[BlockerClaim] = []
-    for text in texts:
-        for sentence in _sentences(text):
+    for seg in source.segments:
+        for sentence in _sentences(seg.text):
+            if is_recipient_side(sentence):
+                # 받는 사람 말로 보이는 문장은 상한(3·6개)을 차지하지 않게 미리 뺀다
+                continue
             if (m := INSTITUTION_PATTERN.search(sentence)):
                 identity.append(
                     IdentityClaim(kind=IdentityKind.INSTITUTION, name=m.group(0), quote=sentence)
@@ -150,11 +126,21 @@ def read_with_lexicon(
                 blockers.append(BlockerClaim(quote=sentence))
 
     reading = ClaimReading(
-        # 칸마다 개수 상한이 있다(ClaimReading). 넘치면 앞에서부터 자른다.
-        identity=identity[:3],
-        demands=demands[:6],
+        # 칸마다 개수 상한이 있다(ClaimReading). 대본 전체를 읽어 넘치기 쉬우므로
+        # 자기소개·부탁 꼴을 먼저 고르고, 고른 것은 원문 순서로 둔다
+        identity=_pick(identity, 3, _strong_identity),
+        demands=_pick(demands, 6, lambda d: is_request(d.quote)),
         blockers=blockers[:3],
-        other_speaker=other,
-        speaker_confidence="medium" if other else "low",
     )
     return ClaimReadingResult(status="fallback", reading=reading, failure=failure)
+
+
+def _strong_identity(claim: IdentityClaim) -> bool:
+    if claim.kind == IdentityKind.INSTITUTION:
+        return asserts_institution(claim.quote, INSTITUTION_PATTERN)
+    return asserts_acquaintance(claim.quote)
+
+
+def _pick(items: list[T], n: int, strong: Callable[[T], bool]) -> list[T]:
+    ranked = sorted(range(len(items)), key=lambda i: (not strong(items[i]), i))
+    return [items[i] for i in sorted(ranked[:n])]

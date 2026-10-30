@@ -30,7 +30,7 @@ from ai.types import AnalysisStatus, CaseSearchResult, FailureCode
 
 _E = EvidenceCode
 
-# L-3 기관 사칭의 짝. counts_for_floor 가 아니라 이 목록으로 하한을 정한다.
+# L-3 기관 사칭의 짝. counts_for_floor 인 근거 중 이 목록에 든 것만 짝이 된다(gift_card 는 빠진다).
 _L3_DEMANDS = frozenset(
     {
         _E.MONEY_REQUEST,
@@ -235,11 +235,12 @@ def decide_call(
             **common,
         )
 
-    # L-3. U-4: 화자 분리가 실패하면 누구의 말인지 몰라 쓰지 않는다
+    # L-3. 화자를 나누지 않으므로(ADR 0007) 꼴까지 맞은 근거(counts_for_floor)만 쓴다:
+    # 자기소개 꼴의 신원 주장 + 부탁 꼴의 요구. 받는 사람이 되풀이한 말은 verify 가 이미 뺐다
+    floor_codes = {e.code for e in verify.accepted if e.counts_for_floor}
     floors: list[str] = []
-    if not verify.speaker_split_failed and (
-        (_E.INSTITUTION_CLAIM in codes and codes & _L3_DEMANDS)
-        or (_E.ACQUAINTANCE_CLAIM in codes and _E.MONEY_REQUEST in codes)
+    if (_E.INSTITUTION_CLAIM in floor_codes and floor_codes & _L3_DEMANDS) or (
+        _E.ACQUAINTANCE_CLAIM in floor_codes and _E.MONEY_REQUEST in floor_codes
     ):
         floors.append("L-3")
 
@@ -250,7 +251,6 @@ def decide_call(
         conclusion = Conclusion.INCONCLUSIVE
         caution = bool(
             codes & _RISK_DEMANDS
-            or verify.speaker_split_failed
             or unofficial
             or link_spoken
             or _E.INSTITUTION_CLAIM in codes

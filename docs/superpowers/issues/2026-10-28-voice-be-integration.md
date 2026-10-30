@@ -8,7 +8,7 @@ AI 진입점 (`ai.case`)
 
 | 함수 | 역할 |
 | --- | --- |
-| `transcribe_call(audio: bytes, filename: str, *, runtime=None) -> TranscriptResult` | whisper STT + Sonnet 5.5 화자 분리. 내부 한도 STT 30초 + 분리 20초 |
+| `transcribe_call(audio: bytes, filename: str, *, runtime=None) -> TranscriptResult` | whisper STT. 문장마다 세그먼트 하나이고 화자는 나누지 않음([ADR 0007](../../adr/0007-no-speaker-diarization.md)). 내부 한도 30초 |
 | `analyze_call(transcript, *, runtime=None, time_budget_s=40.0) -> VoiceCaseResult` | 주장 읽기 + 사례 검색 + 결정적 판정 |
 | `warm_up_voice_case_search()` | 사례 색인 미리 적재 (`from ai.case import warm_up_voice_case_search`. `ai.kb.search` 의 같은 이름 함수는 색인만 채우고 관문 모델은 읽지 않는다) |
 | `apply_call_answers(result, answers) -> VoiceCaseResult` | 쌓인 Q1 답으로 `response_actions` 를 채운 사본 (v3 §8). 결론·멈출 행동은 바뀌지 않음. LLM·네트워크 0회라 콜백 없이 바로 답해도 됨 |
@@ -28,7 +28,7 @@ AI 진입점 (`ai.case`)
    - 초과·형식 불가는 분석 없이 안내 카드
 3. **첫 응답은 즉시** 보냅니다 (콜백 사용, 5초 안). 이후 작업은 콜백 경로에서 수행합니다.
 4. `transcribe_call(audio, filename)`. 걸린 시간(`elapsed`)을 잽니다.
-5. `analyze_call(transcript, time_budget_s = 40 - elapsed)`. PR #105 는 다운로드부터 카드 렌더링까지를 `asyncio.wait_for(..., CALLBACK_DEADLINE_SECONDS=45)` 로 감쌉니다. 다운로드(한도 15초)·STT·분리도 이 45초 안에 들어가므로, 분석 예산은 v3 B3 대로 `CALLBACK_DEADLINE_SECONDS - 5`(40초)에서 `elapsed` 를 뺍니다. `45 - elapsed` 로 주면 분석이 45초를 다 써서 카드 렌더링 전에 바깥 `wait_for` 가 작업을 취소하고 결과가 시간 초과(R4)로 바뀝니다. `elapsed` 는 다운로드 시작부터 잽니다. 남은 예산이 너무 적으면(예: 5초 미만) 호출하지 않고 대본 없음/미확인 카드로 처리합니다.
+5. `analyze_call(transcript, time_budget_s = 40 - elapsed)`. PR #105 는 다운로드부터 카드 렌더링까지를 `asyncio.wait_for(..., CALLBACK_DEADLINE_SECONDS=45)` 로 감쌉니다. 다운로드(한도 15초)·STT도 이 45초 안에 들어가므로, 분석 예산은 v3 B3 대로 `CALLBACK_DEADLINE_SECONDS - 5`(40초)에서 `elapsed` 를 뺍니다. `45 - elapsed` 로 주면 분석이 45초를 다 써서 카드 렌더링 전에 바깥 `wait_for` 가 작업을 취소하고 결과가 시간 초과(R4)로 바뀝니다. `elapsed` 는 다운로드 시작부터 잽니다. 남은 예산이 너무 적으면(예: 5초 미만) 호출하지 않고 대본 없음/미확인 카드로 처리합니다.
 6. 결과를 **먼저 저장** (콜백은 1회성) -> 콜백 카드 전송. 콜백이 만료·실패하면 `결과 확인` 조회가 저장본을 보여줍니다 (처리 중이면 K1, 실패면 R4, 없으면 K4).
 7. 결과 카드 버튼은 `chatbot-copy.md` V1(PR #106)을 따릅니다: `112 신고`·`자세히 보기`. 신고·상담 버튼은 결과 카드가 아니라 Q1 → K6 로 안내합니다(D15). 녹음의 상담 창구는 `1394 상담`입니다(D17). PR #105 의 `r-voice-result.json` 의 `신고·상담하기` 버튼은 이 기준으로 바꿔야 합니다.
 
@@ -46,10 +46,10 @@ AI 진입점 (`ai.case`)
 | --- | --- | --- |
 | `STT_BASE_URL` | whisper 엔드포인트 루트. **`/v1` 없이** 넣습니다(코드가 `/v1/audio/transcriptions` 를 붙임). 예: `https://mlapi.run/<엔드포인트 ID>` | 필수 |
 | `STT_MODEL` | STT 모델 | `whisper-large-v3` |
-| `DIARIZE_BASE_URL` | 화자 분리용 Claude 엔드포인트 루트. **`/v1` 없이** 넣습니다(코드가 `/v1/messages` 를 붙임) | 필수 |
-| `DIARIZE_MODEL` | 화자 분리 모델 | `claude-sonnet-5-5` |
 | `LLM_API_KEY` | 위 호출 공용 키 | 필수 |
-| `LLM_BASE_URL` / `LLM_MODEL` / `CLAIMS_MODEL` | 주장 읽기 (기존, 읽기만). `LLM_BASE_URL` 은 OpenAI 클라이언트용이라 지금 Render 값처럼 **`/v1` 까지** 넣습니다. 위 두 변수와 형식이 다르니 값을 복사하지 마세요(`…/v1/v1/messages` 404). `CLAIMS_MODEL` 이 없으면 `LLM_MODEL` 을 씁니다 | 기존 값 |
+| `LLM_BASE_URL` / `LLM_MODEL` / `CLAIMS_MODEL` | 주장 읽기 (기존, 읽기만). `LLM_BASE_URL` 은 OpenAI 클라이언트용이라 지금 Render 값처럼 **`/v1` 까지** 넣습니다. `STT_BASE_URL` 과 형식이 다르니 값을 복사하지 마세요. `CLAIMS_MODEL` 이 없으면 `LLM_MODEL` 을 씁니다 | 기존 값 |
+
+`DIARIZE_BASE_URL`·`DIARIZE_MODEL` 은 화자 분리를 없애면서(ADR 0007) 쓰지 않습니다. 이미 넣었다면 지워도 됩니다.
 
 Render 환경 변수와 `.env.example` 에 추가해야 합니다.
 
@@ -65,7 +65,8 @@ Render 환경 변수와 `.env.example` 에 추가해야 합니다.
 | `official_contact` (`org`, `number`, `source_url`) | V1 `verify_line`: `{org} 대표번호({number})로 직접 전화해 확인하세요.` 없으면(`null`) `상대가 말한 기관의 대표번호를 직접 찾아 전화해 확인하세요.` 번호는 대표번호 KB 에서만 오며 녹음 속 번호가 아님 |
 | `response_actions` | K6 대응 줄. 분석 직후에는 비어 있고 `apply_call_answers` 가 채움 |
 | `checked` / `unchecked` (+`reason`) | 확인한 것 / 확인하지 못한 것. 둘을 섞지 않음 (`not_run` 과 `failed` 구분) |
-| `failures` | 실패 이유 문구 (`timeout`, `llm_error`, `invalid_output` 등). 화자 분리 실패는 여기가 아니라 `unchecked` 와 `inconclusive`·`caution` 으로 나타남 |
+| `failures` | 실패 이유 문구 (`timeout`, `llm_error`, `invalid_output` 등) |
+| `rejected` (`reason`) | 버린 주장. `self_side` 는 받는 사람이 되묻거나 옮긴 말·자기 일을 말한 문장으로 본 것(ADR 0007). 카드에 싣지 않음 |
 | `similar_cases` | 비슷한 사례 (있을 때만). 사례 첨부 관문 점수가 낮으면 유사도가 높아도 비어 있을 수 있습니다. 가족·납치 유형 사례의 `similarity` 에는 지인 어휘 가점(+0.03)이 포함돼 원점수보다 조금 높습니다. 악성 확률로 표시하지 마세요 |
 | `explanation` | 부가 설명. 비어 있어도 카드는 나가야 함 |
 | `questions[0]` (Q1, `option_ids`: `entered_info`, `installed_app`, `sent_money`, `not_yet`) | 결과 아래 `이미 하신 게 있나요?` 리스트 카드. 라벨은 FE |
@@ -96,7 +97,8 @@ K6 버튼은 `report_112` 에만 `112 신고`, 버튼 달 대응이 없으면 `1
 - `audio_seconds` 는 wav 만 채워집니다. 그 외 형식은 `None` 입니다.
 - 지식베이스 대본의 라이선스 문제: 금감원 자료는 "무단 복제·배포 금지"입니다. 공개 저장소에 올리기 전에 해결해야 합니다.
 - 가족·지인 사칭 유형은 사례 검색이 약합니다 (결과가 `inconclusive` 로 나올 수 있음). 사례 첨부 관문 때문에 `similar_cases` 가 빈 채로 나가는 것은 오류가 아닙니다.
-- 5초 안에 카카오 첫 응답, STT 실측은 3~4분 녹음에 12~16초입니다. 더 긴 녹음의 한도는 정해지지 않았습니다.
+- 5초 안에 카카오 첫 응답, STT 실측은 2~11초입니다(화자 분리를 하던 때 3~4분 녹음 합계 12~16초). 더 긴 녹음의 한도는 정해지지 않았습니다.
+- 대본에 화자 구분이 없습니다. 누가 한 말인지는 문장 꼴로 가늠하고, `suspected` 는 자기소개 꼴의 기관·지인 주장과 부탁 꼴의 요구가 함께 있을 때만 나옵니다(ADR 0007). 결과 형태는 바뀌지 않았습니다.
 
 ## 완료 조건
 
@@ -107,9 +109,9 @@ K6 버튼은 `report_112` 에만 `112 신고`, 버튼 달 대응이 없으면 `1
 - [ ] V1 결과 카드(`official_contact` 로 `verify_line`)와 Q1 리스트 카드 렌더링, Q1 답은 `apply_call_answers` 결과로 K6 생성
 - [ ] V1 버튼 `112 신고`·`자세히 보기`, K6 빈 버튼 자리 `1394 상담` (D15·D17)
 - [ ] lifespan 에서 `warm_up_voice_case_search()` 호출 (실패해도 기동)
-- [ ] 환경 변수 6개를 `.env.example`·Render 에 반영
+- [ ] 환경 변수 4개(`STT_BASE_URL`·`STT_MODEL`·`LLM_API_KEY`·`CLAIMS_MODEL`)를 `.env.example`·Render 에 반영
 - [ ] 대본 저장·외부 전송 전 마스킹 (엔드포인트 확정 전에는 대본 비저장)
-- [ ] STT 실패(`not_analyzable`), 화자 분리 실패(`TranscriptResult.speaker_split_failed`), 시간 초과 경로 테스트
+- [ ] STT 실패(`not_analyzable`), 시간 초과 경로 테스트
 - [ ] 한 사용자 동시 요청 K5 잠금
 - [ ] 의존 방향 유지 (`backend` -> `ai`), `ai/` 는 카카오 payload 를 모름
 - [ ] 관련 테스트와 전체 테스트 통과

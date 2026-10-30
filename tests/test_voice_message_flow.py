@@ -245,3 +245,49 @@ class TestExistingTextAndUrlFlowsAreUnaffected:
 
         assert response.status_code == 200
         assert response.json() == main.render_card("r6-input-required")
+
+
+class TestVoiceDownloadCancellation:
+    async def test_cancel_mid_chunk_removes_partial_temp_file(self, monkeypatch):
+        """바깥 wait_for 타임아웃(CancelledError)이 청크를 받는 도중 들어와도 임시 파일을 지운다."""
+
+        import asyncio
+
+        import httpx
+
+        second_chunk_started = asyncio.Event()
+
+        async def slow_body():
+            yield b"x" * 10
+            second_chunk_started.set()
+            await asyncio.sleep(60)
+            yield b"y"
+
+        def handler(request):
+            return httpx.Response(200, content=slow_body())
+
+        created = []
+        real_mkstemp = main.tempfile.mkstemp
+
+        def tracking_mkstemp(*args, **kwargs):
+            fd, path = real_mkstemp(*args, **kwargs)
+            created.append(path)
+            return fd, path
+
+        async def public_ip(host):
+            return None
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        monkeypatch.setattr(main, "get_http_client", lambda: client)
+        monkeypatch.setattr(main, "assert_resolves_to_public_ip", public_ip)
+        monkeypatch.setattr(main.tempfile, "mkstemp", tracking_mkstemp)
+
+        task = asyncio.create_task(main.download_voice_media(SIGNED_CDN_URL))
+        await asyncio.wait_for(second_chunk_started.wait(), timeout=5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await client.aclose()
+
+        assert len(created) == 1
+        assert not os.path.exists(created[0])

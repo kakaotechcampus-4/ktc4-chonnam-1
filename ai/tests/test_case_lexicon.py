@@ -4,7 +4,6 @@ from ai.case.lexicon import (
     INSTITUTION_PATTERN,
     classify_demand,
     demand_kinds,
-    pick_other_speaker,
     read_with_lexicon,
 )
 from ai.case.types import (
@@ -17,8 +16,8 @@ from ai.case.types import (
 )
 
 
-def seg(speaker, text):
-    return Segment(side=Side.UNKNOWN, speaker=speaker, text=text)
+def seg(text):
+    return Segment(side=Side.UNKNOWN, text=text)
 
 
 def source(*segments):
@@ -60,62 +59,67 @@ def test_no_demand():
 @pytest.mark.parametrize("text", ["검사 결과가 나왔습니다", "수사 중인 계좌입니다"])
 def test_institution_not_triggered(text):
     assert not INSTITUTION_PATTERN.search(text)
-    reading = read_with_lexicon(source(seg("화자1", text))).reading
+    reading = read_with_lexicon(source(seg(text))).reading
     assert all(i.kind != IdentityKind.INSTITUTION for i in reading.identity)
 
 
 def test_institution_and_acquaintance_identity():
     r = read_with_lexicon(
-        source(seg("화자1", "금융감독원 수사관입니다"), seg("화자2", "엄마 나야"))
+        source(seg("금융감독원 수사관입니다"), seg("엄마 나야"))
     ).reading
     kinds = {i.kind for i in r.identity}
     assert kinds == {IdentityKind.INSTITUTION, IdentityKind.ACQUAINTANCE}
 
 
 def test_ddalgi_not_acquaintance():
-    r = read_with_lexicon(source(seg("화자1", "딸기 주문하셨죠"))).reading
+    r = read_with_lexicon(source(seg("딸기 주문하셨죠"))).reading
     assert r.identity == []
 
 
 def test_blockers():
-    r = read_with_lexicon(source(seg("화자1", "엄마 폰이 고장 났어. 통화는 안 돼"))).reading
+    r = read_with_lexicon(source(seg("엄마 폰이 고장 났어. 통화는 안 돼"))).reading
     assert len(r.blockers) == 2
 
 
-def test_v1_script_picks_b():
+def test_v1_script_reads_whole_transcript():
     src = source(
-        seg("A", "여보세요"),
-        seg("B", "금융감독원 수사관 김○○입니다. 고객님 명의 계좌가 범죄에 연루됐습니다"),
-        seg("A", "네? 어떻게 해야 하죠"),
-        seg("B", "자산 보호를 위해 안전계좌로 옮기셔야 합니다. 확인은 02-1234-5678로 하세요"),
+        seg("여보세요"),
+        seg("금융감독원 수사관 김○○입니다. 고객님 명의 계좌가 범죄에 연루됐습니다"),
+        seg("네? 어떻게 해야 하죠"),
+        seg("자산 보호를 위해 안전계좌로 옮기셔야 합니다. 확인은 02-1234-5678로 하세요"),
     )
     result = read_with_lexicon(src)
     r = result.reading
     assert result.status == "fallback"
-    assert r.other_speaker == "B"
-    assert r.speaker_confidence == "medium"
     assert {d.kind for d in r.demands} == {DemandKind.MONEY_TRANSFER, DemandKind.CALL_NUMBER}
     # 인용은 원문 문장 그대로
     assert "금융감독원 수사관 김○○입니다" in [i.quote for i in r.identity]
     assert "확인은 02-1234-5678로 하세요" in [d.quote for d in r.demands]
 
 
-def test_tie_or_none_gives_no_speaker_low():
-    tie = source(seg("A", "송금하세요"), seg("B", "이체하세요"))
-    assert pick_other_speaker(tie.segments) is None
-    r = read_with_lexicon(tie).reading
-    assert r.other_speaker is None
-    assert r.speaker_confidence == "low"
-    assert len(r.demands) == 2  # 상대를 못 골라 전체를 읽는다
-
-    none = read_with_lexicon(source(seg("A", "안녕하세요"))).reading
-    assert none.other_speaker is None and none.speaker_confidence == "low"
+def test_recipient_side_sentences_are_not_read():
+    # 받는 사람이 되묻거나 자기 일을 말한 문장은 읽지 않는다 (ADR 0007)
+    r = read_with_lexicon(
+        source(seg("검찰이라면서 송금하라고요?"), seg("제가 지금 보낼게요"), seg("보내야 돼요?"))
+    ).reading
+    assert r.identity == [] and r.demands == []
 
 
 def test_caps_enforced():
     text = ". ".join(f"계좌로 송금하세요 {i}" for i in range(10))
-    r = read_with_lexicon(source(seg("B", text))).reading
+    r = read_with_lexicon(source(seg(text))).reading
     assert len(r.demands) == 6
+
+
+def test_caps_prefer_shaped_claims_in_source_order():
+    # 상한이 차면 자기소개·부탁 꼴을 먼저 고르고, 고른 것은 원문 순서로 둔다
+    refs = [seg(f"검찰 사건 이야기 {i}") for i in range(3)]
+    asks = [seg(f"이번 달 송금 내역 {i}") for i in range(6)]
+    src = source(*refs, *asks, seg("서울중앙지검 수사관입니다"), seg("안전계좌로 옮기셔야 합니다"))
+    r = read_with_lexicon(src).reading
+    assert len(r.identity) == 3 and len(r.demands) == 6
+    assert r.identity[-1].quote == "서울중앙지검 수사관입니다"
+    assert r.demands[-1].quote == "안전계좌로 옮기셔야 합니다"
 
 
 def test_identity_kinds_from_text():

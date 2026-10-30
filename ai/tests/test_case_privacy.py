@@ -65,10 +65,9 @@ def test_keeps_phone_and_url(raw):
 def test_mask_transcript_masks_each_segment():
     t = TranscriptResult(
         segments=[
-            Segment(side=Side.UNKNOWN, speaker="화자1", text="주민번호 900101-1234567"),
-            Segment(side=Side.UNKNOWN, speaker="화자2", text="02-1234-5678"),
+            Segment(side=Side.UNKNOWN, text="주민번호 900101-1234567"),
+            Segment(side=Side.UNKNOWN, text="02-1234-5678"),
         ],
-        speaker_split_failed=False,
     )
     out = mask_transcript(t)
     assert out.segments[0].text == "주민번호 <주민번호>"

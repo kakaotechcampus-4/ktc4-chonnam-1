@@ -265,13 +265,13 @@ async def read_claims(source: ReadingSource, *, client: AsyncOpenAI | None = Non
 | 검사 | 대상 | 걸리면 |
 |---|---|---|
 | **V-1** 인용이 원문에 그대로 있고 4자 이상인가 | 모든 인용 | `not_in_source` / `too_short` 로 버림 |
-| **V-2** 상대 쪽 말인가 | 통화는 `other_speaker` 발화만 인정한다(화자 분리 실패면 전체). 캡처는 `side=other`·`unknown` 만 인정한다 | `self_side` 로 버림 |
+| **V-2** 상대 쪽 말인가 | 통화는 `other_speaker` 발화만 인정한다(화자 분리 실패면 전체). 캡처는 `side=other`·`unknown` 만 인정한다. **ADR 0007: 통화는 화자 없이 문장 꼴로 받는 사람 쪽 말(되묻기·옮긴 말·자기 일)을 거른다** | `self_side` 로 버림 |
 | **V-3** 알림 문장인가 | `demands` | 아래 표의 끝 모양이면 `notice_sentence` 로 버림 |
 | **V-4** 부정·경고문인가 | `demands` | 기존 `action_is_denied()` 가 참이면 `negated` 로 버림 |
 | **V-5** 수사·감독 기관 목록에 드는가 | `identity`(kind=institution) | `name` 이나 `quote` 가 아래 목록에 걸리면 `institution_claim` 이 된다. 안 걸리면 카드에 보여 줄 주장으로만 남고 하한·caution에는 쓰지 않는다 |
 | **V-6** 관계 주장 | `identity`(kind=acquaintance) | V-1·V-2를 통과하면 `acquaintance_claim` 이 된다. 관계 어휘는 보지 않는다 |
 | **V-7** 말로 부른 주소 | `spoken_hosts` | 형식을 검증하고 호스트만 남긴다(origin=spoken). 실패하면 `not_url` 로 버림 |
-| **V-8** 화자 신뢰도 | 통화 | `speaker_confidence=low` 이거나 화자 정보가 없으면 `speaker_split_failed=True` |
+| **V-8** 화자 신뢰도 | 통화 | `speaker_confidence=low` 이거나 화자 정보가 없으면 `speaker_split_failed=True`. **ADR 0007로 없앴다** |
 
 버린 항목은 `rejected` 와 trace에 남긴다. 평가에서 "LLM이 틀린 것을 코드가 잡은 수"로 센다(§12).
 
@@ -457,7 +457,7 @@ Deps 메서드가 예외를 던지거나 시간이 초과돼도 래퍼가 잡아
 
 - **L-1** 조건을 채운 `brand_mismatch`, `kisa_listed`, origin=message의 `lookalike_domain`
 - **L-2** `install_prompt` 또는 `page_signal`
-- **L-3** 통화: 상대 화자의 `institution_claim` + (`money_request`·`app_install_request`·`remote_app_mention`·`info_request`·`auth_code_request`·`cash_delivery_request` 중 하나). 또는 상대 화자의 `acquaintance_claim` + `money_request`
+- **L-3** 통화: 상대 화자의 `institution_claim` + (`money_request`·`app_install_request`·`remote_app_mention`·`info_request`·`auth_code_request`·`cash_delivery_request` 중 하나). 또는 상대 화자의 `acquaintance_claim` + `money_request`. **ADR 0007: "상대 화자" 대신 꼴 맞은 근거(`Evidence.counts_for_floor` — 자기소개 꼴 신원 + 부탁 꼴 요구)만 쓴다**
 - **L-4** 지인 사칭: `acquaintance_claim` + (`money_request`·`gift_card_request`·`auth_code_request` 중 하나) + `user_not_person`. 링크가 있어도 적용한다
 
 L-3·L-4의 요구 코드는 LLM이 읽은 종류다. v2에서는 어휘가 맞아야 했다. 그래서 v3에서는 "잔액을 안전한 곳으로 옮겨 두셔야 합니다"도 L-3이 된다.
@@ -467,7 +467,7 @@ L-3·L-4의 요구 코드는 LLM이 읽은 종류다. v2에서는 어휘가 맞�
 - **U-1** 하한 근거가 없으면 `suspected` 를 낼 수 없다 → `inconclusive`
 - **U-2** `official_domain` 은 문자의 모든 텍스트 URL이 `official_match` 를 받았고(단축이면 `first_real_domain` 기준), 리다이렉트 최종 호스트가 그 도메인이거나 하위 도메인이고, `install_prompt`·`page_signal`·하한 근거가 없을 때만 낸다
 - **U-3** 사진·음성에서 읽은 URL은 `official_match` 근거가 될 수 없다. 이런 URL이 있으면 `unchecked` 에 `link_spelling` 을 넣고, 사진이면 멈출 행동에 `paste_text` 를 더한다
-- **U-4** `speaker_split_failed=True` 이면 L-3을 쓸 수 없다 → `inconclusive`, `caution=True`
+- **U-4** `speaker_split_failed=True` 이면 L-3을 쓸 수 없다 → `inconclusive`, `caution=True`. **ADR 0007로 없앴다**
 - **U-5** 링크 후보, 받아들인 요구 코드, `institution_claim`·`acquaintance_claim` 이 모두 없으면 `input_required`
 - **U-6** 대본이 비었거나 STT·비전이 실패해 볼 내용이 없으면 `not_analyzable`
 
@@ -670,7 +670,8 @@ answers:
 | N8 (v2 R7) | 사진 `urls=["cj-deliver.top"]`, brand CJ대한통운 | 편집 거리 11 → `suspected`, L-1 |
 | N9 (v2 E10) | 사진 `urls=["cjlogistlcs.com"]` | 편집 거리 1 → `inconclusive`, `caution`. 멈출 행동 [dont_click_link, paste_text]. `link_spelling:read_from_image` |
 | N10 (v2 E11) | 녹음, 대본 `[]` | `not_analyzable`. 읽기 안 함, LLM 0 |
-| N11 (v2 E12) | V1인데 화자 정보 없음 | U-4 → `inconclusive`, `caution`. 멈출 행동 [dont_send_money, dont_call_number_in_message, hang_up] |
+| N11 (v2 E12) | ~~V1인데 화자 정보 없음~~ ADR 0007 뒤: 받는 사람이 기관·요구를 되묻기만 함 | 모두 `self_side` → `inconclusive`, `caution`. 멈출 행동 [dont_call_number_in_message, hang_up] |
+| N15 | 기관 자기소개 + 받는 사람의 "제 계좌에서 송금하라고요?" | 요구가 `self_side` → `inconclusive`, `caution`. 멈출 행동 [hang_up] |
 | N12 (v2 E14) | L1, `allow_page_visit=False` | 단축 주소를 풀지 않아 정적 검사·공식 대조 없음 → `inconclusive`, `caution=False`. Q1 [clicked_link, entered_info, installed_app, not_yet](`sent_money` 없음). `page_static:not_allowed`. records [search]. Q1 `entered_info` → [change_password, call_1332] |
 | N13 (v2 E9) | "[우체국] 반송 예정. cj-deliver . top 에서 주소를 확인하세요" | 링크 후보 `https://cj-deliver.top/`(origin=message) |
 | N14 | V1, 읽기 시간 초과 | 어휘표 폴백("옮기", 기관 목록) → `suspected`, L-3. `failures` [timeout], 근거 `derived_by=lexicon` |

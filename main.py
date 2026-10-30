@@ -597,7 +597,9 @@ async def download_voice_media(url: str) -> tuple[str, int]:
                     if total > MAX_VOICE_FILE_BYTES:
                         raise MediaDownloadBlocked("파일이 너무 큼")
                     destination.write(chunk)
-    except Exception:
+    except BaseException:
+        # 바깥 wait_for 타임아웃은 CancelledError(Exception 이 아니다)로 들어온다.
+        # 경로를 아직 돌려주지 않아 호출부가 지울 수 없으므로 여기서 지우고 다시 올린다
         os.remove(path)
         raise
 
