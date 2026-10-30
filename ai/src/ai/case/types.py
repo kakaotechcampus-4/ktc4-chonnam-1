@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from ai.types import CaseSearchResult, FailureCode, StrictModel
+from ai.types import CaseSearchResult, FailureCode, LinkCandidate, StrictModel
 
 
 # ── enum ────────────────────────────────────────────────────
@@ -321,6 +321,8 @@ class VoiceCaseResult(StrictModel):
     floors: list[str] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     claims: ClaimView = Field(default_factory=ClaimView)
+    # 말로 불러 준 주소(origin=spoken). 철자를 확인할 수 없어 공식 대조 근거가 될 수 없다 (U-3)
+    links: list[LinkCandidate] = Field(default_factory=list)
     stop_actions: list[StopAction] = Field(default_factory=list)
     # 분석 직후에는 비어 있다. Q1 답이 오면 apply_call_answers 가 채운다 (v3 §8)
     response_actions: list[ResponseAction] = Field(default_factory=list)

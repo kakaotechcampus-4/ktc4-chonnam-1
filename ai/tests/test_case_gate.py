@@ -23,7 +23,14 @@ from ai.case.types import (
     UncheckedReason,
 )
 from ai.case.verify import VerifyResult
-from ai.types import AnalysisStatus, CaseMatch, CaseSearchResult, FailureCode
+from ai.types import (
+    AnalysisStatus,
+    CaseMatch,
+    CaseSearchResult,
+    FailureCode,
+    LinkCandidate,
+    LinkOrigin,
+)
 
 
 def _ev(code: E, quote: str = "인용 문장입니다") -> Evidence:
@@ -140,6 +147,18 @@ def test_u5_spoken_host_counts_as_demand():
     assert Unchecked(
         item=UncheckedItem.LINK_SPELLING, reason=UncheckedReason.READ_FROM_VOICE
     ) in r.unchecked
+
+
+def test_spoken_host_is_passed_on_as_spoken_link():
+    r = _decide(_verify(spoken_hosts=["ykics24.kr"]))
+    assert r.links == [
+        LinkCandidate(url="https://ykics24.kr/", domain="ykics24.kr", origin=LinkOrigin.SPOKEN)
+    ]
+
+
+def test_no_spoken_host_no_links():
+    assert _decide(_verify(E.INSTITUTION_CLAIM, E.MONEY_REQUEST)).links == []
+    assert _decide(None, empty=True).links == []
 
 
 def test_u6_empty_transcript_is_not_analyzable():
