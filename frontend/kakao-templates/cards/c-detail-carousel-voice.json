@@ -8,7 +8,7 @@
           "items": [
             {
               "title": "🔎 의심되는 말",
-              "description": "{{ claim_lines }}\n\n상대 화자의 말만 근거로 썼어요."
+              "description": "{{ claim_lines }}\n\n{{ claim_note }}"
             },
             {
               "title": "📚 비슷한 사례",

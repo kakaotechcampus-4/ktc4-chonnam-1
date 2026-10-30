@@ -35,6 +35,7 @@
 | `response_lines` `contact_line` `buttons` | K6 (`k6-response.json`, 문자·녹음 공용) | `buttons`는 통째 빈칸(버튼 객체 목록, 없으면 빈 목록). 버튼은 `chatbot-copy.md` D17(녹음은 3절 "녹음 결과 버튼 (D17)" 표). `contact_line`은 녹음에서 `1394 상담` 버튼을 달 때만 넣고, 없으면 빈 문자열이고 남는 빈 줄은 BE가 정리한다 |
 | `headline` `stop_line` `verify_line` `call_claims` `checked` `unchecked` | V1 (`v1-voice-result.json`) | `verify_line`은 `official_contact`, `call_claims`는 `claims`. `number_checks`는 `checked`·`unchecked` 줄로 넣는다. 규칙은 `chatbot-copy.md` 3절 V1·"확인한 것·확인하지 못한 것" |
 | `claim_lines` `unchecked` `verify_line` | 녹음 캐러셀 (`c-detail-carousel-voice.json`) | V1과 같은 값. `claim_lines`는 `call_claims`에서 칸 제목을 뺀 줄들 |
+| `claim_note` | 녹음 캐러셀 1번째 장 | 평소 `통화 상대가 한 말만 근거로 썼어요.`, 말한 사람을 가리지 못했으면 다른 문장. 규칙은 `chatbot-copy.md` 4절 "녹음 캐러셀의 비슷한 사례" (2026-10-30) |
 | `similar_type` `similar_line` | 녹음 캐러셀 2번째 장 (비슷한 사례) | 가장 닮은 사례의 유형으로 고른다. 사례가 없으면 이 장을 통째로 뺀다. 유형별 문구는 `chatbot-copy.md` 4절 같은 절 (2026-10-30) |
 | `stop_line` | A2 녹음 (`a2-not-yet-voice.json`) | `hang_up`을 뺀 멈출 행동 문장. 없으면 빈 문자열 |
 | `stop_line` | A2 문자 (`a2-not-yet.json`) | `잘하셨어요. 지금처럼 ` 뒤에 붙는 멈출 행동 문장(`paste_text` 뺌). 규칙은 `chatbot-copy.md` 3절 A2 (2026-10-29). A3(`a3-clicked-link.json`)은 빈칸 없음 |

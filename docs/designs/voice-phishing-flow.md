@@ -243,7 +243,7 @@ V0로 들어오는 다른 길
                                                                      ▼
 Q1 항목 누름 → apply_answer (즉답, 콜백 없음)
    대응 있음 → K6        not_yet 만 → A2 (V1 녹음 문구)
-V1 [자세히 보기] → 캐러셀 5장 (녹음용. C1 근거 = 상대 화자 인용, C1a = 비슷한 사례, C4 = 기관 대표번호로 확인)
+V1 [자세히 보기] → 캐러셀 5장 (녹음용. C1 근거 = 통화 상대 인용, C1a = 비슷한 사례, C4 = 기관 대표번호로 확인)
 V1 [다른 녹음 확인하기] → V0   신고·피해 대응은 Q1 → K6·A2 (결과 카드에 신고 버튼 없음)
 ```
 
@@ -386,7 +386,7 @@ VE3을 R4로 합칠지는 4절 Q-4.
 | VE3 내용을 알아듣지 못함 | `ve3-unrecognized.json` (신규) | 빈칸 없음 |
 | VE4 사칭·요구하는 말이 없음 | `ve4-no-claim.json` (신규) | `input_required`. 빈칸 없음. 버튼 `다른 녹음 확인하기` · `1394 상담` |
 | V1 보이스피싱 결과 | `v1-voice-result.json` (신규) | |
-| 자세히 보기 (녹음용 C1~C4) | `c-detail-carousel-voice.json` (신규) | 이미지 없는 `textCard` 캐러셀. `claim_lines`·`unchecked`·`verify_line`. 2026-10-30 비슷한 사례 장(`similar_type`, `similar_line`)을 더함 |
+| 자세히 보기 (녹음용 C1~C4) | `c-detail-carousel-voice.json` (신규) | 이미지 없는 `textCard` 캐러셀. `claim_lines`·`unchecked`·`verify_line`. 2026-10-30 `claim_note`, 비슷한 사례 장(`similar_type`, `similar_line`)을 더함 |
 | Q1 이미 하신 게 있나요? | `q1-already-acted.json` (신규, 문자·녹음 공용) | `items` 통째 빈칸 |
 | K6 지금 먼저 하세요 | `k6-response.json` (신규, 공용) | `response_lines`·`contact_line`·`buttons` |
 | A2 아직 안 했어요 (녹음) | `a2-not-yet-voice.json` (신규) | |
