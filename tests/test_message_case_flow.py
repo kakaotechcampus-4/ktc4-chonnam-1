@@ -42,12 +42,13 @@ async def _post(body):
     return response.json()
 
 
-async def _answer(job_id, question_id, option_id, user=USER):
+async def _answer(job_id, question_id, option_id, user=USER, kind="message"):
+    extra = {"case_id": job_id, "question_id": question_id, "option_id": option_id}
+    if kind:
+        extra["kind"] = kind
     return await _post({
         "userRequest": {"utterance": "", "user": {"id": user}},
-        "action": {"clientExtra": {
-            "case_id": job_id, "question_id": question_id, "option_id": option_id,
-        }},
+        "action": {"clientExtra": extra},
     })
 
 
@@ -140,18 +141,22 @@ async def test_family_message_gets_r6b_with_q1_and_q2(monkeypatch, stub_read_mes
     ]
     assert q2[0]["extra"] == {
         "case_id": job["job_id"], "question_id": "called_known_number", "option_id": "not_person",
+        "kind": "message",
     }
     assert q2[0]["blockId"] == q1[0]["blockId"]
 
 
-async def test_institution_message_uses_official_number_from_kb(monkeypatch, stub_read_message):
+async def test_institution_message_points_to_official_channels(monkeypatch, stub_read_message):
     job, card = await _analyze_with_callback(monkeypatch, stub_read_message, INSTITUTION)
 
     outputs = _outputs(card)
     assert len(outputs) == 2  # Q2 는 가족·지인 문자에만
     result = _text_card(card)
     assert result["title"] == "🔎 주의가 필요한 문자예요"
-    assert "대표번호(" in result["description"]
+    # 문자가 내세운 기관 이름이나 번호를 안내 문장에 쓰지 않는다(3절 R6b·R9 org_label)
+    assert result["description"].startswith(
+        "돈을 보내지 마세요.\n보낸 기관의 공식 앱·홈페이지나 대표번호로 직접 확인하세요."
+    )
     assert "- 내세운 기관:" in result["description"]
     assert "- 실제로 보낸 곳" in result["description"]
     _assert_no_placeholders(card)
@@ -360,3 +365,65 @@ async def test_check_result_adds_time_when_room(monkeypatch, stub_read_message):
     checked = main.handle_check_result(USER)
     assert len(_outputs(checked)) == 3
     assert "확인한 결과예요" in _outputs(checked)[0]["simpleText"]["text"]
+
+
+# ── 검수 반영 ───────────────────────────────────────────────
+
+
+async def test_family_without_demand_prefixes_known_number_line(monkeypatch, stub_read_message):
+    job, card = await _analyze_with_callback(
+        monkeypatch, stub_read_message, "엄마 나야\n폰 바꿨어"
+    )
+    result = _text_card(card)
+    assert result["title"] == "🤔 판단하기 어려워요"
+    assert result["description"].startswith("문자 속 번호 대신 원래 알던 번호로 직접 전화해 확인하세요.")
+
+
+async def test_single_gift_card_stop_uses_full_sentence(monkeypatch, stub_read_message):
+    job, card = await _analyze_with_callback(monkeypatch, stub_read_message, GIFT)
+    assert _text_card(card)["description"].startswith("상품권을 사거나 핀번호를 보내지 마세요.")
+    a2 = await _answer(job["job_id"], "already_acted", "not_yet")
+    assert _text_card(a2)["description"].startswith(
+        "잘하셨어요. 지금처럼 상품권을 사거나 핀번호를 보내지 마세요."
+    )
+
+
+@pytest.mark.parametrize("question_id, option_id", [
+    ("bogus", "sent_money"), ("already_acted", "zzz"), ("called_known_number", "zzz"),
+    ("already_acted", "clicked_link"),
+])
+async def test_unknown_question_or_option_gets_notice_only(
+    monkeypatch, stub_read_message, question_id, option_id,
+):
+    job, _ = await _analyze_with_callback(monkeypatch, stub_read_message, FAMILY)
+    before = dict(job["final_payload"])
+    card = await _answer(job["job_id"], question_id, option_id)
+    assert card == main.kakao_response(main._CASE_NOT_FOUND_TEXT)
+    assert job["final_payload"] == before
+
+
+async def test_lost_job_without_message_kind_keeps_voice_notice():
+    card = await _answer("no-such-job", "already_acted", "entered_info", kind=None)
+    assert "녹음을 다시 보내 주세요" in str(card)
+    assert "KISA" not in str(card)
+
+
+async def test_answer_without_user_id_cannot_change_owned_case(monkeypatch, stub_read_message):
+    job, _ = await _analyze_with_callback(monkeypatch, stub_read_message, FAMILY)
+    before = dict(job["final_payload"])
+    card = await _post({
+        "userRequest": {"utterance": "", "user": {}},
+        "action": {"clientExtra": {
+            "case_id": job["job_id"], "question_id": "called_known_number",
+            "option_id": "not_person", "kind": "message",
+        }},
+    })
+    assert card == main.kakao_response(main._CASE_NOT_FOUND_TEXT)
+    assert job["final_payload"] == before
+
+
+async def test_q2_answer_refreshes_check_result_time(monkeypatch, stub_read_message):
+    job, _ = await _analyze_with_callback(monkeypatch, stub_read_message, FAMILY)
+    job["completed_at"] = "2020-01-01T00:00:00+00:00"
+    await _answer(job["job_id"], "called_known_number", "is_person")
+    assert not job["completed_at"].startswith("2020")

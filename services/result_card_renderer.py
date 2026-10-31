@@ -981,6 +981,7 @@ _MESSAGE_USER_ANSWER_LINES = {
 _MESSAGE_SIMILAR_REASONS = {
     "failed": "사례를 찾다가 문제가 생겼어요",
     "timeout": "시간 안에 끝내지 못했어요",
+    "not_run": "이번에는 확인하지 않았어요",
 }
 
 # Q1 문자 결과 라벨(3절 Q1 표)과 Q2 라벨(3절 Q2 표)
@@ -1012,6 +1013,15 @@ _KISA_BUTTON = {
     "action": "webLink",
     "webLinkUrl": "https://www.kisa.or.kr/118",
 }
+# 멈출 행동이 하나일 때 쓰는 문장(멈출 행동 표 "한 문장으로 쓸 때")
+_MESSAGE_STOP_SINGLE = {
+    "dont_enter_info": "정보를 입력하지 마세요.",
+    "dont_install_app": "앱을 설치하지 마세요.",
+    "dont_send_money": "돈을 보내지 마세요.",
+    "dont_send_gift_card": "상품권을 사거나 핀번호를 보내지 마세요.",
+    "dont_share_auth_code": "인증번호를 알려 주지 마세요.",
+    "dont_call_number_in_message": "문자 속 번호로 전화하지 마세요.",
+}
 # A2 의 stop_line 이 빌 때(요구를 읽지 못한 결과에 온 답) 쓰는 문장
 _MESSAGE_A2_DEFAULT_STOP = "문자가 요구하는 대로 하지 마세요."
 
@@ -1019,14 +1029,16 @@ _MESSAGE_A2_DEFAULT_STOP = "문자가 요구하는 대로 하지 마세요."
 def _message_stop_line(stop_actions: list[str]) -> str:
     """멈출 행동 줄. 받은 순서대로 최대 3개를 "~거나 ~지 마세요." 로 잇는다."""
 
-    joined = [
-        _MESSAGE_STOP_ACTION_JOIN[a]
+    actions = [
+        a
         for a in [a for a in stop_actions if a not in ("paste_text", "hang_up")][:3]
         if a in _MESSAGE_STOP_ACTION_JOIN
     ]
-    if not joined:
+    if not actions:
         return ""
-    return "거나 ".join(joined) + "지 마세요."
+    if len(actions) == 1 and actions[0] in _MESSAGE_STOP_SINGLE:
+        return _MESSAGE_STOP_SINGLE[actions[0]]
+    return "거나 ".join(_MESSAGE_STOP_ACTION_JOIN[a] for a in actions) + "지 마세요."
 
 
 def _message_identity_kinds(result: dict) -> set[str]:
@@ -1034,21 +1046,18 @@ def _message_identity_kinds(result: dict) -> set[str]:
 
 
 def _message_verify_line(result: dict, has_stop_line: bool) -> str:
-    """R6b 확인 안내 줄. 가족·지인이면 verify_actions, 기관이면 대표번호 KB 를 쓴다.
+    """R6b 확인 안내 줄(3절 R6b `verify_line`). 가족·지인이면 verify_actions, 그 밖에는 기관 문장이다.
 
-    문자 속 번호는 사기범 번호일 수 있어 쓰지 않는다. 멈출 행동이 없고 주의 갈래가 아니면
-    "문자 속 번호 대신 " 을 앞에 붙인다(3절 R6b).
+    문자가 내세운 기관 이름과 문자 속 번호는 쓰지 않는다(R9 org_label 과 같음). 멈출 행동이 없고
+    주의 갈래가 아니면 이 줄이 첫 줄이 되므로 "문자 속 번호 대신 " 을 앞에 붙인다.
     """
 
     kinds = _message_identity_kinds(result)
     if "acquaintance" in kinds:
         if "check_account_holder" in (result.get("verify_actions") or []):
+            # 본인이라고 확인한 뒤의 안내라 "문자 속 번호 대신" 과 잇지 않는다
             return _MESSAGE_ACCOUNT_HOLDER_LINE
-        return _MESSAGE_CALL_KNOWN_LINE
-
-    contact = result.get("official_contact")
-    if contact and contact.get("org") and contact.get("number"):
-        line = f"{contact['org']} 대표번호({contact['number']})로 직접 전화해 확인하세요."
+        line = _MESSAGE_CALL_KNOWN_LINE
     else:
         line = _MESSAGE_ORG_LINE
     if not has_stop_line and not result.get("caution"):
@@ -1153,6 +1162,8 @@ def render_message_question_card(job_id: str | None, question: dict) -> dict | N
                 "case_id": job_id,
                 "question_id": question_id,
                 "option_id": option_id,
+                # 서버 재시작으로 Job 을 잃어도 문자 결과의 답인지 알 수 있게 한다
+                "kind": "message",
             },
         }
         for option_id in question.get("option_ids") or []

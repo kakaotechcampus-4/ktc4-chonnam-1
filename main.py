@@ -443,7 +443,8 @@ async def kakao_skill(
 
     if qa_case_id and qa_question_id and qa_option_id:
         return handle_case_answer(
-            str(qa_case_id), str(qa_question_id), str(qa_option_id), user_id
+            str(qa_case_id), str(qa_question_id), str(qa_option_id), user_id,
+            kind=client_extra.get("kind"),
         )
 
     # 사용자가 결과 확인 요청하면 최근 분석 결과를 리턴
@@ -621,7 +622,7 @@ async def run_analysis(
 # 5초를 빼고, 이미 쓴 read_message() 시간을 뺀다(docs/latency-budget.md).
 MESSAGE_CASE_BUDGET_S = CALLBACK_DEADLINE_SECONDS - 5.0
 
-_CASE_NOT_FOUND_TEXT = "분석 결과를 찾을 수 없어요. 다시 확인하려면 문자나 녹음을 다시 보내 주세요."
+_CASE_NOT_FOUND_TEXT = "분석 결과를 찾을 수 없어요. 다시 확인하려면 문자를 다시 보내 주세요."
 
 
 async def run_message_case(
@@ -659,21 +660,41 @@ async def run_message_case(
     return render_message_case_card(payload, job_id)
 
 
+# 문자 결과 질문과 선택지. 목록 밖의 답은 결과를 바꾸지 않고 안내만 한다
+_MESSAGE_QUESTION_OPTIONS = {
+    "already_acted": {"entered_info", "installed_app", "sent_money", "not_yet", "unknown"},
+    "called_known_number": {"not_person", "is_person", "no_answer", "not_yet", "unknown"},
+}
+
+
 def handle_case_answer(
     case_id: str,
     question_id: str,
     option_id: str,
     user_id: str | None,
+    *,
+    kind: str | None = None,
 ) -> dict:
-    """Q1·Q2 리스트 카드 항목 클릭을 분석 종류에 맞는 처리로 보낸다."""
+    """Q1·Q2 리스트 카드 항목 클릭을 분석 종류에 맞는 처리로 보낸다.
+
+    Job 을 찾지 못하면 항목에 넣어 둔 kind 로 고른다. 문자 결과 항목에만 kind="message" 가 있고,
+    없으면 지금처럼 녹음 답 처리(안내 문장)로 보낸다.
+    """
 
     job = ANALYSIS_JOBS.get(case_id)
+    is_message = (
+        job.get("analysis_kind") == "message_case" if job is not None else kind == "message"
+    )
 
-    if job is not None and job.get("analysis_kind") == "voice" and question_id == "already_acted":
-        return handle_voice_answer(case_id, option_id)
+    if not is_message:
+        if question_id == "already_acted":
+            return handle_voice_answer(case_id, option_id)
+        return kakao_response(_CASE_NOT_FOUND_TEXT)
 
-    # 녹음이 아닌 Job 과, 서버 재시작 등으로 찾지 못한 Job 은 여기서 처리한다.
-    # Job 을 찾지 못하면 녹음인지 문자인지 알 수 없어 안내 문장과 기본 대응을 함께 보낸다.
+    if option_id not in _MESSAGE_QUESTION_OPTIONS.get(question_id, ()):
+        print(f"[MESSAGE ANSWER IGNORED] question={question_id} option={option_id}")
+        return kakao_response(_CASE_NOT_FOUND_TEXT)
+
     return handle_message_answer(case_id, question_id, option_id, user_id)
 
 
@@ -694,7 +715,7 @@ def handle_message_answer(
     job = ANALYSIS_JOBS.get(job_id)
     final_payload = job.get("final_payload") if job else None
     owner = job.get("user_id") if job else None
-    same_owner = not owner or not user_id or owner == user_id
+    same_owner = not owner or owner == user_id
 
     result: MessageCaseResult | None = None
     if (
@@ -730,7 +751,9 @@ def handle_message_answer(
     if question_id == "called_known_number":
         card = render_message_case_card(payload, job_id)
         if job.get("status") == "completed":
+            # "결과 확인" 이 새 결과와 답한 시각을 보여 주게 한다
             job["result"] = card
+            job["completed_at"] = datetime.now(timezone.utc).isoformat()
         return card
 
     return render_message_answer_card(payload)
