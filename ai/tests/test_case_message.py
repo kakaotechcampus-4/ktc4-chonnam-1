@@ -284,6 +284,7 @@ async def test_empty_text_does_not_call_llm():
     assert calls.reading == 0
     assert r.conclusion == Conclusion.INPUT_REQUIRED
     assert FailureCode.EMPTY_INPUT in r.failures
+    assert CheckItem.MESSAGE_TEXT not in r.checked
 
 
 async def test_too_long_text_is_not_analyzable():
@@ -364,11 +365,33 @@ async def test_unknown_question_or_option_is_ignored():
     assert apply_message_answer(r, "already_acted", "clicked_link") == r
 
 
-async def test_answer_on_not_analyzable_keeps_conclusion():
+async def test_answer_on_not_analyzable_keeps_conclusion_but_gives_response():
     r = await analyze_message_case("가" * 9000, runtime=_runtime(None))
     r2 = apply_message_answer(r, "already_acted", "sent_money")
     assert r2.conclusion == Conclusion.NOT_ANALYZABLE
     assert r2.answers.already_acted == ["sent_money"]
+    assert r2.response_actions == [ResponseAction.REQUEST_PAYMENT_STOP, ResponseAction.REPORT_112]
+
+
+@pytest.mark.parametrize("settled", ["not_person", "is_person"])
+@pytest.mark.parametrize("later", ["not_person", "is_person", "no_answer", "not_yet", "unknown"])
+async def test_settled_q2_ignores_later_q2_answers(settled, later):
+    """대화창에 남은 예전 Q2 카드를 다시 눌러도 정해진 결론이 바뀌지 않는다."""
+    first = apply_message_answer(await _analyze(F1, F1_READING), "called_known_number", settled)
+    assert apply_message_answer(first, "called_known_number", later) == first
+
+
+async def test_not_person_without_l4_still_marks_answer_basis():
+    reading = {
+        "identity": [{"kind": "acquaintance", "name": "자녀", "quote": "엄마 나야"}],
+        "demands": [{"kind": "move_messenger", "quote": "이 번호로 문자해"}],
+    }
+    r = await _analyze("엄마 나야\n이 번호로 문자해", reading)
+    assert "called_known_number" in _q(r)
+    r = apply_message_answer(r, "called_known_number", "not_person")
+    assert r.conclusion == Conclusion.INCONCLUSIVE and r.floors == []
+    assert r.basis_from_answer is True
+    assert CheckItem.USER_ANSWER in r.checked
 
 
 async def test_q1_on_input_required_still_gives_response():

@@ -75,7 +75,7 @@ Q2_OPTIONS = ["not_person", "is_person", "no_answer", "not_yet", "unknown"]
 # unknown 은 Q1 선택지에서 뺐지만 들어오면 not_yet 과 같이 처리한다 (v3 §7.6)
 Q1_ACCEPTED = frozenset({*Q1_OPTIONS, "unknown"})
 # 이 두 답이 오면 Q2 를 다시 묻지 않는다
-_Q2_SETTLED = frozenset({"not_person", "is_person"})
+Q2_SETTLED = frozenset({"not_person", "is_person"})
 
 
 def _answer_evidence(answers: MessageAnswers) -> list[Evidence]:
@@ -228,14 +228,15 @@ def decide_message(
         conclusion = Conclusion.INCONCLUSIVE
         # 예외: 본인이 맞다고 하면 caution 만 끈다. 결론을 '안전' 쪽으로 옮기지는 않는다 (v3 §7.4)
         caution = caution_before_answer and q2 != "is_person"
-    basis_from_answer = bool(floors) or (q2 == "is_person" and caution_before_answer)
+    # 원래 번호로 통화한 결과(본인이 아니다·맞다)를 근거로 썼으면 늘 표시한다 (FE R6b basis_note)
+    basis_from_answer = q2 in Q2_SETTLED
 
     questions: list[AttachedQuestion] = []
     if conclusion == Conclusion.SUSPECTED or caution:
         questions.append(
             AttachedQuestion(question_id=QuestionId.ALREADY_ACTED, option_ids=list(Q1_OPTIONS))
         )
-    if q2_applies and q2 not in _Q2_SETTLED:
+    if q2_applies and q2 not in Q2_SETTLED:
         questions.append(
             AttachedQuestion(
                 question_id=QuestionId.CALLED_KNOWN_NUMBER, option_ids=list(Q2_OPTIONS)
@@ -253,7 +254,7 @@ def decide_message(
         read_ran=True,
         similar=similar,
         search_miss=search_miss,
-        answered=q2 in _Q2_SETTLED,
+        answered=q2 in Q2_SETTLED,
     )
 
     return MessageCaseResult(

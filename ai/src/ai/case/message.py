@@ -13,10 +13,12 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from ai.case.actions import response_actions_for
 from ai.case.lexicon import read_with_lexicon
-from ai.case.message_gate import Q1_ACCEPTED, Q2_OPTIONS, decide_message
+from ai.case.message_gate import Q1_ACCEPTED, Q2_OPTIONS, Q2_SETTLED, decide_message
 from ai.case.privacy import mask_pii
 from ai.case.types import (
+    CheckItem,
     ClaimReadingResult,
     InputKind,
     MessageCaseResult,
@@ -135,8 +137,11 @@ async def _analyze(
         return max(time_budget_s - (time.monotonic() - started), 0.0)
 
     if not isinstance(text, str) or not text.strip():
-        # 읽을 글이 없으면 LLM 을 부르지 않는다
-        return decide_message(accepted=[], failures=[FailureCode.EMPTY_INPUT])
+        # 읽을 글이 없으면 LLM 을 부르지 않는다. 읽지 않았으니 문자 내용을 확인한 것으로 세지 않는다
+        empty = decide_message(accepted=[], failures=[FailureCode.EMPTY_INPUT])
+        return empty.model_copy(
+            update={"checked": [c for c in empty.checked if c != CheckItem.MESSAGE_TEXT]}
+        )
     if len(text) > MAX_MESSAGE_CHARS:
         return decide_message(accepted=None, failures=[FailureCode.INPUT_TOO_LARGE])
 
@@ -218,7 +223,9 @@ def apply_message_answer(
 
     - Q1(already_acted): 답이 쌓이고 response_actions 만 다시 정해진다. 결론은 그대로다.
     - Q2(called_known_number): 마지막 답으로 덮어쓴다. not_person 이면 L-4 로 결론이 바뀔 수 있다.
-    - 모르는 질문·선택지, 분석하지 못한 결과에는 아무것도 바꾸지 않고 그대로 돌려준다.
+    - 모르는 질문·선택지에는 아무것도 바꾸지 않고 그대로 돌려준다.
+    - Q2 가 본인이 아니다·맞다로 정해진 뒤에 온 Q2 답은 무시한다. 대화창에 남은 예전 카드를 다시
+      눌러 결론이 '안전' 쪽으로 돌아가지 않게 하려는 것이다.
     """
     answers = result.answers
     if question_id == QuestionId.ALREADY_ACTED.value and option_id in Q1_ACCEPTED:
@@ -227,13 +234,21 @@ def apply_message_answer(
             acted.append(option_id)
         answers = answers.model_copy(update={"already_acted": acted})
     elif question_id == QuestionId.CALLED_KNOWN_NUMBER.value and option_id in Q2_OPTIONS:
+        if answers.called_known_number in Q2_SETTLED:
+            return result
         answers = answers.model_copy(update={"called_known_number": option_id})
     else:
         return result
 
-    # 분석하지 못한 결과(not_analyzable)는 다시 돌릴 근거가 없다. 답만 남긴다
+    # 분석하지 못한 결과(not_analyzable)는 다시 돌릴 근거가 없다. 답을 남기고, 돈을 보냈다는
+    # 사람에게는 결론과 상관없이 대응을 준다 (v3 §8)
     if result.conclusion.value == "not_analyzable":
-        return result.model_copy(update={"answers": answers})
+        return result.model_copy(
+            update={
+                "answers": answers,
+                "response_actions": response_actions_for(answers.already_acted, [], call=False),
+            }
+        )
 
     return decide_message(
         accepted=result.evidence,
