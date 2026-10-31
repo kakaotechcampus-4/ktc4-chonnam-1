@@ -1,4 +1,4 @@
-"""통화 대본에서 상대의 주장·요구를 읽는다 (v3 §5, 통화 모드만).
+"""통화 대본·링크 없는 문자에서 상대의 주장·요구를 읽는다 (v3 §5).
 
 LLM 은 읽기만 한다. 위험·안전 판단은 없고, 누가 말했는지도 고르지 않는다. 인용이 실제 원문에
 있는지, 받는 사람 쪽 말 꼴이 아닌지는 verify 가 확인한다. 실패하면 어휘표로 같은 모양의 결과를 돌려준다.
@@ -20,7 +20,11 @@ from ai.types import FailureCode
 
 LOGGER = logging.getLogger(__name__)
 TIMEOUT_SECONDS = 12.0
-PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "v1" / "claims_call.md"
+_PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts" / "v1"
+PROMPT_PATH = _PROMPTS_DIR / "claims_call.md"
+TEXT_PROMPT_PATH = _PROMPTS_DIR / "claims_text.md"
+# 입력 종류별 프롬프트. 사진(image)은 아직 읽지 않는다
+_PROMPTS = {InputKind.AUDIO: PROMPT_PATH, InputKind.TEXT: TEXT_PROMPT_PATH}
 
 
 def _resolve_model(model: str | None) -> str:
@@ -29,7 +33,7 @@ def _resolve_model(model: str | None) -> str:
 
 
 def _render_segments(source: ReadingSource) -> str:
-    """세그먼트(문장)를 한 줄씩 data 태그로 감싼다. 화자 표기는 없다(ADR 0008).
+    """세그먼트(통화는 문장, 문자는 줄)를 한 줄씩 data 태그로 감싼다. 화자 표기는 없다(ADR 0008).
     원문 안의 닫는 태그는 무력화한다."""
     lines = []
     for seg in source.segments:
@@ -49,8 +53,9 @@ async def read_claims(
     model: str | None = None,
     timeout_s: float = TIMEOUT_SECONDS,
 ) -> ClaimReadingResult:
-    if source.kind != InputKind.AUDIO:
-        raise ValueError("read_claims 는 통화(audio)만 지원합니다")
+    prompt_path = _PROMPTS.get(source.kind)
+    if prompt_path is None:
+        raise ValueError("read_claims 는 통화(audio)와 문자(text)만 지원합니다")
 
     try:
         llm = client or create_client(timeout_s)
@@ -58,7 +63,7 @@ async def read_claims(
             llm.chat.completions.parse(
                 model=_resolve_model(model),
                 messages=[
-                    {"role": "system", "content": PROMPT_PATH.read_text(encoding="utf-8")},
+                    {"role": "system", "content": prompt_path.read_text(encoding="utf-8")},
                     {"role": "user", "content": _render_segments(source)},
                 ],
                 response_format=ClaimReading,

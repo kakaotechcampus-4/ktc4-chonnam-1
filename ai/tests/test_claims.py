@@ -129,11 +129,20 @@ async def test_cancelled_propagates(src, make_parse_client):
         await read_claims(src, client=client)
 
 
-async def test_non_audio_rejected(make_parse_client):
+async def test_image_rejected(make_parse_client):
     client, _ = make_parse_client(parsed=reading())
-    bad = ReadingSource(kind=InputKind.TEXT, segments=[seg("문자")])
+    bad = ReadingSource(kind=InputKind.IMAGE, segments=[seg("캡처")])
     with pytest.raises(ValueError):
         await read_claims(bad, client=client)
+
+
+async def test_text_uses_message_prompt(make_parse_client):
+    client, parse = make_parse_client(parsed=ClaimReading())
+    text = ReadingSource(kind=InputKind.TEXT, segments=[seg("엄마 나야 폰 고장났어")])
+    result = await read_claims(text, client=client)
+    assert result.status == "ok"
+    system = parse.await_args.kwargs["messages"][0]["content"]
+    assert "문자" in system and "통화 대본" not in system
 
 
 async def test_model_order(src, make_parse_client, monkeypatch):
