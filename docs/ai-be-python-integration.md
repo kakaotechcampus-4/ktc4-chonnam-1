@@ -49,13 +49,36 @@ reading = await read_message(utterance, timeout_s=15.0)  # 상한은 BE 의 지�
 if reading.extracted.analysis_status is not AnalysisStatus.COMPLETED:
     ...  # LLM 실패. 링크가 있는지 모른다. "링크 없음"(R6)이 아니라 분석 불가(R4)로 안내한다
 if not reading.links:
-    ...  # unverified_links 면 "확인하지 못한 주소", 아니면 링크 없는 문자(R6)
+    ...  # unverified_links 면 "확인하지 못한 주소", 아니면 링크 없는 사칭 문자 분석(아래 0-1)
 links = [link.url for link in reading.links]  # split_message 의 links 자리
 # links 가 있어도 unverified_links 면 빠진 링크가 있을 수 있다고 덧붙인다
 # 같은 읽기를 넘기면 추출 LLM 을 다시 부르지 않는다
 message_task = asyncio.create_task(
     analyze_message_part(reading.message, extracted=reading.extracted))
 ```
+
+### 0-1. 링크 없는 문자: `analyze_message_case` → R6b, Q1·Q2 답: `apply_message_answer`
+
+링크가 없다고 확인된 문자(`completed`, `links` 비었음, `unverified_links` False)는 세 번째 시나리오
+(가족·지인·기관 사칭)로 분석한다. BE 구현은 `main.py` 의 `run_message_case()`·`handle_message_answer()` 다.
+
+```python
+from ai.case import analyze_message_case, apply_message_answer
+from ai.case.types import MessageCaseResult
+
+result = await analyze_message_case(utterance, time_budget_s=40.0 - elapsed)  # 예외는 CancelledError 만
+job["final_payload"] = result.model_dump(mode="json")  # Q1·Q2 답을 받을 때 다시 쓴다
+# 카드: suspected → r6b-warning, inconclusive → r6b-uncertain, input_required → r6, not_analyzable → r4
+# questions 순서대로 q1-already-acted·q2-called-known-number 리스트 카드를 붙인다
+
+stored = MessageCaseResult.model_validate(job["final_payload"])
+updated = apply_message_answer(stored, question_id, option_id)  # LLM·네트워크 없음, 콜백 없이 즉답
+# already_acted → response_actions 로 K6(없으면 A2), called_known_number → 새 R6b + 남은 질문
+```
+
+- Q2 가 `not_person` 이고 지인 주장 + 돈·상품권·인증번호 요구가 있으면 `suspected`(L-4)로 바뀐다.
+- Q2 가 `not_person`·`is_person` 으로 한 번 정해지면 그 뒤의 Q2 답은 무시한다(예전 카드 재클릭).
+- 결과 스키마는 `contracts/schemas/message-case-result.schema.json` 이다.
 
 | `split_message()` | `read_message()` |
 |---|---|

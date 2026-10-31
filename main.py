@@ -31,6 +31,9 @@ from services.result_card_renderer import (
     render_voice_result_card,
     render_voice_detail_carousel,
     render_voice_answer_card,
+    render_message_case_card,
+    render_message_answer_card,
+    render_message_default_answer_card,
 )
 
 # AI 연결
@@ -40,6 +43,11 @@ from ai.types import AnalysisStatus, FailureCode, MessageReading, UrlAnalysis
 # 통화(음성) 분석 연결. ai.case 는 카카오 payload를 모른다 (CLAUDE.md 의존 방향).
 from ai.case import transcribe_call, analyze_call, apply_call_answers
 from ai.case.types import VoiceCaseResult
+
+# 링크 없는 문자(가족·지인·기관 사칭) 분석 연결. 답 처리는 LLM 없이 결과만 다시 정한다.
+from ai.case import analyze_message_case, apply_message_answer
+from ai.case.actions import default_response_actions
+from ai.case.types import MessageCaseResult
 
 from scanner.isolation_client import collect_url_isolated
 from scanner.isolation_page import to_isolated_page
@@ -283,6 +291,10 @@ def handle_check_result(
         if not completed_time:
             return result
 
+        # 결과 카드 + Q1 + Q2 처럼 이미 3개면 시각 말풍선을 붙이지 않는다(카카오 outputs 상한)
+        if len(result.get("template", {}).get("outputs", [])) >= KAKAO_MAX_OUTPUTS:
+            return result
+
         time_message = kakao_response(
             f"{completed_time}에 확인한 결과예요."
         )
@@ -422,14 +434,17 @@ async def kakao_skill(
     if detail_job_id:
         return handle_detail_carousel(detail_job_id)
 
-    # Q1 "이미 하신 게 있나요?" 리스트 카드 항목 클릭. LLM·네트워크 없이
-    # apply_call_answers()로 바로 답한다(설계 문서 D11, 콜백 불필요).
+    # Q1 "이미 하신 게 있나요?"·Q2 "원래 알던 번호로 통화해 보셨나요?" 리스트 카드 항목 클릭.
+    # LLM·네트워크 없이 바로 답한다(설계 문서 D11, 콜백 불필요). 녹음·문자 결과 모두
+    # 같은 답변 블록을 쓰므로 저장된 Job 의 분석 종류로 나눈다.
     qa_case_id = client_extra.get("case_id")
     qa_question_id = client_extra.get("question_id")
     qa_option_id = client_extra.get("option_id")
 
-    if qa_case_id and qa_question_id == "already_acted" and qa_option_id:
-        return handle_voice_answer(qa_case_id, qa_option_id)
+    if qa_case_id and qa_question_id and qa_option_id:
+        return handle_case_answer(
+            str(qa_case_id), str(qa_question_id), str(qa_option_id), user_id
+        )
 
     # 사용자가 결과 확인 요청하면 최근 분석 결과를 리턴
     if intent_name == "결과 확인":
@@ -505,10 +520,11 @@ _TOO_LONG_TEXT = (
 
 
 def _response_without_links(reading: MessageReading) -> dict | None:
-    """조사할 링크가 없을 때의 응답. 링크가 있으면 None.
+    """링크를 조사할 수 없을 때의 응답. 링크가 있거나 링크 없는 문자로 확인됐으면 None.
 
-    LLM 이 실패하면 링크가 있는지 모르므로 "링크 없음"(R6)으로 안내하지 않는다.
-    받지 못한 링크(`unverified_links`)가 있을 때도 마찬가지다.
+    LLM 이 실패하면 링크가 있는지 모르므로 "링크 없음"(R6·R6b)으로 안내하지 않는다.
+    받지 못한 링크(`unverified_links`)가 있을 때도 마찬가지다. 링크가 없다고 확인된 문자는
+    호출한 쪽이 링크 없는 사칭 문자 분석(`run_message_case`)으로 넘긴다.
     """
 
     extracted = reading.extracted
@@ -524,14 +540,18 @@ def _response_without_links(reading: MessageReading) -> dict | None:
         return None
     if reading.unverified_links:
         return kakao_response(_UNREAD_LINKS_TEXT)
-    return render_card("r6-input-required")
+    return None
 
 
 async def run_analysis(
     utterance: str,
     job_id: str | None = None,
 ) -> dict:
-    """Read links from the message, then collect each once while message analysis runs."""
+    """Read links from the message, then collect each once while message analysis runs.
+
+    링크가 없다고 확인된 문자는 링크 없는 사칭 문자 분석으로 보낸다(세 번째 시나리오).
+    """
+    started = time.monotonic()
     reading = await read_message(utterance, timeout_s=READ_MESSAGE_TIMEOUT_SECONDS)
     print(
         f"[LINK COUNT] {len(reading.links)} "
@@ -540,6 +560,8 @@ async def run_analysis(
     response = _response_without_links(reading)
     if response is not None:
         return response
+    if not reading.links:
+        return await run_message_case(utterance, job_id=job_id, started=started)
 
     cards: list[dict] = []
     # 결과 카드는 링크마다 output 1개. 안내까지 카카오 output 상한(3개)을 넘기지 않는다
@@ -586,6 +608,132 @@ async def run_analysis(
             message_task.cancel()
         await asyncio.gather(message_task, return_exceptions=True)
     return merge_kakao_responses(cards)
+
+
+# ============================================================
+# Message Case (링크 없는 사칭 문자, 세 번째 시나리오)
+#
+# read_message()가 링크가 없다고 확인한 문자만 온다. 판정은 AI 게이트가 하고
+# BE는 결과(MessageCaseResult)를 Job에 저장해 Q1·Q2 답과 "결과 확인"에 다시 쓴다.
+# ============================================================
+
+# analyze_message_case()에 줄 예산. 녹음과 같이 전체 분석 45초에서 카드·저장 여유
+# 5초를 빼고, 이미 쓴 read_message() 시간을 뺀다(docs/latency-budget.md).
+MESSAGE_CASE_BUDGET_S = CALLBACK_DEADLINE_SECONDS - 5.0
+
+_CASE_NOT_FOUND_TEXT = "분석 결과를 찾을 수 없어요. 다시 확인하려면 문자나 녹음을 다시 보내 주세요."
+
+
+async def run_message_case(
+    utterance: str,
+    job_id: str | None = None,
+    started: float | None = None,
+) -> dict:
+    """링크 없는 문자를 분석해 R6b(또는 R6·R4) 카드와 붙일 질문을 만든다.
+
+    analyze_message_case()는 계약상 CancelledError만 올리지만 외부 함수라 방어적으로 감싼다.
+    """
+
+    elapsed = time.monotonic() - started if started is not None else 0.0
+    budget = max(MESSAGE_CASE_BUDGET_S - elapsed, 0.0)
+
+    try:
+        result = await analyze_message_case(utterance, time_budget_s=budget)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        print(f"[MESSAGE CASE ERROR] {type(error).__name__}")
+        return render_card("r4-unavailable")
+
+    payload = result.model_dump(mode="json")
+    print(
+        f"[MESSAGE CASE] conclusion={payload.get('conclusion')} "
+        f"caution={payload.get('caution')} "
+        f"questions={[q.get('question_id') for q in payload.get('questions') or []]}"
+    )
+
+    if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
+        job["final_payload"] = payload
+        job["analysis_kind"] = "message_case"
+
+    return render_message_case_card(payload, job_id)
+
+
+def handle_case_answer(
+    case_id: str,
+    question_id: str,
+    option_id: str,
+    user_id: str | None,
+) -> dict:
+    """Q1·Q2 리스트 카드 항목 클릭을 분석 종류에 맞는 처리로 보낸다."""
+
+    job = ANALYSIS_JOBS.get(case_id)
+
+    if job is not None and job.get("analysis_kind") == "voice" and question_id == "already_acted":
+        return handle_voice_answer(case_id, option_id)
+
+    # 녹음이 아닌 Job 과, 서버 재시작 등으로 찾지 못한 Job 은 여기서 처리한다.
+    # Job 을 찾지 못하면 녹음인지 문자인지 알 수 없어 안내 문장과 기본 대응을 함께 보낸다.
+    return handle_message_answer(case_id, question_id, option_id, user_id)
+
+
+def handle_message_answer(
+    job_id: str,
+    question_id: str,
+    option_id: str,
+    user_id: str | None,
+) -> dict:
+    """링크 없는 문자 결과의 Q1·Q2 답을 처리한다(v3 §8, B3).
+
+    - Q1(already_acted): 답이 쌓이고 대응(K6)이나 A2 를 보낸다. 결론은 그대로다.
+    - Q2(called_known_number): 게이트를 다시 돌려 새 결과 카드(R6b + 남은 질문)를 보낸다.
+      "결과 확인"도 새 결과를 보여 주도록 Job 의 result 를 바꾼다.
+    - Job 이 없거나 다른 사용자의 Job 이면 Q1 은 기본 대응(default_response_actions)으로 답한다.
+    """
+
+    job = ANALYSIS_JOBS.get(job_id)
+    final_payload = job.get("final_payload") if job else None
+    owner = job.get("user_id") if job else None
+    same_owner = not owner or not user_id or owner == user_id
+
+    result: MessageCaseResult | None = None
+    if (
+        job is not None
+        and job.get("analysis_kind") == "message_case"
+        and final_payload
+        and same_owner
+    ):
+        try:
+            result = MessageCaseResult.model_validate(final_payload)
+        except Exception as error:
+            print(f"[MESSAGE ANSWER ERROR] {type(error).__name__}")
+
+    if result is None:
+        notice = kakao_response(_CASE_NOT_FOUND_TEXT)
+        if question_id == "already_acted":
+            actions = [action.value for action in default_response_actions(option_id)]
+            if actions:
+                return merge_kakao_responses([
+                    notice, render_message_default_answer_card(actions, option_id),
+                ])
+        return notice
+
+    updated = apply_message_answer(result, question_id, option_id)
+    payload = updated.model_dump(mode="json")
+    job["final_payload"] = payload
+
+    print(
+        f"[MESSAGE ANSWER] question={question_id} option={option_id} "
+        f"conclusion={payload.get('conclusion')}"
+    )
+
+    if question_id == "called_known_number":
+        card = render_message_case_card(payload, job_id)
+        if job.get("status") == "completed":
+            job["result"] = card
+        return card
+
+    return render_message_answer_card(payload)
 
 
 # ============================================================
