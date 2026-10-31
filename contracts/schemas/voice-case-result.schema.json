@@ -305,7 +305,9 @@
         "app_install_request",
         "remote_app_mention",
         "call_request",
-        "messenger_move"
+        "messenger_move",
+        "user_not_person",
+        "user_is_person"
       ],
       "title": "EvidenceCode",
       "type": "string"
@@ -449,7 +451,8 @@
     },
     "QuestionId": {
       "enum": [
-        "already_acted"
+        "already_acted",
+        "called_known_number"
       ],
       "title": "QuestionId",
       "type": "string"

@@ -1,6 +1,6 @@
-"""통화 케이스 분석이 함께 쓰는 타입 (v3 §3.1 중 통화에 필요한 것만).
+"""통화·링크 없는 문자 케이스 분석이 함께 쓰는 타입 (v3 §3.1 중 두 경로에 필요한 것만).
 
-문자 전용 칸(categories·claimed_sender 등)은 일부러 넣지 않았다.
+링크 문자 전용 칸(categories·claimed_sender 등)은 일부러 넣지 않았다.
 """
 
 from __future__ import annotations
@@ -87,6 +87,9 @@ class EvidenceCode(str, Enum):
     REMOTE_APP_MENTION = "remote_app_mention"
     CALL_REQUEST = "call_request"
     MESSENGER_MOVE = "messenger_move"
+    # Q2 답 근거 (v3 §7.1). user_not_person 만 하한(L-4)에 쓴다
+    USER_NOT_PERSON = "user_not_person"
+    USER_IS_PERSON = "user_is_person"
 
 
 class StopAction(str, Enum):
@@ -117,8 +120,16 @@ class ResponseAction(str, Enum):
 
 
 class QuestionId(str, Enum):
-    # 통화 경로는 첫 질문만 쓴다
+    # 통화 경로는 첫 질문만 쓴다. Q2 는 가족·지인이라고 한 문자에만 붙는다 (v3 §7.6)
     ALREADY_ACTED = "already_acted"
+    CALLED_KNOWN_NUMBER = "called_known_number"
+
+
+class VerifyAction(str, Enum):
+    """결과 카드의 확인 안내 (v3 §7.8). 문장은 FE 가 정한다."""
+
+    CALL_KNOWN_NUMBER = "call_known_number"
+    CHECK_ACCOUNT_HOLDER = "check_account_holder"
 
 
 class CheckItem(str, Enum):
@@ -328,5 +339,43 @@ class VoiceCaseResult(StrictModel):
     similar_cases: CaseSearchResult | None = None
     rejected: list[RejectedClaim] = Field(default_factory=list)
     reading_status: Literal["ok", "fallback"] = "ok"
+    explanation: str = ""
+    failures: list[FailureCode] = Field(default_factory=list)
+
+
+class MessageAnswers(StrictModel):
+    """링크 없는 문자 결과에 쌓인 답 (v3 §8). BE 는 결과와 함께 저장하기만 한다."""
+
+    # Q1 답은 쌓인다. 고른 순서대로 두고, 같은 답은 한 번만 남긴다
+    already_acted: list[str] = Field(default_factory=list)
+    # Q2 답은 마지막 것으로 덮어쓴다
+    called_known_number: str | None = None
+
+
+class MessageCaseResult(StrictModel):
+    """v3 CaseFinal 중 링크 없는 문자(가족·지인·기관 사칭)에 쓰는 칸."""
+
+    scenario: Scenario
+    conclusion: Conclusion
+    caution: bool = False
+    floors: list[str] = Field(default_factory=list)
+    # 읽기에서 받아들인 근거 + 답 근거(origin=user_answer). 답을 다시 처리할 때 답 근거만 갈아 끼운다
+    evidence: list[Evidence] = Field(default_factory=list)
+    claims: ClaimView = Field(default_factory=ClaimView)
+    stop_actions: list[StopAction] = Field(default_factory=list)
+    # Q1 답이 오면 apply_message_answer 가 채운다 (v3 §7.7)
+    response_actions: list[ResponseAction] = Field(default_factory=list)
+    verify_actions: list[VerifyAction] = Field(default_factory=list)
+    questions: list[AttachedQuestion] = Field(default_factory=list)
+    checked: list[CheckItem] = Field(default_factory=list)
+    unchecked: list[Unchecked] = Field(default_factory=list)
+    # 내세운 기관의 공식 대표번호. 번호는 대표번호 KB 에서만 온다(문자 속 번호는 쓰지 않는다)
+    official_contact: OfficialContact | None = None
+    similar_cases: CaseSearchResult | None = None
+    rejected: list[RejectedClaim] = Field(default_factory=list)
+    reading_status: Literal["ok", "fallback"] = "ok"
+    # Q2 답 때문에 결론이나 caution 이 바뀌었을 때만 True (v3 §7.10)
+    basis_from_answer: bool = False
+    answers: MessageAnswers = Field(default_factory=MessageAnswers)
     explanation: str = ""
     failures: list[FailureCode] = Field(default_factory=list)
