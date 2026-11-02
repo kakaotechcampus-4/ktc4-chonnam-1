@@ -682,20 +682,27 @@ def _r9_message_reason(message: dict) -> str:
     return reason or _R9_DEFAULT_MESSAGE_REASON
 
 
-def _inject_job_id(card: dict, job_id: str | None) -> dict:
-    """"자세히 보기" 버튼에 `extra.job_id`를 넣는다.
+def _inject_job_id(card: dict, job_id: str | None, *, allow_details: bool = True) -> dict:
+    """"자세히 보기" 버튼을 허용할 때만 `extra.job_id`를 넣는다.
 
     다른 BE 담당자가 이 job_id로 Job을 찾아서 캐러셀에 넘길 분석 결과를
     조회한다 (Job 조회 로직 자체는 이 함수의 책임이 아니다).
+    링크별 연결이 불가능하면 해당 버튼만 제거하고 나머지 카드 내용은 유지한다.
     """
 
-    if job_id is None:
+    if job_id is None and allow_details:
         return card
 
     for output in card.get("template", {}).get("outputs", []):
         for key in ("textCard", "basicCard"):
             node = output.get(key)
             if not node:
+                continue
+            if not allow_details:
+                node["buttons"] = [
+                    button for button in node.get("buttons", []) or []
+                    if button.get("label") != DETAIL_BUTTON_LABEL
+                ]
                 continue
             for button in node.get("buttons", []) or []:
                 if button.get("label") == DETAIL_BUTTON_LABEL:
@@ -736,6 +743,8 @@ def _result_card_values(analysis_result: dict, card_name: str) -> dict[str, str]
 def render_result_card(
     analysis_result: dict,
     job_id: str | None = None,
+    *,
+    allow_details: bool = True,
 ) -> dict:
     """분석 결과에 맞는 결과 카드를 고르고 완성된 Kakao 응답을 돌려준다."""
 
@@ -756,7 +765,7 @@ def render_result_card(
             {"message_reason": _truncate_evidence(reason, available)},
         )
 
-    return _inject_job_id(card, job_id)
+    return _inject_job_id(card, job_id, allow_details=allow_details)
 
 
 def merge_kakao_responses(responses: list[dict]) -> dict:
