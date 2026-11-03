@@ -11,6 +11,7 @@ from scanner.models import BrowserResult, CollectResult
 
 
 OFFICIAL = "https://www.cjlogistics.com/"
+OFFICIAL_PAGE = "https://www.cjlogistics.com/en/main"
 EVIL = "https://parcel-attacker.example/"
 SHORT = "https://bit.ly/test"
 
@@ -19,8 +20,8 @@ def collected(input_url=OFFICIAL, **changes):
     return replace(CollectResult(input_url, OFFICIAL, (), 200, "text/html", "<p>조회</p>", None, 1), **changes)
 
 
-def browser(final_url, chain, failures=()):
-    return BrowserResult("script_redirect", final_url, chain, "<p>조회</p>", None, (), 0, 1, failures)
+def browser(final_url, chain, failures=(), downloads=()):
+    return BrowserResult("script_redirect", final_url, chain, "<p>조회</p>", None, downloads, 0, 1, failures)
 
 
 @pytest.mark.parametrize("result, final_url, domain, official", [
@@ -37,7 +38,11 @@ def browser(final_url, chain, failures=()):
     (collected(status_code=None, html="", failures=("connection_failed",)), None, "www.cjlogistics.com", "unresolved"),
     (collected(failures=("html_truncated",)), OFFICIAL, "www.cjlogistics.com", "unresolved"),
     (collected(html=""), OFFICIAL, "www.cjlogistics.com", "unresolved"),
-    (collected(browser=browser(OFFICIAL, (OFFICIAL,))), OFFICIAL, "www.cjlogistics.com", "unresolved"),
+    (collected(browser=browser(OFFICIAL, (OFFICIAL,))), OFFICIAL, "www.cjlogistics.com", "official"),
+    (collected(browser=browser(OFFICIAL_PAGE, (OFFICIAL, OFFICIAL_PAGE))), OFFICIAL_PAGE, "www.cjlogistics.com", "official"),
+    (collected(browser=browser(OFFICIAL, (OFFICIAL,), downloads=("a.apk",))), OFFICIAL, "www.cjlogistics.com", "unresolved"),
+    (collected(browser=browser(OFFICIAL, ())), OFFICIAL, "www.cjlogistics.com", "unresolved"),
+    (collected(browser=browser(EVIL, (OFFICIAL,))), OFFICIAL, "www.cjlogistics.com", "unresolved"),
     (collected(EVIL, browser=browser(OFFICIAL, (EVIL, OFFICIAL))), OFFICIAL, "parcel-attacker.example", "brand_mismatch"),
     (collected(browser=browser(EVIL, (OFFICIAL, EVIL))), EVIL, "www.cjlogistics.com", "unresolved"),
     (collected(browser=browser(OFFICIAL, (OFFICIAL, EVIL, OFFICIAL))), OFFICIAL, "www.cjlogistics.com", "unresolved"),
@@ -55,11 +60,12 @@ def test_collected_addresses_drive_domain_comparison(result, final_url, domain, 
     assert analysis.scan.scanned_at is None
 
 
-@pytest.mark.parametrize("input_url, domain", [
-    (SHORT, "bit.ly"),
-    (OFFICIAL, "www.cjlogistics.com"),
+@pytest.mark.parametrize("input_url, domain, official", [
+    (SHORT, "bit.ly", "unresolved"),
+    # 알려진 한계(ADR 0009): 기록에 남지 않는 경유는 볼 수 없어 공식으로 남는다. 페이지 근거는 보존한다
+    (OFFICIAL, "www.cjlogistics.com", "official"),
 ])
-def test_browser_commits_hide_js_target_http_redirect_without_confirming_official(input_url, domain):
+def test_browser_commits_hide_js_target_http_redirect(input_url, domain, official):
     # JS visits EVIL, which returns HTTP 302 to OFFICIAL. framenavigated only
     # records committed documents, so the collector never puts EVIL in this chain.
     risk_html = '<form><input type="password" name="password"></form>'
@@ -78,7 +84,7 @@ def test_browser_commits_hide_js_target_http_redirect_without_confirming_officia
 
     analysis = main.build_ai_url_analysis(result, "CJ대한통운", input_url)
 
-    assert analysis.official.value == "unresolved"
+    assert analysis.official.value == official
     assert analysis.domain == domain
     assert analysis.final_url == OFFICIAL
     page, failure = to_isolated_page(result)

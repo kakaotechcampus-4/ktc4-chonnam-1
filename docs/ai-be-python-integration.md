@@ -4,8 +4,8 @@
 `build_ai_url_analysis()`에 있다. urlscan 대신 격리 API의 `CollectResult`를 사용하고,
 `to_isolated_page()`의 `page, failure`를 최종 호출에 넘긴다. 실제 방문을 확인하지 못한
 `UrlAnalysis.final_url`은 `None`이며 부분 HTML은 분석 후에도 부분 수집 상태를 유지한다.
-브라우저 이동 경로는 HTTP 리다이렉트 중간 주소를 보장하지 않으므로 브라우저 단계가
-실행되면 공식 확정을 거부한다. 정상 JS 페이지도 `unresolved`가 될 수 있으며,
+브라우저 이동 경로는 HTTP 리다이렉트 중간 주소를 보장하지 않지만, 브라우저 수집에 실패가 없고
+이동 기록이 모두 공식 도메인이면 공식 판정을 유지한다([ADR 0009](./adr/0009-official-after-browser-collection.md)).
 첫 실제 도메인은 HTTP 수집 경로로만 정하고 미확인 시 입력 도메인을 표시한다.
 확인된 브라우저 최종 URL과 HTML 분석 근거는 보존한다.
 아래 urlscan 어댑터 설명은 이전 인계 예시다.
