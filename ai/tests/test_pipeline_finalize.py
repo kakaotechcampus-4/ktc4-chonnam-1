@@ -182,7 +182,7 @@ async def test_html_limit_preserves_message_and_sets_null(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_initial_inspection_timeout_preserves_message(monkeypatch):
-    clock = iter([0.0, 0.101])
+    clock = iter([0.0, 0.501])
     monkeypatch.setattr(html_page, "monotonic", lambda: next(clock))
     source_message = message()
 
@@ -288,6 +288,6 @@ async def test_client_ownership_and_cancellation(official, owned, cancel, failur
         await asyncio.gather(task, return_exceptions=True)
     assert client.closed is owned
     if owned:
-        factory.assert_called_once_with(2.0)
+        factory.assert_called_once_with(5.0)
     else:
         factory.assert_not_called()
