@@ -169,7 +169,9 @@ def verify_call(
     reading: ClaimReading,
     *,
     derived_by: Literal["llm", "lexicon"],
+    origin: Origin = Origin.TRANSCRIPT,
 ) -> VerifyResult:
+    """통화와 링크 없는 문자가 같은 검증을 쓴다. origin 만 다르다(문자는 Origin.MESSAGE)."""
     texts = [_norm(seg.text) for seg in source.segments]
     accepted: list[Evidence] = []
     rejected: list[RejectedClaim] = []
@@ -203,7 +205,7 @@ def verify_call(
         accepted.append(
             Evidence(
                 code=code,
-                origin=Origin.TRANSCRIPT,
+                origin=origin,
                 quote=quote,
                 derived_by=derived_by,
                 counts_for_floor=code in _FLOOR_CODES and shaped,
