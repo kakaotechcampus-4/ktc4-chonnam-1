@@ -269,6 +269,21 @@ class TestParseBrowserField:
         parsed = parse_collect_response(OK_URL, data)
         assert len(parsed.browser.navigation_chain) == 10
         assert len(parsed.browser.downloads) == 5
+        assert parsed.browser.navigation_requests is None  # 구버전 수집기: "없음"과 "빈 기록"을 구분한다
+
+    def test_navigation_requests_are_read_and_capped(self):
+        data = {"input_url": OK_URL, "browser": {"navigation_requests": ["a"] * 50}}
+        parsed = parse_collect_response(OK_URL, data).browser
+        assert len(parsed.navigation_requests) == 20
+        assert "browser_navigation_limit" in parsed.failures
+
+        data = {"input_url": OK_URL, "browser": {"navigation_requests": [OK_URL]}}
+        parsed = parse_collect_response(OK_URL, data).browser
+        assert parsed.navigation_requests == (OK_URL,)
+        assert parsed.failures == ()
+
+        data = {"input_url": OK_URL, "browser": {"navigation_requests": "bad"}}
+        assert parse_collect_response(OK_URL, data).browser.navigation_requests == ()
 
 
 class TestPolicy:

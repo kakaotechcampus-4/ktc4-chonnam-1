@@ -91,6 +91,7 @@ Content-Type: application/json
 | `trigger` | 3단계를 돌린 이유. `script_only_page`, `script_redirect`, `status_403_404`, `always` |
 | `final_url` | 마지막으로 실제 열린 주소 |
 | `navigation_chain` | 메인 페이지가 이동한 주소. JS 리다이렉트 포함, 최대 10개 |
+| `navigation_requests` | 메인 페이지의 이동 요청 전부. 문서가 열리지 않은 HTTP 리다이렉트 경유도 담는다. 최대 20개 |
 | `html`, `title` | JS 실행 후 화면. HTML 은 128 KiB 상한 |
 | `downloads` | 브라우저가 시작하려던 다운로드 주소. 파일은 받지 않는다. 최대 5개 |
 | `blocked_requests` | 허용 목록 밖 요청, WebSocket, 팝업을 막은 횟수 |
@@ -112,6 +113,7 @@ Content-Type: application/json
 | `invalid_response`, `url_mismatch` | 메인 서버 파서 | 격리 서버 응답을 믿을 수 없음 |
 | `browser_timeout` | 3단계 | 마감 초과. 그때까지 본 화면은 남긴다 |
 | `browser_blocked_navigation` | 3단계 | 메인 페이지가 허용 목록 밖으로 이동하려 해서 막았다 |
+| `browser_navigation_limit` | 3단계 | 이동 요청이 20개를 넘어 뒤쪽을 기록하지 못했다 |
 | `browser_navigation_failed` | 3단계 | 허용한 주소인데 열지 못했다 |
 | `browser_crashed`, `browser_error` | 3단계 | 렌더러 크래시, 그 밖의 브라우저 오류. 브라우저를 다시 띄운다 |
 | `browser_snapshot_failed` | 3단계 | 페이지가 멈춰 화면을 가져오지 못했다 |

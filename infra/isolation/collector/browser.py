@@ -37,6 +37,7 @@ log = logging.getLogger("collector.browser")
 BLOCKED_RESOURCE_TYPES = frozenset({"image", "font", "media"})  # 속도·메모리 (설계 §t3.medium)
 FORM_SELECTOR = "form, input[type=password], input[type=tel]"
 MAX_NAVIGATIONS = 10
+MAX_NAVIGATION_REQUESTS = 20
 MAX_DOWNLOADS = 5
 MAX_URL_CHARS = 2048
 SNAPSHOT_RESERVE_SECONDS = 1.0  # 마감 뒤에도 그때까지 본 화면을 가져올 몫
@@ -91,6 +92,7 @@ def _truncate(html: str, limit: int = HTML_LIMIT_BYTES) -> tuple[str, bool]:
 @dataclass
 class _Seen:
     navigations: list[str] = field(default_factory=list)
+    navigation_requests: list[str] = field(default_factory=list)
     downloads: list[str] = field(default_factory=list)
     blocked: int = 0
     blocked_navigation: bool = False
@@ -352,6 +354,15 @@ class BrowserRenderer:
             if len(seen.navigations) < MAX_NAVIGATIONS:
                 seen.navigations.append(frame.url[:MAX_URL_CHARS])
 
+        def on_request(request) -> None:
+            # framenavigated 는 확정된 문서만 본다. HTTP 302 로 지나간 경유는 요청에만 남는다.
+            if not _is_main_navigation(request, page) or not request.url.startswith(("http://", "https://")):
+                return
+            if len(seen.navigation_requests) < MAX_NAVIGATION_REQUESTS:
+                seen.navigation_requests.append(request.url[:MAX_URL_CHARS])
+            else:
+                seen.fail("browser_navigation_limit")
+
         def on_download(download) -> None:
             if len(seen.downloads) < MAX_DOWNLOADS:
                 seen.downloads.append(download.url[:MAX_URL_CHARS])
@@ -370,6 +381,7 @@ class BrowserRenderer:
             task.add_done_callback(self._tasks.discard)
 
         page.on("framenavigated", on_navigated)
+        page.on("request", on_request)
         page.on("download", on_download)
         page.on("crash", on_crash)
         context.on("page", on_new_page)
@@ -444,4 +456,5 @@ class BrowserRenderer:
             blocked_requests=seen.blocked,
             elapsed_ms=int((time.monotonic() - start) * 1000),
             failures=tuple(seen.failures),
+            navigation_requests=tuple(seen.navigation_requests),
         )

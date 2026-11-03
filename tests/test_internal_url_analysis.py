@@ -20,8 +20,8 @@ def collected(input_url=OFFICIAL, **changes):
     return replace(CollectResult(input_url, OFFICIAL, (), 200, "text/html", "<p>조회</p>", None, 1), **changes)
 
 
-def browser(final_url, chain, failures=(), downloads=()):
-    return BrowserResult("script_redirect", final_url, chain, "<p>조회</p>", None, downloads, 0, 1, failures)
+def browser(final_url, chain, failures=(), downloads=(), requests=None):
+    return BrowserResult("script_redirect", final_url, chain, "<p>조회</p>", None, downloads, 0, 1, failures, requests)
 
 
 @pytest.mark.parametrize("result, final_url, domain, official", [
@@ -46,6 +46,14 @@ def browser(final_url, chain, failures=(), downloads=()):
     (collected(EVIL, browser=browser(OFFICIAL, (EVIL, OFFICIAL))), OFFICIAL, "parcel-attacker.example", "brand_mismatch"),
     (collected(browser=browser(EVIL, (OFFICIAL, EVIL))), EVIL, "www.cjlogistics.com", "unresolved"),
     (collected(browser=browser(OFFICIAL, (OFFICIAL, EVIL, OFFICIAL))), OFFICIAL, "www.cjlogistics.com", "unresolved"),
+    # 이동 요청 기록: 확정되지 않은 HTTP 경유까지 대조한다
+    (collected(browser=browser(OFFICIAL, (OFFICIAL,), requests=(OFFICIAL,))), OFFICIAL, "www.cjlogistics.com", "official"),
+    (collected(browser=browser(OFFICIAL, (OFFICIAL,), requests=(OFFICIAL, EVIL, OFFICIAL))), OFFICIAL, "www.cjlogistics.com", "unresolved"),
+    (collected(browser=browser(OFFICIAL, (OFFICIAL,), requests=())), OFFICIAL, "www.cjlogistics.com", "unresolved"),
+    (collected(browser=browser(OFFICIAL, (OFFICIAL,), requests=(OFFICIAL, "not-a-url"))), OFFICIAL, "www.cjlogistics.com", "unresolved"),
+    # 브라우저도 입력 주소에서 출발하므로 앞쪽 단축 주소는 경유로 치지 않는다. 뒤쪽 단축 주소는 친다
+    (collected(SHORT, redirect_chain=(SHORT, OFFICIAL), browser=browser(OFFICIAL, (OFFICIAL,), requests=(SHORT, OFFICIAL))), OFFICIAL, "www.cjlogistics.com", "official"),
+    (collected(SHORT, redirect_chain=(SHORT, OFFICIAL), browser=browser(OFFICIAL, (OFFICIAL,), requests=(SHORT, OFFICIAL, SHORT, OFFICIAL))), OFFICIAL, "www.cjlogistics.com", "unresolved"),
     (collected(browser=browser("about:blank", (), ("browser_timeout",))), OFFICIAL, "www.cjlogistics.com", "unresolved"),
     (collected(browser=browser(EVIL, (OFFICIAL,), ("browser_timeout",))), OFFICIAL, "www.cjlogistics.com", "unresolved"),
     (collected(SHORT, final_url=SHORT, browser=browser(OFFICIAL, (SHORT, OFFICIAL))), OFFICIAL, "bit.ly", "unresolved"),
@@ -62,7 +70,7 @@ def test_collected_addresses_drive_domain_comparison(result, final_url, domain, 
 
 @pytest.mark.parametrize("input_url, domain, official", [
     (SHORT, "bit.ly", "unresolved"),
-    # 알려진 한계(ADR 0009): 기록에 남지 않는 경유는 볼 수 없어 공식으로 남는다. 페이지 근거는 보존한다
+    # 이동 요청 기록이 없는 구버전 수집기의 한계(ADR 0009). 페이지 근거는 보존한다
     (OFFICIAL, "www.cjlogistics.com", "official"),
 ])
 def test_browser_commits_hide_js_target_http_redirect(input_url, domain, official):

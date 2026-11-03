@@ -2,6 +2,7 @@ import asyncio
 import hmac
 import logging
 import os
+import re
 import sys
 import tempfile
 import time
@@ -1093,7 +1094,7 @@ def _browser_demotion(browser, brand: str | None, judged_domain: str | None) -> 
     """브라우저 결과가 공식 판정을 내릴 사유와 걸린 호스트를 돌려준다. 없으면 (None, None).
 
     브라우저가 돌았다는 사실만으로는 내리지 않는다. 스크립트로 이동하는 공식 사이트가 늘 판단 보류가 되기
-    때문이다. 기록에 남지 않는 HTTP 경유는 볼 수 없다(ADR 0009).
+    때문이다. 이동 요청 기록이 있으면 HTTP 경유까지 대조하고, 구버전 수집기면 이동 기록만 본다(ADR 0009).
     """
 
     if browser is None:
@@ -1102,9 +1103,14 @@ def _browser_demotion(browser, brand: str | None, judged_domain: str | None) -> 
         return "BROWSER_FAILURE", None
     if browser.downloads:
         return "BROWSER_DOWNLOAD", None
-    if not browser.navigation_chain:
+    requests = browser.navigation_requests
+    if not browser.navigation_chain or requests == ():
         return "BROWSER_CHAIN_EMPTY", None
-    for url in (*browser.navigation_chain, browser.final_url):
+    # 브라우저도 입력 주소에서 출발한다. redirect_chain 대조처럼 맨 앞의 단축 주소만 건너뛴다.
+    hops = list(requests or ())
+    while hops and is_shortener(_http_host(hops[0])):
+        hops.pop(0)
+    for url in (*browser.navigation_chain, *hops, browser.final_url):
         host = _http_host(url)
         if host is None and url != browser.final_url:
             return "BROWSER_NON_OFFICIAL_HOP", None
@@ -1186,6 +1192,39 @@ def build_ai_url_analysis(
 # ============================================================
 # Kakao callback
 # ============================================================
+
+_CALLBACK_CODE_FIELDS = ("status", "code", "errorCode", "error_code", "resultCode", "error")
+_SAFE_CALLBACK_TOKEN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+# 주소 조각이나 토큰처럼 긴 문자열이 섞인 메시지는 버린다.
+_UNSAFE_CALLBACK_MESSAGE = re.compile(r"[/?=&]|[A-Za-z0-9_-]{24,}")
+
+
+def _callback_error_detail(response) -> str:
+    """카카오가 콜백을 거절한 사유를 요약한다.
+
+    콜백 주소에 1회성 토큰이 있고 응답이 요청 주소를 반사할 수 있어 본문을 그대로 남기지 않는다.
+    형식이 정해진 값만 고르고, 나머지는 필드 이름만 남긴다.
+    """
+
+    try:
+        body = response.json()
+    except Exception:  # noqa: BLE001 — 진단 때문에 콜백 처리가 달라지면 안 된다
+        return "body=not_json"
+    if not isinstance(body, dict):
+        return "body=not_object"
+    keys = sorted(k for k in body if isinstance(k, str) and _SAFE_CALLBACK_TOKEN.fullmatch(k))[:10]
+    parts = [f"keys={keys}"]
+    for name in _CALLBACK_CODE_FIELDS:
+        value = body.get(name)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) or (isinstance(value, str) and _SAFE_CALLBACK_TOKEN.fullmatch(value)):
+            parts.append(f"{name}={value}")
+    message = body.get("message")
+    if isinstance(message, str) and message and len(message) <= 160 and not _UNSAFE_CALLBACK_MESSAGE.search(message):
+        parts.append(f"message={message!r}")
+    return " ".join(parts)
+
 
 def _safe_callback_error(error: Exception) -> str:
     """콜백 전송 실패를 안전하게 요약한다.
@@ -1328,6 +1367,9 @@ async def run_analysis_and_callback(
         # 요청 URL을 그대로 반사하면(예: 디버그 echo) 쿼리스트링의 토큰이
         # 로그로 샐 수 있다. 실제로 필요한 결과 상태는 JSON 파싱 후
         # [CALLBACK RESULT STATUS]로 따로 남긴다.
+
+        if response.status_code >= 400:
+            print(f"[CALLBACK ERROR] status={response.status_code} {_callback_error_detail(response)}")
 
         response.raise_for_status()
 
