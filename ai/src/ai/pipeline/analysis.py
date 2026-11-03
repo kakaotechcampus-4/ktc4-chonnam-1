@@ -72,6 +72,7 @@ async def read_message(
     """
     failure = (FailureCode.EMPTY_INPUT if not text.strip()
         else FailureCode.INPUT_TOO_LARGE if len(text) > MAX_MESSAGE_CHARS else None)
+    started = client_ready = llm_done = time.perf_counter()
     if failure is not None:
         extracted = fallback_analysis(failure)
     else:
@@ -81,11 +82,21 @@ async def read_message(
                 if llm is None:
                     llm = await stack.enter_async_context(
                         create_client(timeout_s))
+                client_ready = time.perf_counter()
                 extracted = await analyze_message(
                     text, client=llm, model=model, timeout_s=timeout_s, ground_urls=False)
+                llm_done = time.perf_counter()
         except Exception as error:
             extracted = fallback_analysis(_failure_code(error))
     found = message_links(text, extracted.urls)
+    if failure is None:
+        # 상한은 LLM 호출에만 걸리므로 클라이언트 준비·정리 시간을 나눠 남긴다. 문자 내용은 남기지 않는다
+        finished = time.perf_counter()
+        LOGGER.warning(
+            "message read elapsed=%.3fs client=%.3fs llm=%.3fs status=%s failure=%s links=%d",
+            finished - started, client_ready - started, max(llm_done, client_ready) - client_ready,
+            extracted.analysis_status.value, extracted.failure.value if extracted.failure else None, len(found),
+        )
     message = remove_spans(text, [span for span, _ in found])
     # A span the model changed or cut short stays out of `links`, and a link it
     # skipped leaves its mark in the body. Neither may read as "no link".

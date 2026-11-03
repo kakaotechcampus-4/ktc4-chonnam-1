@@ -245,3 +245,13 @@ async def test_timeout_is_the_callers(monkeypatch):
 
     assert factory.call_args_list == [call(12.0)]
     assert seen == [12.0]
+
+
+async def test_read_message_logs_timings_without_message_text(caplog):
+    with caplog.at_level("WARNING", logger="ai.pipeline.analysis"):
+        await read_message(TEXT, client=FakeClient(READING), model="test")
+
+    assert "message read elapsed=" in caplog.text
+    assert "status=completed failure=None links=1" in caplog.text
+    assert "bit.ly" not in caplog.text
+    assert "CJ대한통운" not in caplog.text
