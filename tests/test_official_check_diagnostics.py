@@ -46,12 +46,31 @@ def test_case1_official_url_fully_collected_logs_no_demotion(caplog):
     assert "browser_present=False" in line
 
 
-def test_case2_official_url_with_browser_result_logs_browser_present(caplog):
+def test_case2_official_only_browser_result_is_not_demoted(caplog):
     line = _run(caplog, collected(browser=browser(OFFICIAL, (OFFICIAL,))))
-    assert "final_official=unresolved" in line
-    assert "'BROWSER_PRESENT'" in line
+    assert "final_official=official" in line
+    assert "demotion_reasons=[]" in line
     assert "browser_present=True" in line
     assert "browser_trigger=script_redirect" in line
+
+
+def test_case2b_browser_failure_logs_browser_failure(caplog):
+    line = _run(caplog, collected(browser=browser(OFFICIAL, (OFFICIAL,), ("browser_timeout",))))
+    assert "final_official=unresolved" in line
+    assert "'BROWSER_FAILURE'" in line
+
+
+def test_case2c_non_official_hop_logs_reason_and_only_host_on_separate_line(caplog, capsys):
+    hop = "https://parcel-attacker.example/track?phone=01012345678"
+    line = _run(caplog, collected(browser=browser(OFFICIAL, (OFFICIAL, hop, OFFICIAL))))
+    assert "final_official=unresolved" in line
+    assert "'BROWSER_NON_OFFICIAL_HOP'" in line
+    assert "parcel-attacker.example" not in line
+
+    printed = capsys.readouterr().out
+    assert "[OFFICIAL_HOP] demotion_host=parcel-attacker.example\n" in printed
+    assert "01012345678" not in printed
+    assert "/track" not in printed
 
 
 def test_case3_missing_final_url_logs_final_url_missing(caplog):
@@ -99,13 +118,13 @@ def test_case8_multiple_demotion_reasons_are_all_recorded_together(caplog):
     line = _run(
         caplog,
         collected(
-            browser=browser(OFFICIAL, (OFFICIAL,)),
+            browser=browser(OFFICIAL, (OFFICIAL,), ("browser_timeout",)),
             html="",
             failures=("html_truncated",),
         ),
     )
     assert "final_official=unresolved" in line
-    assert "'BROWSER_PRESENT'" in line
+    assert "'BROWSER_FAILURE'" in line
     assert "'HTTP_HTML_MISSING'" in line
     assert "'COLLECT_FAILURE'" in line
     assert "initial_check_failure=None" in line

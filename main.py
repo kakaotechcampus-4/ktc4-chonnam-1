@@ -1113,6 +1113,30 @@ def _log_official_check_diagnostics(
     )
 
 
+def _browser_demotion(browser, brand: str | None, judged_domain: str | None) -> tuple[str | None, str | None]:
+    """브라우저 결과가 공식 판정을 내릴 사유와 걸린 호스트를 돌려준다. 없으면 (None, None).
+
+    브라우저가 돌았다는 사실만으로는 내리지 않는다. 스크립트로 이동하는 공식 사이트가 늘 판단 보류가 되기
+    때문이다. 기록에 남지 않는 HTTP 경유는 볼 수 없다(ADR 0009).
+    """
+
+    if browser is None:
+        return None, None
+    if browser.failures:
+        return "BROWSER_FAILURE", None
+    if browser.downloads:
+        return "BROWSER_DOWNLOAD", None
+    if not browser.navigation_chain:
+        return "BROWSER_CHAIN_EMPTY", None
+    for url in (*browser.navigation_chain, browser.final_url):
+        host = _http_host(url)
+        if host is None and url != browser.final_url:
+            return "BROWSER_NON_OFFICIAL_HOP", None
+        if host is not None and check_link_official(brand, judged_domain, host) != "official":
+            return "BROWSER_NON_OFFICIAL_HOP", host
+    return None, None
+
+
 def build_ai_url_analysis(
     collected: CollectResult,
     brand: str | None,
@@ -1139,11 +1163,14 @@ def build_ai_url_analysis(
     )
     demotion_reasons: list[str] = []
     if official == "official":
-        # shortcut: browser commits omit HTTP redirect hops; require full request history before confirming.
-        incomplete = (browser is not None or not final_url or not collected.html
+        browser_demotion, demotion_host = _browser_demotion(browser, brand, judged_domain)
+        incomplete = (browser_demotion is not None or not final_url or not collected.html
                       or bool(collected.failures))
-        if browser is not None:
-            demotion_reasons.append("BROWSER_PRESENT")
+        if browser_demotion:
+            demotion_reasons.append(browser_demotion)
+            if demotion_host:
+                # 화이트리스트 검토용. 경로·쿼리에는 개인정보가 있을 수 있어 호스트만 따로 남긴다
+                print(f"[OFFICIAL_HOP] demotion_host={demotion_host}")
         if not final_url:
             demotion_reasons.append("FINAL_URL_MISSING")
         if not collected.html:
