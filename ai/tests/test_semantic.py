@@ -1,7 +1,11 @@
+import re
 from pathlib import Path
 
 import pytest
 
+import ai.case.message as case_message
+import ai.case.voice as case_voice
+import ai.pipeline.analysis as analysis
 from ai.kb import search, semantic
 from ai.kb.search import search_cases
 from ai.types import AnalysisStatus, CaseMatch
@@ -91,3 +95,37 @@ def test_chunk_keeps_words_and_overlaps():
     assert pieces[0] == "가나 다라"
     assert all(" ".join(p.split()) == p for p in pieces)
     assert len(pieces) > 1
+
+
+def test_query_budget_leaves_room_for_tfidf_fallback():
+    assert semantic.QUERY_TIMEOUT_S < case_message.SEARCH_BUDGET_S
+    assert semantic.QUERY_TIMEOUT_S < case_voice.SEARCH_BUDGET_S
+    assert semantic.QUERY_TIMEOUT_S < analysis.SEARCH_TIMEOUT_SECONDS
+
+
+def test_query_embedding_logs_elapsed_time_without_text(cases_dir, monkeypatch, caplog):
+    index = semantic.EmbeddingIndex({"CE-9101": ((1.0, 0.0),), "CE-9102": ((0.0, 1.0),)})
+    monkeypatch.setattr(semantic, "load_index", lambda *args: index)
+    monkeypatch.setattr(semantic, "embed_query", lambda text: (0.0, 1.0))
+
+    with caplog.at_level("WARNING", logger="ai.kb.search"):
+        search_cases("우체국택배 주소 확인 부탁합니다", cases_dir=cases_dir, min_similarity=0.0)
+
+    assert re.search(r"query embedding elapsed=\d+\.\d{3}s kind=text", caplog.text)
+    assert "우체국" not in caplog.text
+
+
+def test_query_embedding_failure_logs_cause_and_elapsed_time(cases_dir, monkeypatch, caplog):
+    index = semantic.EmbeddingIndex({"CE-9101": ((1.0, 0.0),), "CE-9102": ((0.0, 1.0),)})
+    monkeypatch.setattr(semantic, "load_index", lambda *args: index)
+
+    def boom(text):
+        raise TimeoutError
+
+    monkeypatch.setattr(semantic, "embed_query", boom)
+
+    with caplog.at_level("WARNING", logger="ai.kb.search"):
+        search_cases("우체국택배 주소 확인 부탁합니다", cases_dir=cases_dir, min_similarity=0.0)
+
+    assert re.search(r"query embedding failed: TimeoutError elapsed=\d+\.\d{3}s kind=text", caplog.text)
+    assert "우체국" not in caplog.text
