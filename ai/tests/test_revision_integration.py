@@ -719,3 +719,32 @@ async def test_parcel_status_wording_keeps_completion_and_mixed_topic_boundaries
     assert result.answer is _Answer.NO_RISK_FOUND
     assert first_doubt(result) is doubt
     assert result.category.value == category
+
+
+@pytest.mark.asyncio
+async def test_page_diagnostics_log_timings_without_page_content(make_parse_client, caplog):
+    html = "<p>SECRET-PAGE-TEXT</p>" + LOGIN_HTML
+    client, _ = make_parse_client(parsed=PageProposal())
+
+    with caplog.at_level("WARNING", logger="ai.pipeline.analysis"):
+        await analyze_environment_part(page(html), client=client, model="test")
+
+    assert "page inspection elapsed=" in caplog.text
+    assert f"html_chars={len(html)}" in caplog.text
+    assert "page llm elapsed=" in caplog.text
+    assert "status=completed" in caplog.text
+    assert "SECRET-PAGE-TEXT" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_page_diagnostics_show_llm_was_skipped(make_parse_client, caplog):
+    client, _ = make_parse_client(parsed=PageProposal())
+
+    with caplog.at_level("WARNING", logger="ai.pipeline.analysis"):
+        await analyze_environment_part(
+            page(LOGIN_HTML + "<span></span>" * (page_module.MAX_ELEMENTS + 1)),
+            client=client, model="test",
+        )
+
+    assert "page inspection elapsed=" in caplog.text
+    assert "page llm elapsed=" not in caplog.text

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import AsyncExitStack
+import logging
+import time
 from dataclasses import replace
 
 from openai import APITimeoutError, AsyncOpenAI
@@ -22,6 +24,8 @@ from ai.types import (
     IsolatedPage, MessageAnalysis, MessagePart, MessageReading, PageAnalysis,
     SignalAnalysis,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 # TF-IDF search is ~2ms warm, but the query embedding waits on the network for up
@@ -173,8 +177,16 @@ async def analyze_environment_part(
     client: AsyncOpenAI | None = None, model: str | None = None,
 ) -> EnvironmentPart:
     """Analyze only supplied page material or an explicit collection failure."""
+    started = time.perf_counter()
     inspection = (inspect_html(page.info) if page is not None else
         PageInspection(text="", elements=(), failure=FailureCode.MISSING_RESULT))
+    if page is not None:
+        # 소요 시간과 개수만 남긴다. 주소와 본문은 남기지 않는다
+        LOGGER.warning(
+            "page inspection elapsed=%.3fs html_chars=%d text_chars=%d elements=%d failure=%s text_capped=%s",
+            time.perf_counter() - started, len(page.info), len(inspection.text), len(inspection.elements),
+            inspection.failure.value if inspection.failure else None, inspection.text_capped,
+        )
     # Collector truncation leaves usable material; inspection limits still stop analysis.
     # 글자 상한만 넘긴 페이지는 요소를 끝까지 봤으므로 위험 근거를 찾는다. inspection.failure 가
     # 그대로 남아 결과는 partial 이고, 근거가 없어도 정상으로 확정되지 않는다.
@@ -184,8 +196,14 @@ async def analyze_environment_part(
         analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=stop)
         return build_environment_part(page, inspection, analysis, failure=failure)
 
+    started = time.perf_counter()
     try:
         analysis = await analyze_page(replace(inspection, failure=None), client=client, model=model)
     except Exception as error:
         analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=_failure_code(error))
+    LOGGER.warning(
+        "page llm elapsed=%.3fs status=%s failure=%s",
+        time.perf_counter() - started, analysis.status.value,
+        analysis.failure.value if analysis.failure else None,
+    )
     return build_environment_part(page, inspection, analysis, failure=failure)
