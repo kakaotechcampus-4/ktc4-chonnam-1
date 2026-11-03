@@ -3,6 +3,7 @@
 import time
 from contextlib import asynccontextmanager
 
+from ai.case import warm_up_voice_case_search
 from ai.pipeline import warm_up_case_search
 from ai.types import AnalysisStatus
 from backend.src.server.http_client import http_client_lifespan
@@ -39,9 +40,42 @@ def warm_up_kb() -> None:
     print(f"[KB WARMUP] {elapsed:.2f}s")
 
 
+def warm_up_voice_case_search_task() -> None:
+    """통화 사례 색인·사례 첨부 관문 모델을 요청이 오기 전에 불러온다.
+
+    색인 콜드 적재가 약 1.4초라 호출하지 않으면 첫 통화 요청이 1초 사례
+    검색 예산을 넘긴다(`latency-budget.md`). `warm_up_kb()`와 같은 이유로
+    실패해도 서버는 뜬다 — 관문 모델 적재만 실패하면 사례가 안 붙을 뿐,
+    `ai.case.voice.warm_up_voice_case_search()`가 이미 로그를 남긴다.
+    """
+    start = time.monotonic()
+
+    try:
+        result = warm_up_voice_case_search()
+    except Exception as e:
+        print(
+            f"[VOICE KB WARMUP FAILED] "
+            f"{type(e).__name__}: {e}"
+        )
+        return
+
+    elapsed = time.monotonic() - start
+
+    if result.status is not AnalysisStatus.COMPLETED:
+        print(
+            f"[VOICE KB WARMUP EMPTY] "
+            f"status={result.status.value} "
+            f"({elapsed:.2f}s)"
+        )
+        return
+
+    print(f"[VOICE KB WARMUP] {elapsed:.2f}s")
+
+
 @asynccontextmanager
 async def app_lifespan(app):
     warm_up_kb()
+    warm_up_voice_case_search_task()
 
     async with http_client_lifespan(app):
         yield

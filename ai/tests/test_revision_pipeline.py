@@ -421,10 +421,16 @@ async def test_actual_stage_waits_keep_declared_budgets(monkeypatch):
 def test_public_surface_is_independent_and_assembly_is_pure():
     assert set(public.__all__) == {
         "analyze_message_part", "analyze_environment_part",
-        "assemble_analysis", "finalize_analysis", "warm_up_case_search",
+        "assemble_analysis", "finalize_analysis", "read_message", "warm_up_case_search",
     }
     assert not inspect.iscoroutinefunction(public.assemble_analysis)
     assert inspect.iscoroutinefunction(public.finalize_analysis)
+    assert inspect.iscoroutinefunction(public.read_message)
+    assert set(inspect.signature(public.read_message).parameters) == {
+        "text", "client", "model", "timeout_s"}
+    assert set(inspect.signature(public.analyze_message_part).parameters) == {
+        "text", "extracted", "client", "model",
+    }
     assert set(inspect.signature(public.analyze_environment_part).parameters) == {
         "page", "failure", "client", "model",
     }

@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "textCard": {
+          "title": "{{ headline }}",
+          "description": "{{ stop_line }}\n{{ verify_line }}\n{{ basis_note }}\n\n{{ message_claims }}확인한 것\n{{ checked }}\n\n확인하지 못한 것\n{{ unchecked }}",
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "다른 문자 확인하기",
+              "action": "block",
+              "blockId": "6aa6a4436d537a3eabb81ad5"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

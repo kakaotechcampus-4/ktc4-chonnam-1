@@ -1,0 +1,9 @@
+id: N10
+scenario: voice_phishing
+input: {kind: audio}
+transcript: []
+runtime: {}
+expect:
+  conclusion: not_analyzable
+  reading_calls: 0
+  search_calls: 0

@@ -199,6 +199,8 @@ class ExtractedMessage(StrictModel):
     claimed_purpose: EvidenceField = Field(default_factory=EvidenceField)
     requested_actions: list[EvidenceField] = Field(default_factory=list)
     persuasion_signals: list[PersuasionEvidence] = Field(default_factory=list)
+    # 문자에 적힌 그대로의 링크 구간. 검증과 정규형은 ai.links 가 한다 (ADR 0007)
+    urls: list[str] = Field(default_factory=list)
 
 
 class MessageAnalysis(ExtractedMessage):
@@ -210,6 +212,38 @@ class MessageAnalysis(ExtractedMessage):
         if self.analysis_status is AnalysisStatus.COMPLETED and self.failure is not None:
             raise ValueError("completed message analyses have no failure")
         return self
+
+
+# ── 링크 (요구 분석 LLM 이 함께 뽑는다, ADR 0007) ──────────────
+
+
+class LinkOrigin(str, Enum):
+    MESSAGE = "message"   # 문자에 글자로 적힌 주소. 원문에 그대로 있음을 확인했다
+    SPOKEN = "spoken"     # 통화에서 말로 불러 준 주소를 LLM 이 되살린 것. 철자는 확인할 수 없다
+
+
+class LinkCandidate(StrictModel):
+    """조사할 링크. 위험 여부가 아니라 조사 대상이다."""
+
+    url: str = Field(min_length=1)      # 정규형: 스킴이 없으면 https, 호스트 소문자, 경로가 비면 "/"
+    domain: str = Field(min_length=1)   # 공식 대조에 쓰는 호스트
+    origin: LinkOrigin
+
+
+@dataclass(frozen=True)
+class MessageReading:
+    """`read_message` 결과. BE 는 `split_message` 대신 이것을 쓴다.
+
+    `extracted.analysis_status` 가 fallback 이면 LLM 이 실패해 링크를 찾지 못한 것이다.
+    이때 빈 `links` 를 "링크 없음"으로 읽으면 안 된다.
+    """
+
+    links: tuple[LinkCandidate, ...]
+    message: str                 # 링크 구간을 뗀 본문. analyze_message_part 의 입력
+    extracted: MessageAnalysis   # 같은 LLM 호출의 요구 분석. 인용은 모두 message 안에 있다
+    # 링크로 보이지만 받지 못한 글자가 있다. LLM 이 고치거나 잘라 낸 구간, 본문에 남은 `://`·`www.`.
+    # True 면 links 가 비어도 "링크 없음"이 아니고, links 가 있어도 빠진 링크가 있을 수 있다
+    unverified_links: bool = False
 
 
 # ── 외부 입력 (백엔드가 채워서 넘긴다) ──────────────────────────

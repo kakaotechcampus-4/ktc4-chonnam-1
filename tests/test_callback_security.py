@@ -91,7 +91,7 @@ def start_job():
 
 async def send_callback(url, job_id):
     await main.run_analysis_and_callback(
-        links=["https://example.test/message"], message="테스트 문자",
+        utterance="테스트 문자 https://example.test/message",
         callback_url=url, user_id=USER, job_id=job_id,
     )
 

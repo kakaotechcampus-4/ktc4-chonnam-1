@@ -2,6 +2,9 @@ import asyncio
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
+from openai import APIStatusError
+
 from ai.llm.explain import explain_verdict, generate_explanation
 from ai.types import (
     AnalysisStatus,
@@ -90,6 +93,39 @@ def test_llm_failure_falls_back_to_template(load_observations):
     )
 
     assert text == generate_explanation(a_verdict())
+
+
+def test_api_status_error_logs_status_code_and_keeps_existing_fallback(load_observations, caplog):
+    """예외 클래스 이름·상태 코드만 로그에 남으면서도 기존 fallback(템플릿
+    문장)은 그대로인지 확인한다. exc.code/exc.type/exc.request_id는
+    민감정보 노출 가능성을 더 줄이기 위해 의도적으로 뺐다."""
+
+    error = APIStatusError(
+        "insufficient quota",
+        response=httpx.Response(402, request=httpx.Request("POST", "https://example.invalid")),
+        body={"code": "insufficient_quota", "type": "billing_error"},
+    )
+    client, _ = fake_text_client(side_effect=error)
+
+    with caplog.at_level("WARNING", logger="ai.llm.explain"):
+        text = asyncio.run(
+            explain_verdict(
+                a_verdict(),
+                load_observations("form"),
+                CaseSearchResult(status=AnalysisStatus.FALLBACK, matches=[]),
+                client=client,
+                model="m",
+            )
+        )
+
+    assert text == generate_explanation(a_verdict())
+
+    [record] = caplog.records
+    assert "APIStatusError" in record.message
+    assert "status=402" in record.message
+    assert "insufficient quota" not in record.message
+    assert "insufficient_quota" not in record.message
+    assert "billing_error" not in record.message
 
 
 def test_llm_refusal_falls_back_to_template(load_observations):

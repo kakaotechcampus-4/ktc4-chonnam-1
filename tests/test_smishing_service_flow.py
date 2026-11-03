@@ -47,6 +47,8 @@ async def test_input_callback_details_and_check_result_share_one_analysis(monkey
                     "claimed_purpose": {"value": "배송 보류", "evidence": "배송이 보류되었습니다"},
                     "requested_actions": [{"value": "앱 설치", "evidence": REQUEST}],
                     "persuasion_signals": [],
+                    # 링크도 같은 호출에서 원문 그대로 짚는다 (ADR 0007)
+                    "urls": [LINK],
                 }
             elif schema == "SignalProposal":
                 parsed = {"signals": [{"code": "install_prompt", "evidence_source": "message",

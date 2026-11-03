@@ -9,7 +9,7 @@ import json
 import logging
 from pathlib import Path
 
-from openai import AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI
 
 from ai.llm._client import create_client, required_env
 from ai.types import (
@@ -137,6 +137,15 @@ async def explain_verdict(
         if message.refusal or not (message.content or "").strip():
             return fallback
         return message.content.strip()
+    except APIStatusError as exc:
+        # 예외 클래스 이름과 상태 코드만 남긴다 — exc.code/exc.type/
+        # exc.request_id/exc.message/exc.body는 제공자가 보낸 값이라 민감
+        # 정보 노출 가능성을 더 줄이기 위해 남기지 않는다.
+        LOGGER.warning(
+            "explanation generation failed: %s status=%s",
+            type(exc).__name__, exc.status_code,
+        )
+        return fallback
     except Exception as exc:
         LOGGER.warning("explanation generation failed: %s", type(exc).__name__)
         return fallback

@@ -295,8 +295,12 @@ class TestCheckResultSkill:
     def test_same_utterance_without_check_result_intent_does_not_query_job(
         self,
         client,
+        stub_read_message,
     ):
         """발화 문자열이 같아도 결과 확인 intent가 아니면 Job 조회로 처리하지 않는다."""
+
+        # 문자 분석으로 넘어가 링크 없는 문자로 읽힌다
+        stub_read_message()
 
         _create_job(
             "running-job",

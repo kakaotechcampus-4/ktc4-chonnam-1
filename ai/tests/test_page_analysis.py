@@ -3,8 +3,9 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
-from openai import LengthFinishReasonError
+from openai import APIStatusError, LengthFinishReasonError
 
 import ai.llm.page as page_module
 from ai.llm.page import analyze_page
@@ -561,6 +562,37 @@ async def test_truncated_structured_output_is_invalid(make_parse_client):
     result = await analyze_page(inspected, client=client, model="test")
 
     assert result.failure is FailureCode.INVALID_OUTPUT
+
+
+@pytest.mark.asyncio
+async def test_api_status_error_logs_status_code_and_keeps_existing_fallback(
+    make_parse_client, caplog,
+):
+    """예외 클래스 이름·상태 코드만 로그에 남으면서도 기존 fallback
+    (LLM_ERROR)은 그대로인지 확인한다. exc.code/exc.type/exc.request_id는
+    민감정보 노출 가능성을 더 줄이기 위해 의도적으로 뺐다."""
+
+    inspected = inspect_html("<p>배송 안내</p>")
+    error = APIStatusError(
+        "insufficient quota",
+        response=httpx.Response(402, request=httpx.Request("POST", "https://example.invalid")),
+        body={"code": "insufficient_quota", "type": "billing_error"},
+    )
+    client, _ = make_parse_client(side_effect=error)
+
+    with caplog.at_level("WARNING", logger="ai.llm.page"):
+        result = await analyze_page(inspected, client=client, model="test")
+
+    assert result.status is AnalysisStatus.FALLBACK
+    assert result.failure is FailureCode.LLM_ERROR
+
+    [record] = caplog.records
+    assert "APIStatusError" in record.message
+    assert "status=402" in record.message
+    assert "insufficient quota" not in record.message
+    assert "insufficient_quota" not in record.message
+    assert "billing_error" not in record.message
+    assert "insufficient quota" not in record.message
 
 
 @pytest.mark.asyncio

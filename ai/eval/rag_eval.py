@@ -26,6 +26,8 @@ from ai.types import CaseMatch
 
 EVAL_DIR = Path(__file__).resolve().parent
 TESTSET = EVAL_DIR / "datasets" / "rag_testset.jsonl"
+# eval/messenger_normal_build.py 가 만든다. 실제 메신저 대화에서 뽑은 정상 문자다.
+LICENSED_TESTSET = EVAL_DIR / "datasets" / "rag_testset_licensed.jsonl"
 REPORTS = EVAL_DIR / "reports"
 GROUPS = ("smishing", "benign", "hard_negative")
 NEGATIVE_GROUPS = ("benign", "hard_negative")
@@ -73,10 +75,14 @@ def parse_ngram(value: str) -> tuple[int, ...]:
     return sizes
 
 
-def load_rows(path: Path = TESTSET) -> list[dict]:
+def load_rows(path: Path = TESTSET, with_licensed: bool = False) -> list[dict]:
+    # 재배포 금지 데이터(AI Hub 메신저 대화)로 만든 *_licensed.jsonl 은 커밋하지 않는다.
+    # 기준값이 dev 정상 문자로 정해지므로 기존 리포트와 비교할 수 있게 명시했을 때만 읽는다.
+    paths = [path, LICENSED_TESTSET] if with_licensed else [path]
     return [
         json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
+        for source in paths
+        for line in source.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
 
@@ -359,6 +365,12 @@ def render_report(evaluation: dict, meta: dict) -> str:
         f"> {SYNTHETIC_WARNING}",
         "",
     ]
+    if meta.get("licensed"):
+        lines += [
+            f"> 실물 메신저 정상 문자 {meta['licensed']}행 포함(AI Hub 71343, `--with-licensed`). "
+            "dev 기준값이 이 행들로도 정해지므로 포함하지 않은 리포트와 기준값을 바로 비교하지 않는다.",
+            "",
+        ]
     if not labelled:
         lines += [
             "> KB 사례에 유형 라벨이 없어 hit@k·MRR 은 측정 불가다. 0 은 검색 실패를 뜻하지 않는다.",
@@ -433,11 +445,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--ngram", type=parse_ngram, help="예: 2,3. 지정하면 그 설정으로 색인을 새로 만든다")
     parser.add_argument("--tf", choices=("raw", "log"), help="TF 가중: 원 빈도 또는 1+ln(tf)")
+    parser.add_argument(
+        "--with-licensed",
+        action="store_true",
+        help="datasets/rag_testset_licensed.jsonl(AI Hub 메신저 정상 문자, 커밋 안 함)도 함께 잰다",
+    )
     args = parser.parse_args(argv)
 
     ngram_sizes = args.ngram or search.NGRAM_SIZES
     sublinear_tf = search.SUBLINEAR_TF if args.tf is None else args.tf == "log"
-    all_rows = load_rows()
+    all_rows = load_rows(with_licensed=args.with_licensed)
     rows = drop_excluded(all_rows)
     if args.ngram is None and args.tf is None:
         # 운영 경로다. 첫 검색에 KB 로드와 색인 생성이 들어가도록 load_cases 보다 먼저 돈다.
@@ -464,6 +481,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "commit": _commit(),
         "kb_total": len(cases),
         "excluded": len(all_rows) - len(rows),
+        "licensed": sum(row.get("origin") == "aihub_licensed" for row in rows),
         "settings": f"문자 n-gram {ngram_sizes} TF-IDF 코사인, TF {'1+ln(tf)' if sublinear_tf else '원 빈도'}",
         "latency": latency(results),
     }

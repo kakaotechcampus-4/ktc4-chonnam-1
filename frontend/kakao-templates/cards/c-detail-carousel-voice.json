@@ -1,0 +1,47 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "carousel": {
+          "type": "textCard",
+          "items": [
+            {
+              "title": "🔎 의심되는 말",
+              "description": "{{ claim_lines }}\n\n{{ claim_note }}"
+            },
+            {
+              "title": "📚 비슷한 사례",
+              "description": "이번 통화는 '{{ similar_type }}' 수법의 예시 통화와 비슷해요.\n{{ similar_line }}\n\n비슷하다고 해서 사기라는 뜻은 아니에요.\n결과 판단에는 쓰지 않았어요."
+            },
+            {
+              "title": "❔ 확인 범위",
+              "description": "{{ unchecked }}\n\n결과는 확인한 자료로만 안내했어요. 확인하지 못한 부분은 판단에 넣지 않았어요."
+            },
+            {
+              "title": "📵 요구에 응하지 마세요",
+              "description": "돈을 보내거나 앱을 설치하거나 정보를 알려 주지 마세요.\n상대가 알려 준 번호로 전화하지 마세요.\n의심 전화는 피싱 통합 상담 1394에서 상담할 수 있어요.",
+              "buttonLayout": "vertical",
+              "buttons": [
+                {
+                  "label": "1394 상담",
+                  "action": "phone",
+                  "phoneNumber": "1394"
+                },
+                {
+                  "label": "다른 녹음 확인하기",
+                  "action": "block",
+                  "blockId": "6ae3302425d4bc48e2bb8a61"
+                }
+              ]
+            },
+            {
+              "title": "📋 공식 확인 방법",
+              "description": "{{ verify_line }}\n녹음에 나온 번호는 진짜 기관 번호가 아닐 수 있어 쓰지 않았어요."
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

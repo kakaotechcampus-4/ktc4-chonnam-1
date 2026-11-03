@@ -1,0 +1,18 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "basicCard": {
+          "title": "📱 아이폰에서 녹음 보내는 법",
+          "description": "① 메모 앱에서 통화 녹음 메모를 엽니다.\n② 녹음을 눌러 [공유] → [파일에 저장]을 누릅니다.\n③ 이 채팅방 아래 [+] → [파일]을 누릅니다.\n④ 저장한 녹음 파일을 골라 보냅니다.",
+          "thumbnail": {
+            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/v0a-voice-guide-iphone.png",
+            "altText": "아이폰 화면에서 녹음의 공유 버튼을 누르는 손과 돋보기를 든 기니피그",
+            "fixedRatio": false
+          }
+        }
+      }
+    ]
+  }
+}

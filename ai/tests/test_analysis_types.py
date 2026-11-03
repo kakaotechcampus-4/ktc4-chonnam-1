@@ -21,6 +21,7 @@ EXPECTED_KEYS = {
     "claimed_purpose",
     "requested_actions",
     "persuasion_signals",
+    "urls",
 }
 
 

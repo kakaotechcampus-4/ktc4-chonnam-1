@@ -14,19 +14,14 @@
           "buttonLayout": "vertical",
           "buttons": [
             {
-              "label": "전화 상담",
+              "label": "118 상담",
               "action": "phone",
               "phoneNumber": "118"
             },
             {
-              "label": "챗봇 상담",
+              "label": "KISA 상담하기",
               "action": "webLink",
-              "webLinkUrl": "{{ kisa_chatbot_url }}"
-            },
-            {
-              "label": "채팅 상담",
-              "action": "webLink",
-              "webLinkUrl": "{{ kisa_chat_url }}"
+              "webLinkUrl": "https://www.kisa.or.kr/118"
             }
           ]
         }
