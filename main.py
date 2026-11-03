@@ -348,6 +348,12 @@ def handle_detail_carousel(job_id: str) -> dict:
             "분석 결과를 찾을 수 없어요. 문자를 다시 보내 주세요."
         )
 
+    if job.get("analysis_kind") != "voice" and job.get("link_count", 0) > 1:
+        return kakao_response(
+            "여러 주소를 함께 확인한 경우에는 상세 결과를 제공하지 않아요. "
+            "확인하고 싶은 주소를 하나씩 다시 보내 주세요."
+        )
+
     final_payload = job.get("final_payload")
 
     if not final_payload:
@@ -532,6 +538,10 @@ _PARTLY_READ_LINKS_TEXT = (
     "아래 결과는 읽은 주소만 확인한 거예요.\n"
     "※ 검사하지 못한 주소는 누르지 마세요."
 )
+_OMITTED_LINK_RESULTS_TEXT = (
+    "일부 검사 결과는 한 번에 표시할 수 없어 생략했어요. "
+    "확인하고 싶은 주소를 하나씩 다시 보내 주세요."
+)
 _TOO_LONG_TEXT = (
     "문자가 너무 길어서 확인하지 못했어요.\n\n"
     "확인하고 싶은 주소가 있는 부분만 복사해 다시 보내 주세요."
@@ -582,9 +592,14 @@ async def run_analysis(
     if not reading.links:
         return await run_message_case(utterance, job_id=job_id, started=started)
 
+    link_count = len(reading.links)
+    if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
+        # 링크별 상세 저장은 지원하지 않는다. 숨겨진 결과로의 직접 조회도 막는다.
+        job["link_count"] = link_count
+
     cards: list[dict] = []
-    # 결과 카드는 링크마다 output 1개. 안내까지 카카오 output 상한(3개)을 넘기지 않는다
-    if reading.unverified_links and len(reading.links) < KAKAO_MAX_OUTPUTS:
+    # 미검사 안내를 먼저 확보한다. 분석은 모두 수행하고 마지막에 표시 개수만 제한한다.
+    if reading.unverified_links:
         cards.append(kakao_response(_PARTLY_READ_LINKS_TEXT))
     # 같은 읽기를 넘겨 추출 LLM 을 다시 부르지 않는다
     message_task = asyncio.create_task(
@@ -616,7 +631,9 @@ async def run_analysis(
                     url=url_analysis, message=message_result, page=page, failure=failure,
                 )
                 final_payload = final_result.model_dump(mode="json")
-                cards.append(render_result_card(final_payload, job_id=job_id))
+                cards.append(render_result_card(
+                    final_payload, job_id=job_id, allow_details=(link_count == 1),
+                ))
                 if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
                     job["final_payload"] = final_payload
             except Exception as error:
@@ -626,7 +643,14 @@ async def run_analysis(
         if not message_task.done() and not message_task.cancelling():
             message_task.cancel()
         await asyncio.gather(message_task, return_exceptions=True)
-    return merge_kakao_responses(cards)
+    response = merge_kakao_responses(cards)
+    outputs = response["template"]["outputs"]
+    if reading.unverified_links and len(outputs) > KAKAO_MAX_OUTPUTS:
+        # 첫 output은 위에서 만든 안내다. 결과 카드의 output 수에 관계없이
+        # 이 안내를 남기고, 이미 분석한 결과 중 일부가 표시되지 않음을 명시한다.
+        outputs[0]["simpleText"]["text"] += "\n\n" + _OMITTED_LINK_RESULTS_TEXT
+        response["template"]["outputs"] = outputs[:KAKAO_MAX_OUTPUTS]
+    return response
 
 
 # ============================================================
