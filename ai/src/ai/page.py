@@ -13,9 +13,9 @@ from ai.types import EnvDoubt, FailureCode
 
 MAX_HTML_BYTES = 131_072
 MAX_ELEMENTS = 2_000
-MAX_PAGE_TEXT_CHARS = 16_000
+MAX_PAGE_TEXT_CHARS = 24_000
 MAX_DEPTH = 64
-INSPECTION_TIMEOUT_SECONDS = 0.100
+INSPECTION_TIMEOUT_SECONDS = 0.500
 MAX_INSPECTION_BYTES = 262_144
 IGNORED_TEXT_TAGS = frozenset({"script", "style", "template", "noscript"})
 
@@ -57,6 +57,11 @@ _DOCUMENT_EXTENSIONS = re.compile(
     r"\.(?:pdf|docx?|xlsx?|pptx?|txt|rtf|jpe?g|png|gif|webp)(?:[?#]|$)", re.I
 )
 _NUMERIC_CHARACTER_REFERENCE = re.compile(r"&#(?:x([0-9a-f]+)|([0-9]+));?", re.I)
+# 화면에 보이지 않지만 str.split() 이 공백으로 치지 않는 문자. 상한을 채우거나 단어를 쪼개는 데 쓰일 수 있다.
+_INVISIBLE_CHARACTERS = re.compile(
+    "[­͏؜ᅟᅠ឴឵᠋-᠏​-‏"
+    "‪-‮⁠-⁯ㅤ︀-️﻿ﾠ]"
+)
 
 
 @dataclass(frozen=True)
@@ -82,6 +87,8 @@ class PageInspection:
     text: str
     elements: tuple[PageElement, ...]
     failure: FailureCode | None
+    # 본문 글자 상한만 넘겼다. 요소는 끝까지 봤으므로 위험 근거를 찾을 수 있지만 완전한 분석은 아니다.
+    text_capped: bool = False
 
 
 @dataclass
@@ -123,6 +130,7 @@ class _Collector(HTMLParser):
         self.page_chunks: list[str] = []
         self.text_chars = 0
         self.limit_reached = False
+        self.text_limited = False
         self.malformed_important = False
         self.processed_end = 0
         self._line_offsets = [0, *(index + 1 for index, char in enumerate(source) if char == "\n")]
@@ -243,18 +251,22 @@ class _Collector(HTMLParser):
         _check_deadline(self.deadline)
         if not data or (self.stack and self.stack[-1].ignored):
             return
-        remaining = MAX_PAGE_TEXT_CHARS - self.text_chars
-        if remaining <= 0:
-            self.limit_reached = True
-            raise _InspectionLimit
-        kept = data[:remaining]
-        self.page_chunks.append(kept)
+        # 요소 분류에는 상한 뒤의 글자도 필요하다. 입력 자체가 MAX_HTML_BYTES 로 묶여 있다.
         if self.stack:
-            self.stack[-1].content.append(kept)
-        self.text_chars += len(kept)
-        if len(kept) != len(data):
-            self.limit_reached = True
-            raise _InspectionLimit
+            self.stack[-1].content.append(data)
+        if self.text_limited:
+            return
+        # 조립할 때와 같은 값으로 센다. 들여쓰기 많은 정상 페이지가 상한에 걸리지 않게 한다.
+        visible = _normalize_text(data)
+        if not visible:
+            return
+        separator = 1 if self.page_chunks else 0
+        remaining = MAX_PAGE_TEXT_CHARS - self.text_chars - separator
+        if len(visible) > remaining:
+            self.text_limited = True
+            visible = visible[:max(remaining, 0)]
+        self.page_chunks.append(visible)
+        self.text_chars += separator + len(visible)
 
     def finish(self) -> None:
         for node in self.stack:
@@ -269,7 +281,7 @@ def _normalize_text(parts: list[str] | tuple[str, ...] | str) -> str:
         value = parts
     else:
         value = " ".join(parts)
-    return " ".join(value.split())
+    return " ".join(_INVISIBLE_CHARACTERS.sub("", value).split())
 
 
 def _json_size(value: object) -> int:
@@ -681,7 +693,8 @@ def inspect_html(info: str) -> PageInspection:
             _check_deadline(deadline)
         except _InspectionTimeout:
             timed_out = True
-    partial = collector.limit_reached or collector.malformed_important or output_limited
+    stopped_early = collector.limit_reached or collector.malformed_important or output_limited
+    partial = stopped_early or collector.text_limited
     if timed_out:
         failure = FailureCode.TIMEOUT
     elif partial:
@@ -695,9 +708,15 @@ def inspect_html(info: str) -> PageInspection:
     while elements and total_size > MAX_INSPECTION_BYTES:
         elements.pop()
         elements_size -= element_sizes.pop()
+        output_limited = True
         failure = FailureCode.TIMEOUT if timed_out else FailureCode.PARTIAL_CONTENT
         total_size = _inspection_base_size(text, failure) + elements_size
-    result = PageInspection(text=text, elements=tuple(elements), failure=failure)
+    result = PageInspection(
+        text=text,
+        elements=tuple(elements),
+        failure=failure,
+        text_capped=collector.text_limited and not (timed_out or stopped_early or output_limited),
+    )
     if _json_size(asdict(result)) > MAX_INSPECTION_BYTES:
         text, _ = _fit_text(text, failure or FailureCode.PARTIAL_CONTENT)
         result = PageInspection(
