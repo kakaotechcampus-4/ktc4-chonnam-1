@@ -22,8 +22,10 @@ from ai.kb.embedding import Vector
 
 LOGGER = logging.getLogger(__name__)
 
-# 질의 임베딩 한도. 검색 예산(문자 1초) 안에서 TF-IDF 폴백까지 마치도록 남긴다. 측정: 연결 재사용 시 p50 약 0.3초.
-QUERY_TIMEOUT_S = 0.6
+# 질의 임베딩의 응답 대기 한도. 검색 예산(2.5초) 안에서 TF-IDF 폴백까지 마치도록 남긴다.
+# 측정(2026-11-03, 한국 PC, 조건별 15건): 응답 대기 p50 약 0.37초, 최대 0.80초. Render(oregon)는 왕복 지연이
+# 더해지는데 0.6초 한도에서는 로그에 남은 3건이 모두 ReadTimeout 이었다. 실제 값은 search 의 소요 시간 로그로 본다.
+QUERY_TIMEOUT_S = 2.0
 # KB 를 처음 임베딩할 때의 한도. 기동 때만 돈다.
 BUILD_TIMEOUT_S = 60.0
 # KB 임베딩이 실패하면 이 시간 동안 다시 시도하지 않는다. 그동안은 TF-IDF 만 쓴다.
@@ -72,7 +74,7 @@ _client: httpx.Client | None = None
 
 
 def _http() -> httpx.Client:
-    # 요청마다 연결을 새로 열면 TLS 때문에 0.5~1초가 든다(측정). 연결을 재사용한다.
+    # 연결을 재사용한다. 다만 httpx 는 쉬는 연결을 5초 뒤 닫으므로 요청이 드물면 다시 연결한다.
     global _client
     with _client_lock:
         if _client is None:
