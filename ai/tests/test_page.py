@@ -318,7 +318,7 @@ def test_entity_text_cut_does_not_include_tail(monkeypatch):
     result = inspect_html(html)
 
     assert result.failure is FailureCode.PARTIAL_CONTENT
-    assert all("UNREAD" not in element.evidence for element in result.elements)
+    assert "UNREAD" not in result.text
 
 
 def test_invalid_unicode_is_explicit_input_error():
@@ -472,3 +472,65 @@ def test_generic_normal_content_is_not_missing(body):
 
     assert result.failure is None
     assert body in result.text
+
+
+def test_markup_whitespace_does_not_use_text_limit():
+    # 들여쓰기가 많은 정상 페이지: 줄바꿈까지 세면 상한을 넘지만 보이는 글자는 상한 안이다.
+    html = "".join(f"<p>{'가' * 50}</p>\n{' ' * 400}\n" for _ in range(100))
+    assert len(html) > MAX_PAGE_TEXT_CHARS
+
+    result = inspect_html(html)
+
+    assert result.failure is None
+    assert result.text_capped is False
+
+
+def test_invisible_characters_do_not_use_text_limit_or_reach_page_text():
+    html = "<p>결​제</p><p>" + "​" * (MAX_PAGE_TEXT_CHARS + 20) + "</p>"
+
+    result = inspect_html(html)
+
+    assert result.failure is None
+    assert result.text == "결제"
+
+
+def test_invisible_characters_do_not_hide_field_labels_from_classification():
+    html = '<form><label>비​밀‍번﻿호<input name="x"></label></form>'
+
+    result = inspect_html(html)
+
+    assert [item.doubt for item in result.elements] == [EnvDoubt.LOGIN_FORM]
+
+
+def test_text_exactly_at_limit_is_not_partial():
+    result = inspect_html("<p>" + "가" * MAX_PAGE_TEXT_CHARS + "</p>")
+
+    assert result.failure is None
+    assert result.text_capped is False
+
+
+def test_elements_after_text_limit_are_still_inspected():
+    padding = "<p>" + "가" * (MAX_PAGE_TEXT_CHARS + 20) + "</p>"
+    login = '<form><label>비밀번호<input type="password"></label></form>'
+
+    result = inspect_html(padding + login)
+
+    assert result.failure is FailureCode.PARTIAL_CONTENT
+    assert result.text_capped is True
+    assert len(result.text) <= MAX_PAGE_TEXT_CHARS
+    assert "비밀번호" not in result.text
+    assert [item.doubt for item in result.elements] == [EnvDoubt.LOGIN_FORM]
+    assert result.elements[0].text == "비밀번호"
+
+
+def test_other_limits_are_not_marked_text_capped():
+    too_many = inspect_html("<span></span>" * (page_module.MAX_ELEMENTS + 1))
+    both = inspect_html(
+        "<p>" + "가" * (MAX_PAGE_TEXT_CHARS + 1) + "</p>"
+        + "<span></span>" * (page_module.MAX_ELEMENTS + 1)
+    )
+
+    assert too_many.failure is FailureCode.PARTIAL_CONTENT
+    assert too_many.text_capped is False
+    assert both.failure is FailureCode.PARTIAL_CONTENT
+    assert both.text_capped is False
