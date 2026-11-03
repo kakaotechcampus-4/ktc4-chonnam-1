@@ -5,7 +5,13 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from openai import APIResponseValidationError, APIStatusError, APITimeoutError, LengthFinishReasonError
+from openai import (
+    APIResponseValidationError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    LengthFinishReasonError,
+)
 from pydantic import ValidationError
 
 import ai.llm.analyze as analyze_module
@@ -17,6 +23,7 @@ from ai.types import (
     EvidenceField,
     ExtractedMessage,
     FailureCode,
+    MessageAnalysis,
     PersuasionCode,
     PersuasionEvidence,
 )
@@ -458,3 +465,97 @@ async def test_multiple_categories_and_other_round_trip_with_fixed_failure_shape
     assert partial.categories[-1].custom_label == "parcel collection"
     assert_fixed_analysis_keys(partial)
     assert_fixed_analysis_keys(failure)
+
+
+SECRET_TEXT = "엄마 나 폰 고장나서 이 번호로 문자해. 문화상품권 사서 핀번호 보내줘"
+
+
+def _sdk_client(payload: dict):
+    """실제 OpenAI SDK 파싱을 거치게 한다. 서버 답만 가짜다."""
+
+    def respond(request):
+        return httpx.Response(200, json={
+            "id": "c", "object": "chat.completion", "created": 0, "model": "m",
+            "choices": [{
+                "index": 0, "finish_reason": "stop",
+                "message": {"role": "assistant", "content": json.dumps(payload, ensure_ascii=False)},
+            }],
+        })
+
+    return AsyncOpenAI(
+        api_key="test", base_url="https://llm.example.test/v1",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+
+
+def _llm_output(**fields):
+    base = {
+        "categories": [], "claimed_sender": {"value": None, "evidence": None},
+        "claimed_purpose": {"value": None, "evidence": None},
+        "requested_actions": [], "persuasion_signals": [], "urls": [],
+    }
+    return {**base, **fields}
+
+
+@pytest.mark.parametrize("fields, note", [
+    ({"claimed_sender": {"value": "자녀", "evidence": None}}, "claimed_sender=broken_evidence_pair"),
+    ({"claimed_sender": {"value": None, "evidence": "엄마 나"}}, "claimed_sender=broken_evidence_pair"),
+    ({"claimed_purpose": {"value": "상품권 구매", "evidence": None}}, "claimed_purpose=broken_evidence_pair"),
+    ({"requested_actions": [{"value": "핀번호 전달", "evidence": None}]}, "requested_actions=broken_evidence_pair"),
+    ({"categories": [{"code": "other", "custom_label": None, "evidence": "문화상품권"}]}, "categories=other_without_label"),
+    ({"categories": [{"code": "other", "custom_label": " ", "evidence": "문화상품권"}]}, "categories=other_without_label"),
+    ({"categories": [{"code": "payment", "custom_label": "", "evidence": "문화상품권"}]}, "categories=label_on_listed_code"),
+])
+async def test_one_broken_field_keeps_the_rest_of_the_llm_answer(fields, note, caplog):
+    """칸 하나가 어긋나도 답 전체를 버리지 않는다. 로그에는 문자 내용이 남지 않는다."""
+    payload = _llm_output(
+        persuasion_signals=[{"code": "relationship", "evidence": "엄마 나"}],
+        **fields,
+    )
+    with caplog.at_level("WARNING", logger="ai.types"):
+        result = await analyze_message(SECRET_TEXT, client=_sdk_client(payload), model="m")
+
+    assert result.analysis_status is AnalysisStatus.COMPLETED
+    assert result.failure is None
+    assert [item.evidence for item in result.persuasion_signals] == ["엄마 나"]
+    assert result.claimed_sender == EvidenceField()
+    assert result.requested_actions == []
+    assert f"message analysis repaired: {note}" in caplog.text
+    for secret in ("엄마", "문화상품권", "자녀", "핀번호"):
+        assert secret not in caplog.text
+
+
+async def test_label_on_listed_code_keeps_the_category():
+    payload = _llm_output(categories=[{"code": "payment", "custom_label": "상품권", "evidence": "문화상품권"}])
+    result = await analyze_message(SECRET_TEXT, client=_sdk_client(payload), model="m")
+    assert [(c.code, c.custom_label) for c in result.categories] == [(CategoryCode.PAYMENT, None)]
+
+
+async def test_valid_answer_is_not_repaired(caplog):
+    payload = _llm_output(
+        claimed_sender={"value": "엄마", "evidence": "엄마 나"},
+        categories=[{"code": "other", "custom_label": "상품권", "evidence": "문화상품권"}],
+    )
+    with caplog.at_level("WARNING", logger="ai.types"):
+        result = await analyze_message(SECRET_TEXT, client=_sdk_client(payload), model="m")
+    assert result.claimed_sender.value == "엄마"
+    assert result.categories[0].custom_label == "상품권"
+    assert "repaired" not in caplog.text
+
+
+async def test_unrepairable_answer_logs_field_names_without_text(caplog):
+    payload = _llm_output(categories=[{"code": "엄마_코드", "custom_label": None, "evidence": "문화상품권"}])
+    with caplog.at_level("WARNING", logger="ai.llm.analyze"):
+        result = await analyze_message(SECRET_TEXT, client=_sdk_client(payload), model="m")
+    assert result.failure is FailureCode.INVALID_OUTPUT
+    assert "categories.0.code:enum" in caplog.text
+    assert "엄마" not in caplog.text and "문화상품권" not in caplog.text
+
+
+def test_result_type_rules_stay_strict():
+    with pytest.raises(ValidationError):
+        MessageAnalysis.model_validate({
+            "analysis_status": "completed", "claimed_sender": {"value": "자녀", "evidence": None},
+        })
+    with pytest.raises(ValidationError):
+        EvidenceField(value="자녀")
