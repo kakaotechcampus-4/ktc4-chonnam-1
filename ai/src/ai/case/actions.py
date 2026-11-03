@@ -1,4 +1,4 @@
-"""Q1 답 → 피해 대응 (v3 §7.7). 통화에 해당하는 줄만 둔다.
+"""Q1 답 → 피해 대응 (v3 §7.7). 통화와 링크 없는 문자에 해당하는 줄만 둔다.
 
 값은 FE D17(`chatbot-copy.md` 3절 "v3 대응 표(§7.7)에 바라는 변경")을 따른다.
 `call_1332` 를 빼고, 앱 설치에는 금감원 대처 안내 순서(전원 끄기 → 다른 기기 → 앱 삭제)를 쓴다.
@@ -22,10 +22,17 @@ _INSTALLED_APP = [
 ]
 
 
+# 문자는 통화가 아니라서 원격 조종 앱을 언급했을 때만 지급정지를 앞에 붙인다 (FE D17)
+_INSTALLED_APP_MESSAGE = _INSTALLED_APP[1:]
+
+
 def response_actions_for(
-    answers: list[str], evidence: list[Evidence]
+    answers: list[str], evidence: list[Evidence], *, call: bool = True
 ) -> list[ResponseAction]:
-    """쌓인 Q1 답마다 표를 적용해 합친다. not_yet·unknown 은 아무것도 더하지 않는다."""
+    """쌓인 Q1 답마다 표를 적용해 합친다. not_yet·unknown 은 아무것도 더하지 않는다.
+
+    call=False 는 링크 없는 문자다. 앱 설치 대응만 달라진다.
+    """
     given = set(answers)
     codes = {e.code for e in evidence}
     info_quotes = [
@@ -45,7 +52,10 @@ def response_actions_for(
             # 어떤 항목인지 모르면 더 넓은 대응을 준다
             out += [_R.CHANGE_PASSWORD, _R.REGISTER_INFO_EXPOSURE]
     if "installed_app" in given:
-        out += _INSTALLED_APP
+        if call or EvidenceCode.REMOTE_APP_MENTION in codes:
+            out += _INSTALLED_APP
+        else:
+            out += _INSTALLED_APP_MESSAGE
     return list(dict.fromkeys(out))
 
 
