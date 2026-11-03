@@ -16,6 +16,7 @@ from scanner.fetch import HTML_LIMIT_BYTES
 from scanner.models import BrowserResult, CollectResult
 
 MAX_NAVIGATIONS = 10
+MAX_NAVIGATION_REQUESTS = 20
 MAX_DOWNLOADS = 5
 
 # failures 에 이 모듈이 추가로 쓰는 값:
@@ -66,6 +67,13 @@ def _parse_browser(value: object) -> BrowserResult | None:
     html, truncated = _truncate_html(_as_str(value.get("html")) or "", HTML_LIMIT_BYTES)
     if truncated and "html_truncated" not in failures:
         failures.append("html_truncated")
+    requests = value.get("navigation_requests")
+    navigation_requests = None if requests is None else _as_str_tuple(requests)
+    if navigation_requests is not None and len(navigation_requests) > MAX_NAVIGATION_REQUESTS:
+        # 잘라낸 뒤쪽을 대조하지 못하므로 조용히 버리지 않고 실패로 남긴다.
+        navigation_requests = navigation_requests[:MAX_NAVIGATION_REQUESTS]
+        if "browser_navigation_limit" not in failures:
+            failures.append("browser_navigation_limit")
     return BrowserResult(
         trigger=_as_str(value.get("trigger")) or "",
         final_url=_as_str(value.get("final_url")),
@@ -76,6 +84,7 @@ def _parse_browser(value: object) -> BrowserResult | None:
         blocked_requests=_as_int(value.get("blocked_requests")) or 0,
         elapsed_ms=_as_int(value.get("elapsed_ms")) or 0,
         failures=tuple(failures),
+        navigation_requests=navigation_requests,
     )
 
 
