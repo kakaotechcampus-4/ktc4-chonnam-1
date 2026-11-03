@@ -23,10 +23,10 @@ from ai.types import (
 )
 
 
-# Search is ~2ms warm, but the first call per process also loads the KB
-# (measured 170-290ms), which timed out the old 50ms budget. gather() waits for
+# TF-IDF search is ~2ms warm, but the query embedding waits on the network for up
+# to semantic.QUERY_TIMEOUT_S before falling back to TF-IDF. gather() waits for
 # both, so this adds time only when extraction finishes before the search.
-SEARCH_TIMEOUT_SECONDS = 1.0
+SEARCH_TIMEOUT_SECONDS = 2.5
 MAX_MESSAGE_CHARS = 8192
 # Any non-blank text: search_cases returns before touching the KB on blank input.
 _WARM_UP_TEXT = "warm-up"
@@ -34,7 +34,7 @@ _WARM_UP_TEXT = "warm-up"
 
 async def _search_with_budget(text: str) -> CaseSearchResult:
     # Cancellation stops the coroutine, not an already running worker thread.
-    # search_cases only reads the bounded local KB, cached after the first call.
+    # search_cases reads the bounded local KB and one bounded embedding request.
     return await asyncio.wait_for(
         asyncio.to_thread(search_cases, text), timeout=SEARCH_TIMEOUT_SECONDS
     )
