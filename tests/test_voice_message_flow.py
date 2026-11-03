@@ -884,7 +884,7 @@ class TestVoiceInputValidation:
 
     @pytest.mark.parametrize("data,mime,expected", [
         (_wav_bytes(), "etc/m4a", "⚠️ 보이스피싱이 의심돼요"),
-        (b"%PDF-1.7 fake audio", "audio/mp4", "🎙️ 통화 녹음 파일만 확인할 수 있어요"),
+        (b"%PDF-1.7 fake audio", "audio/mp4", "🎙️ 이 파일은 확인할 수 없어요"),
         (b"", "audio/mp4", "🎙️ 이 녹음은 확인할 수 없어요"),
     ])
     async def test_real_download_mime_does_not_override_content(self, monkeypatch, data, mime, expected):
