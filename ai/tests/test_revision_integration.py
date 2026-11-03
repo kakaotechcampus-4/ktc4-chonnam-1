@@ -518,11 +518,37 @@ async def test_extraction_timeout_preserves_final_json_and_completed_environment
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("suffix", [
-    "<span></span>" * (page_module.MAX_ELEMENTS + 1),
-    "가" * (page_module.MAX_PAGE_TEXT_CHARS + 1),
+async def test_text_capped_page_reports_risk_without_claiming_completion(make_parse_client):
+    padding = "<p>" + "가" * (page_module.MAX_PAGE_TEXT_CHARS + 1) + "</p>"
+    html = padding + '<form><label>계좌 비밀번호를 입력하세요<input type="password"></label></form>'
+    client, parse = make_parse_client(parsed=PageProposal(signals=[signal(
+        RiskSignalCode.CREDENTIAL_REQUEST, EvidenceSource.OBSERVATION,
+        inspect_html(html).elements[0].element_id)]))
+
+    env = await analyze_environment_part(page(html), client=client, model="test")
+
+    parse.assert_awaited_once()
+    assert env.answer is _Answer.PARTIAL
+    assert [item.code for item in env.details.signals] == [RiskSignalCode.CREDENTIAL_REQUEST]
+
+
+@pytest.mark.asyncio
+async def test_text_capped_page_without_signals_stays_incomplete(make_parse_client):
+    padding = "<p>" + "가" * (page_module.MAX_PAGE_TEXT_CHARS + 1) + "</p>"
+    client, parse = make_parse_client(parsed=PageProposal())
+
+    env = await analyze_environment_part(page(padding), client=client, model="test")
+
+    parse.assert_awaited_once()
+    assert env.answer is _Answer.PARTIAL
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix, llm_runs", [
+    ("<span></span>" * (page_module.MAX_ELEMENTS + 1), False),
+    ("가" * (page_module.MAX_PAGE_TEXT_CHARS + 1), True),
 ], ids=["element-limit", "text-limit"])
-async def test_partial_html_preserves_observed_form_without_claiming_completion(suffix, make_parse_client):
+async def test_partial_html_preserves_observed_form_without_claiming_completion(suffix, llm_runs, make_parse_client):
     client, parse = make_parse_client(parsed=PageProposal())
     message = await analyze_message_part(TEXT, client=message_client(make_parse_client), model="test")
     env = await analyze_environment_part(page(LOGIN_HTML + suffix), client=client, model="test")
@@ -534,7 +560,7 @@ async def test_partial_html_preserves_observed_form_without_claiming_completion(
     assert "일부 자료만 확보" in response.env.details.reason.text
     assert "<form>" not in response.env.details.reason.text
     assert response.result is False
-    parse.assert_not_awaited()
+    assert parse.await_count == (1 if llm_runs else 0)
 
 
 @pytest.mark.asyncio
