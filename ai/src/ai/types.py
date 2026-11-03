@@ -1,5 +1,6 @@
 """backend ↔ ai 사이에 오가는 타입. 호출당하는 쪽이 소유합니다."""
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -12,6 +13,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ReasonCode(str, Enum):
@@ -193,6 +196,48 @@ class PersuasionEvidence(StrictModel):
     evidence: str
 
 
+def _evidence_pair_broken(field: object) -> bool:
+    return isinstance(field, dict) and (field.get("value") is None) != (field.get("evidence") is None)
+
+
+def _repair_llm_output(data: dict) -> tuple[dict, list[str]]:
+    """LLM 답에서 규칙에 어긋난 칸만 비운다. 칸 하나 때문에 답 전체를 버리지 않으려는 것이다.
+
+    인용이 없는 값은 어차피 쓰지 않으니 근거가 약해지지 않는다. 고친 내용은 칸 이름과 규칙만 돌려준다.
+    """
+    repaired = dict(data)
+    notes: list[str] = []
+
+    for name in ("claimed_sender", "claimed_purpose"):
+        if _evidence_pair_broken(repaired.get(name)):
+            repaired[name] = {"value": None, "evidence": None}
+            notes.append(f"{name}=broken_evidence_pair")
+
+    actions = repaired.get("requested_actions")
+    if isinstance(actions, list):
+        repaired["requested_actions"] = [a for a in actions if not _evidence_pair_broken(a)]
+        if len(repaired["requested_actions"]) != len(actions):
+            notes.append("requested_actions=broken_evidence_pair")
+
+    categories = repaired.get("categories")
+    if isinstance(categories, list):
+        kept = []
+        for item in categories:
+            if isinstance(item, dict):
+                label = item.get("custom_label")
+                if item.get("code") == CategoryCode.OTHER.value:
+                    if not (isinstance(label, str) and label.strip()):
+                        notes.append("categories=other_without_label")
+                        continue
+                elif label is not None:
+                    item = {**item, "custom_label": None}
+                    notes.append("categories=label_on_listed_code")
+            kept.append(item)
+        repaired["categories"] = kept
+
+    return repaired, notes
+
+
 class ExtractedMessage(StrictModel):
     categories: list[CategoryEvidence] = Field(default_factory=list)
     claimed_sender: EvidenceField = Field(default_factory=EvidenceField)
@@ -201,6 +246,17 @@ class ExtractedMessage(StrictModel):
     persuasion_signals: list[PersuasionEvidence] = Field(default_factory=list)
     # 문자에 적힌 그대로의 링크 구간. 검증과 정규형은 ai.links 가 한다 (ADR 0007)
     urls: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def repair_llm_output(cls, data: object) -> object:
+        # LLM 답을 받는 이 타입에만 적용한다. MessageAnalysis 등 결과 타입의 규칙은 그대로다
+        if cls is not ExtractedMessage or not isinstance(data, dict):
+            return data
+        repaired, notes = _repair_llm_output(data)
+        if notes:
+            LOGGER.warning("message analysis repaired: %s", " ".join(notes))
+        return repaired
 
 
 class MessageAnalysis(ExtractedMessage):
