@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import AsyncExitStack
+from dataclasses import replace
 
 from openai import APITimeoutError, AsyncOpenAI
 
@@ -175,13 +176,16 @@ async def analyze_environment_part(
     inspection = (inspect_html(page.info) if page is not None else
         PageInspection(text="", elements=(), failure=FailureCode.MISSING_RESULT))
     # Collector truncation leaves usable material; inspection limits still stop analysis.
-    stop = inspection.failure or (failure if failure is not FailureCode.PARTIAL_CONTENT else None)
+    # 글자 상한만 넘긴 페이지는 요소를 끝까지 봤으므로 위험 근거를 찾는다. inspection.failure 가
+    # 그대로 남아 결과는 partial 이고, 근거가 없어도 정상으로 확정되지 않는다.
+    inspection_stop = None if inspection.text_capped else inspection.failure
+    stop = inspection_stop or (failure if failure is not FailureCode.PARTIAL_CONTENT else None)
     if stop is not None:
         analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=stop)
         return build_environment_part(page, inspection, analysis, failure=failure)
 
     try:
-        analysis = await analyze_page(inspection, client=client, model=model)
+        analysis = await analyze_page(replace(inspection, failure=None), client=client, model=model)
     except Exception as error:
         analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=_failure_code(error))
     return build_environment_part(page, inspection, analysis, failure=failure)
