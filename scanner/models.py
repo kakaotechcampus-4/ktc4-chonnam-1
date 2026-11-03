@@ -24,6 +24,9 @@ class BrowserResult:
     blocked_requests: int  # 허용 목록 밖 요청·WebSocket·팝업을 막은 횟수
     elapsed_ms: int
     failures: tuple[str, ...] = field(default_factory=tuple)
+    # 메인 프레임의 이동 요청 전부. 문서가 확정되지 않은 HTTP 리다이렉트 경유까지 담는다.
+    # None 은 이 값을 보내지 않는 구버전 수집기, () 는 요청을 하나도 못 봤다는 뜻이다.
+    navigation_requests: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
