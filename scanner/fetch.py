@@ -34,7 +34,7 @@ from scanner.models import CollectResult
 # 값, 위 값들과 성격이 다르다).
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT_SECONDS = 10.0
-HTML_LIMIT_BYTES = 131_072  # 128 KiB. 초과분은 버리고 failures 에 html_truncated 를 남긴다.
+HTML_LIMIT_BYTES = 262_144  # 256 KiB. 초과분은 버리고 failures 에 html_truncated 를 남긴다.
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 TEXT_CONTENT_TYPES = ("text/", "application/xhtml+xml", "application/xml", "application/json")
 DEFAULT_HEADERS = {

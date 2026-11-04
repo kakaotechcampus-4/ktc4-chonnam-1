@@ -37,8 +37,8 @@ from scanner.fetch import collect_url
 from scanner.models import BrowserResult, CollectResult
 
 MAX_REQUEST_BYTES = 4096
-# 메인 서버는 512 KiB를 넘는 응답을 버린다. JSON 이스케이프로 커지는 몫을 두고 줄인다.
-MAX_RESPONSE_BYTES = 480 * 1024
+# 메인 서버는 1 MiB를 넘는 응답을 버린다. JSON 이스케이프로 커지는 몫을 두고 줄인다.
+MAX_RESPONSE_BYTES = 960 * 1024
 # 2단계 + 3단계 + 정리 여유가 메인 서버 타임아웃(15초)보다 짧아야 실패 이유가 메인까지 간다.
 DEFAULT_FETCH_TIMEOUT_SECONDS = 3.5
 DEFAULT_BROWSER_TIMEOUT_SECONDS = 6.0
@@ -69,7 +69,7 @@ def _failed(url: str, failure: str) -> CollectResult:
 def encode_result(result: CollectResult, limit: int = MAX_RESPONSE_BYTES) -> bytes:
     """응답이 `limit`을 넘지 않을 때까지 더 긴 HTML 부터 절반씩 줄이고 `html_truncated`를 남긴다.
 
-    HTML이 128 KiB 이하여도 제어 문자·따옴표는 JSON에서 2~6배로 커질 수 있다.
+    HTML이 256 KiB 이하여도 제어 문자·따옴표는 JSON에서 2~6배로 커질 수 있다.
     """
     def short(title: str | None) -> str | None:
         return title[:MAX_TITLE_CHARS] if title else title
