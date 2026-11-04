@@ -209,7 +209,15 @@ def _repair_llm_output(data: dict) -> tuple[dict, list[str]]:
     notes: list[str] = []
 
     for name in ("claimed_sender", "claimed_purpose"):
-        if _evidence_pair_broken(repaired.get(name)):
+        if name not in repaired:
+            continue
+        field = repaired[name]
+        # 인용 검증을 거친 답은 EvidenceField 객체로 다시 들어온다
+        if not isinstance(field, (dict, EvidenceField)):
+            # 값에는 문자 내용이 들어 있을 수 있어 형식 이름만 남긴다
+            repaired[name] = {"value": None, "evidence": None}
+            notes.append(f"{name}=not_object:{type(field).__name__}")
+        elif _evidence_pair_broken(field):
             repaired[name] = {"value": None, "evidence": None}
             notes.append(f"{name}=broken_evidence_pair")
 

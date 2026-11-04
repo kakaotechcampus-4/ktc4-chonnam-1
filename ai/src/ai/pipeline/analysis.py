@@ -189,7 +189,8 @@ async def analyze_environment_part(
 ) -> EnvironmentPart:
     """Analyze only supplied page material or an explicit collection failure."""
     started = time.perf_counter()
-    inspection = (inspect_html(page.info) if page is not None else
+    # 공격자가 만든 큰 HTML 검사가 다른 사용자의 요청을 막지 않도록 별도 스레드에서 돌린다
+    inspection = (await asyncio.to_thread(inspect_html, page.info) if page is not None else
         PageInspection(text="", elements=(), failure=FailureCode.MISSING_RESULT))
     if page is not None:
         # 소요 시간과 개수만 남긴다. 주소와 본문은 남기지 않는다

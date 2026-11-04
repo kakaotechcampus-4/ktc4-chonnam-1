@@ -545,9 +545,9 @@ async def test_text_capped_page_without_signals_stays_incomplete(make_parse_clie
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("suffix, llm_runs", [
-    ("<span></span>" * (page_module.MAX_ELEMENTS + 1), False),
+    ("<div>" * (page_module.MAX_DEPTH + 1), False),
     ("가" * (page_module.MAX_PAGE_TEXT_CHARS + 1), True),
-], ids=["element-limit", "text-limit"])
+], ids=["depth-limit", "text-limit"])
 async def test_partial_html_preserves_observed_form_without_claiming_completion(suffix, llm_runs, make_parse_client):
     client, parse = make_parse_client(parsed=PageProposal())
     message = await analyze_message_part(TEXT, client=message_client(make_parse_client), model="test")
@@ -742,9 +742,31 @@ async def test_page_diagnostics_show_llm_was_skipped(make_parse_client, caplog):
 
     with caplog.at_level("WARNING", logger="ai.pipeline.analysis"):
         await analyze_environment_part(
-            page(LOGIN_HTML + "<span></span>" * (page_module.MAX_ELEMENTS + 1)),
+            page(LOGIN_HTML + "<div>" * (page_module.MAX_DEPTH + 1)),
             client=client, model="test",
         )
 
     assert "page inspection elapsed=" in caplog.text
     assert "page llm elapsed=" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_page_inspection_runs_off_the_event_loop_thread(make_parse_client, monkeypatch):
+    import threading
+
+    import ai.pipeline.analysis as analysis_module
+
+    client, _ = make_parse_client(parsed=PageProposal())
+    inspect = analysis_module.inspect_html
+    threads = []
+
+    def recording_inspect(html):
+        threads.append(threading.current_thread())
+        return inspect(html)
+
+    monkeypatch.setattr(analysis_module, "inspect_html", recording_inspect)
+
+    await analyze_environment_part(page(LOGIN_HTML), client=client, model="test")
+
+    assert len(threads) == 1
+    assert threads[0] is not threading.current_thread()

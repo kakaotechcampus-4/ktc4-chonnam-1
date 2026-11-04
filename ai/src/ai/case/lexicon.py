@@ -55,6 +55,11 @@ DEMAND_LEXICON: tuple[tuple[DemandKind, re.Pattern[str]], ...] = (
 INSTITUTION_PATTERN = re.compile(
     r"검찰|지검|검사(?:님|입니다|실)|수사관|경찰|금융감독원|금감원|금융위원회|법원"
 )
+# 자주 사칭되는 공공기관. 정상 안내·상담도 많아 주의까지만 쓰고 L-3 근거로는 쓰지 않는다 (ADR 0010).
+# 사례 첨부 관문의 학습 가중치가 기대지 않도록 INSTITUTION_PATTERN 과 나눠 둔다
+PUBLIC_INSTITUTION_PATTERN = re.compile(
+    r"국세청|세무서|관세청|국민건강보험|건강보험\s*(?:공단|센터)|건보공단|국민연금|노동부|우체국|출입국"
+)
 
 # 호칭 뒤에 한글이 더 붙으면 다른 낱말이다(이모티콘, 엄마손파이, 어머니회). 조사·서술어는 허용한다.
 _KIN_TAIL = (
@@ -112,7 +117,7 @@ def read_with_lexicon(
             if is_recipient_side(sentence):
                 # 받는 사람 말로 보이는 문장은 상한(3·6개)을 차지하지 않게 미리 뺀다
                 continue
-            if (m := INSTITUTION_PATTERN.search(sentence)):
+            if (m := INSTITUTION_PATTERN.search(sentence) or PUBLIC_INSTITUTION_PATTERN.search(sentence)):
                 identity.append(
                     IdentityClaim(kind=IdentityKind.INSTITUTION, name=m.group(0), quote=sentence)
                 )

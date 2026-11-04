@@ -237,6 +237,28 @@ async def test_institution_text_is_caution_without_l3():
     assert r.official_contact is not None and r.official_contact.number
 
 
+@pytest.mark.parametrize(
+    "text, name, number",
+    [
+        ("[국세청] 고객님 앞으로 미납된 종합소득세가 있습니다", "국세청", "126"),
+        ("[건강보험공단] 고객님 앞으로 미납된 보험료가 있습니다", "건강보험공단", "15771000"),
+    ],
+)
+async def test_public_institution_text_is_caution_with_official_number(text, name, number):
+    """요구가 없어도 "확인할 주소가 없어요" 로 끝내지 않고 공식 번호로 확인하게 한다."""
+    reading = {"identity": [{"kind": "institution", "name": name, "quote": text[: text.index("]") + 1]}]}
+    r = await _analyze(text, reading)
+    assert r.scenario == Scenario.IMPERSONATION_NO_LINK
+    assert (r.conclusion, r.caution, r.floors) == (Conclusion.INCONCLUSIVE, True, [])
+    assert r.official_contact is not None and r.official_contact.number == number
+
+
+async def test_public_institution_uses_lexicon_when_reading_fails():
+    source = message_source("[국세청] 고객님 앞으로 미납된 종합소득세가 있습니다")
+    reading = read_with_lexicon(source, FailureCode.TIMEOUT).reading
+    assert [(i.kind.value, i.name) for i in reading.identity] == [("institution", "국세청")]
+
+
 async def test_q2_answer_on_institution_text_is_ignored_for_conclusion():
     r = apply_message_answer(await _analyze(INSTITUTION, INSTITUTION_READING), "called_known_number", "is_person")
     assert r.caution is True

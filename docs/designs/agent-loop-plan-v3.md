@@ -269,7 +269,7 @@ async def read_claims(source: ReadingSource, *, client: AsyncOpenAI | None = Non
 | **V-2** 상대 쪽 말인가 | 통화는 `other_speaker` 발화만 인정한다(화자 분리 실패면 전체). 캡처는 `side=other`·`unknown` 만 인정한다. **ADR 0008: 통화는 화자 없이 문장 꼴로 받는 사람 쪽 말(되묻기·옮긴 말·자기 일)을 거른다** | `self_side` 로 버림 |
 | **V-3** 알림 문장인가 | `demands` | 아래 표의 끝 모양이면 `notice_sentence` 로 버림 |
 | **V-4** 부정·경고문인가 | `demands` | 기존 `action_is_denied()` 가 참이면 `negated` 로 버림 |
-| **V-5** 수사·감독 기관 목록에 드는가 | `identity`(kind=institution) | `name` 이나 `quote` 가 아래 목록에 걸리면 `institution_claim` 이 된다. 안 걸리면 카드에 보여 줄 주장으로만 남고 하한·caution에는 쓰지 않는다 |
+| **V-5** 수사·감독 기관 목록에 드는가 | `identity`(kind=institution) | `name` 이나 `quote` 가 아래 목록에 걸리면 `institution_claim` 이 된다. 안 걸리면 카드에 보여 줄 주장으로만 남고 하한·caution에는 쓰지 않는다. **ADR 0010: 자주 사칭되는 공공기관 목록에 걸리면 `institution_claim` 이 되지만 caution에만 쓰고 하한에는 쓰지 않는다** |
 | **V-6** 관계 주장 | `identity`(kind=acquaintance) | V-1·V-2를 통과하면 `acquaintance_claim` 이 된다. 관계 어휘는 보지 않는다 |
 | **V-7** 말로 부른 주소 | `spoken_hosts` | 형식을 검증하고 호스트만 남긴다(origin=spoken). 실패하면 `not_url` 로 버림 |
 | **V-8** 화자 신뢰도 | 통화 | `speaker_confidence=low` 이거나 화자 정보가 없으면 `speaker_split_failed=True`. **ADR 0008로 없앴다** |
@@ -289,6 +289,8 @@ V-3은 어휘표가 아니라 문장 끝 모양만 본다. 요구 종류는 LLM�
 
 V-5 수사·감독 기관 목록(v2 §7.2a와 같음): `검찰|지검|검사(?:님|입니다|실)|수사관|경찰|금융감독원|금감원|금융위원회|법원`.
 은행·카드사·통신사·택배사는 들지 않는다. "검사 결과"·"수사 중인"은 걸리지 않는다.
+
+자주 사칭되는 공공기관 목록(ADR 0010, 주의 전용): `국세청|세무서|관세청|국민건강보험|건강보험\s*(?:공단|센터)|건보공단|국민연금|노동부|우체국|출입국`.
 
 ### 5.6 폴백 — 읽기가 실패했을 때 (`ai/src/ai/case/lexicon.py`)
 
