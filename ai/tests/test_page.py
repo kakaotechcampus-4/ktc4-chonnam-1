@@ -9,7 +9,7 @@ import pytest
 
 import ai.page as page_module
 from ai.page import (
-    MAX_ELEMENTS,
+    MAX_DEPTH,
     MAX_PAGE_TEXT_CHARS,
     inspect_html,
     select_env_doubt,
@@ -61,7 +61,7 @@ def test_unclosed_fake_form_inside_template_does_not_make_page_partial():
     ("html", "failure"),
     [
         ("", FailureCode.EMPTY_INPUT),
-        ("가" * 50_000, FailureCode.INPUT_TOO_LARGE),
+        ("가" * 100_000, FailureCode.INPUT_TOO_LARGE),
     ],
     ids=("empty", "utf8-byte-limit"),
 )
@@ -217,9 +217,18 @@ def test_unclosed_important_form_preserves_observed_element_as_partial():
     assert result.elements[0].evidence == html[html.index("<form") :]
 
 
-def test_element_limit_preserves_candidates_collected_before_limit():
+def test_many_tags_are_inspected_to_the_end():
     login = '<form><label>비밀번호<input type="password"></label></form>'
-    html = login + ("<div></div>" * MAX_ELEMENTS)
+
+    result = inspect_html("<p>안내</p>" * 3_000 + login)
+
+    assert result.failure is None
+    assert [item.doubt for item in result.elements] == [EnvDoubt.LOGIN_FORM]
+
+
+def test_depth_limit_preserves_candidates_collected_before_limit():
+    login = '<form><label>비밀번호<input type="password"></label></form>'
+    html = login + ("<div>" * (MAX_DEPTH + 1))
 
     result = inspect_html(html)
 
@@ -299,8 +308,8 @@ def test_inspection_never_opens_links_or_submits_forms(monkeypatch: pytest.Monke
 
 
 def test_uninspected_tail_is_not_evidence(monkeypatch):
-    monkeypatch.setattr(page_module, "MAX_ELEMENTS", 2)
-    html = '<form><input type="password"><div>UNREAD_SECRET</div></form>'
+    monkeypatch.setattr(page_module, "MAX_DEPTH", 2)
+    html = '<form><input type="password"><div><b>UNREAD_SECRET</b></div></form>'
 
     result = inspect_html(html)
 
@@ -524,13 +533,13 @@ def test_elements_after_text_limit_are_still_inspected():
 
 
 def test_other_limits_are_not_marked_text_capped():
-    too_many = inspect_html("<span></span>" * (page_module.MAX_ELEMENTS + 1))
+    too_deep = inspect_html("<div>" * (MAX_DEPTH + 1))
     both = inspect_html(
         "<p>" + "가" * (MAX_PAGE_TEXT_CHARS + 1) + "</p>"
-        + "<span></span>" * (page_module.MAX_ELEMENTS + 1)
+        + "<div>" * (MAX_DEPTH + 1)
     )
 
-    assert too_many.failure is FailureCode.PARTIAL_CONTENT
-    assert too_many.text_capped is False
+    assert too_deep.failure is FailureCode.PARTIAL_CONTENT
+    assert too_deep.text_capped is False
     assert both.failure is FailureCode.PARTIAL_CONTENT
     assert both.text_capped is False
