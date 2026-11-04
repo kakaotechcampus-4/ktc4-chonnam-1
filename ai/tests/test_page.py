@@ -378,7 +378,7 @@ def test_deadline_uses_monotonic_clock(monkeypatch):
 
 
 def test_initial_deadline_expiry_returns_timeout(monkeypatch):
-    clock = iter([0.0, 0.501])
+    clock = iter([0.0, 1.001])
     monkeypatch.setattr(page_module, "monotonic", lambda: next(clock))
 
     result = inspect_html("<p>normal</p>")

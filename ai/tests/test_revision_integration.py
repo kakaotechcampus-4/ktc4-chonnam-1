@@ -748,3 +748,25 @@ async def test_page_diagnostics_show_llm_was_skipped(make_parse_client, caplog):
 
     assert "page inspection elapsed=" in caplog.text
     assert "page llm elapsed=" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_page_inspection_runs_off_the_event_loop_thread(make_parse_client, monkeypatch):
+    import threading
+
+    import ai.pipeline.analysis as analysis_module
+
+    client, _ = make_parse_client(parsed=PageProposal())
+    inspect = analysis_module.inspect_html
+    threads = []
+
+    def recording_inspect(html):
+        threads.append(threading.current_thread())
+        return inspect(html)
+
+    monkeypatch.setattr(analysis_module, "inspect_html", recording_inspect)
+
+    await analyze_environment_part(page(LOGIN_HTML), client=client, model="test")
+
+    assert len(threads) == 1
+    assert threads[0] is not threading.current_thread()

@@ -182,7 +182,7 @@ async def test_html_limit_preserves_message_and_sets_null(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_initial_inspection_timeout_preserves_message(monkeypatch):
-    clock = iter([0.0, 0.501])
+    clock = iter([0.0, 1.001])
     monkeypatch.setattr(html_page, "monotonic", lambda: next(clock))
     source_message = message()
 
