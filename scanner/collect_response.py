@@ -7,7 +7,7 @@
 
 `scanner/fetch.py`와 같은 원칙: **예외를 올리지 않는다.** 격리환경이
 잘못된 JSON을 보냈거나, 필드가 비어 있거나, 타입이 다르거나, HTML이
-약속한 크기(128 KiB)를 넘겨도 `failures`에 사실만 남기고 안전한
+약속한 크기(256 KiB)를 넘겨도 `failures`에 사실만 남기고 안전한
 `CollectResult`를 돌려준다. Shadow Mode 비교용 호출 하나가 이상해졌다고
 전체 분석이 죽으면 안 된다.
 """
@@ -24,7 +24,7 @@ MAX_DOWNLOADS = 5
 #   (약속한 계약에 없는 응답이라 핵심 필드조차 못 믿는다)
 # - url_mismatch: 응답의 input_url이 우리가 요청한 URL과 다름 (요청·응답이
 #   서로 안 맞을 수 있다는 신호라 html 등 나머지 내용도 안 믿는다)
-# - html_truncated: scanner/fetch.py 에서도 쓰는 값 — 격리환경이 128 KiB
+# - html_truncated: scanner/fetch.py 에서도 쓰는 값 — 격리환경이 256 KiB
 #   약속을 안 지켰을 때 여기서도 한 번 더 자른다.
 
 
