@@ -552,6 +552,40 @@ async def test_unrepairable_answer_logs_field_names_without_text(caplog):
     assert "엄마" not in caplog.text and "문화상품권" not in caplog.text
 
 
+@pytest.mark.parametrize("name", ["claimed_sender", "claimed_purpose"])
+@pytest.mark.parametrize("value, type_name", [
+    ("자녀", "str"),
+    (None, "NoneType"),
+    (["자녀"], "list"),
+])
+async def test_field_that_is_not_an_object_keeps_the_rest_of_the_llm_answer(name, value, type_name, caplog):
+    """칸이 객체가 아니어도 나머지 답과 링크를 버리지 않는다. 로그에는 값의 형식만 남긴다."""
+    payload = _llm_output(
+        persuasion_signals=[{"code": "relationship", "evidence": "엄마 나"}],
+        urls=["bit.ly/abc"],
+        **{name: value},
+    )
+    with caplog.at_level("WARNING", logger="ai.types"):
+        result = await analyze_message(
+            SECRET_TEXT, client=_sdk_client(payload), model="m", ground_urls=False)
+
+    assert result.analysis_status is AnalysisStatus.COMPLETED
+    assert getattr(result, name) == EvidenceField()
+    assert [item.evidence for item in result.persuasion_signals] == ["엄마 나"]
+    assert result.urls == ["bit.ly/abc"]
+    assert f"message analysis repaired: {name}=not_object:{type_name}" in caplog.text
+    assert "자녀" not in caplog.text
+
+
+async def test_missing_field_is_not_reported_as_repaired(caplog):
+    payload = _llm_output()
+    del payload["claimed_sender"]
+    with caplog.at_level("WARNING", logger="ai.types"):
+        result = await analyze_message(SECRET_TEXT, client=_sdk_client(payload), model="m")
+    assert result.claimed_sender == EvidenceField()
+    assert "repaired" not in caplog.text
+
+
 def test_result_type_rules_stay_strict():
     with pytest.raises(ValidationError):
         MessageAnalysis.model_validate({
