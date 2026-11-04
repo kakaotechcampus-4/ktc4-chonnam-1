@@ -14,14 +14,9 @@
               "blockId": "6abe5d6a5402049514861b78"
             },
             {
-              "label": "스미싱 확인하기",
+              "label": "보내는 법 보기",
               "action": "block",
               "blockId": "6aa6a4436d537a3eabb81ad5"
-            },
-            {
-              "label": "보이스피싱 확인하기",
-              "action": "block",
-              "blockId": "6ae3302425d4bc48e2bb8a61"
             }
           ]
         }
