@@ -11,8 +11,7 @@ from time import monotonic
 from ai.types import EnvDoubt, FailureCode
 
 
-MAX_HTML_BYTES = 131_072
-MAX_ELEMENTS = 2_000
+MAX_HTML_BYTES = 262_144
 MAX_PAGE_TEXT_CHARS = 24_000
 MAX_DEPTH = 64
 INSPECTION_TIMEOUT_SECONDS = 0.500
@@ -148,9 +147,6 @@ class _Collector(HTMLParser):
     ) -> None:
         self.processed_end = max(self.processed_end, self._offset())
         _check_deadline(self.deadline)
-        if len(self.nodes) >= MAX_ELEMENTS:
-            self.limit_reached = True
-            raise _InspectionLimit
         if len(self.stack) + 1 > MAX_DEPTH:
             self.limit_reached = True
             raise _InspectionLimit

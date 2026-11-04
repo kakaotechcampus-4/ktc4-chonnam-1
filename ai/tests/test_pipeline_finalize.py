@@ -163,12 +163,12 @@ async def test_collection_failure_keeps_message_and_partial_facts(
 async def test_html_limit_preserves_message_and_sets_null(monkeypatch):
     import ai.page as page_module
 
-    monkeypatch.setattr(page_module, "MAX_ELEMENTS", 2)
+    monkeypatch.setattr(page_module, "MAX_DEPTH", 2)
     source_message = message()
     source_page = IsolatedPage(
         brand="unknown",
         category="unknown",
-        info='<form><input type="password"><div>미확인</div></form>',
+        info='<form><input type="password"><div><b>미확인</b></div></form>',
     )
 
     result = await public.finalize_analysis(url(True), source_message, source_page)
