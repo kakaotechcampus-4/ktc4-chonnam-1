@@ -18,7 +18,7 @@ class BrowserResult:
     trigger: str  # 브라우저를 돌린 이유: script_only_page / script_redirect / status_403_404 / always
     final_url: str | None
     navigation_chain: tuple[str, ...]  # 메인 프레임이 이동한 주소 (JS 리다이렉트 포함)
-    html: str  # JS 실행 후 DOM. 128 KiB 상한
+    html: str  # JS 실행 후 DOM. 256 KiB 상한
     title: str | None
     downloads: tuple[str, ...]  # 브라우저가 시작하려던 다운로드 URL. 파일은 받지 않는다
     blocked_requests: int  # 허용 목록 밖 요청·WebSocket·팝업을 막은 횟수
