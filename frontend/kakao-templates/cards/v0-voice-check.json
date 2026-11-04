@@ -1,0 +1,29 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "basicCard": {
+          "thumbnail": {
+            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/v0-voice-check.png",
+            "altText": "전화 아이콘이 붙은 녹음 파일 옆에서 돋보기를 든 경찰 모자 기니피그",
+            "fixedRatio": false
+          },
+          "buttonLayout": "vertical",
+          "buttons": [
+            {
+              "label": "아이폰에서 보내는 법",
+              "action": "block",
+              "blockId": "6ae3305d80857534c13f81ea"
+            },
+            {
+              "label": "갤럭시에서 보내는 법",
+              "action": "block",
+              "blockId": "6ae330850100875ffb658da9"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

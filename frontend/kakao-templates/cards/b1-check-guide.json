@@ -5,10 +5,10 @@
       {
         "basicCard": {
           "title": "📋 확인할 문자나 통화 녹음을 보내주세요",
-          "description": "문자는 전체를 복사해서, 녹음은 파일로 보내 주세요.\n※ 확인 전까지 링크·송금·앱 설치는 하지 마세요.\n※ 개인정보는 지우고 보내 주세요.\n※ 녹음은 파일 1개, 25MB 이하 (m4a, mp3, wav)\n\n결과가 오지 않으면 「결과 확인」을 보내 주세요.",
+          "description": "문자는 전체를 복사해서 보내 주세요.\n녹음은 파일 1개로 보내 주세요.\n(m4a·mp3·wav, 25MB 이하)\n\n※ 아직 링크·송금·앱 설치는 하지 마세요.\n※ 개인정보는 지우고 보내 주세요.\n\n결과가 오지 않으면 「결과 확인」을 보내 주세요.",
           "thumbnail": {
-            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b1-check-guide.png",
-            "altText": "링크가 담긴 의심 문자를 돋보기로 살펴보는 경찰 모자 기니피그",
+            "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/w1-welcome.png",
+            "altText": "링크가 담긴 의심 문자와 걸려 온 전화 화면 옆에서 돋보기를 든 경찰 모자 기니피그",
             "fixedRatio": false
           },
           "buttonLayout": "vertical",
@@ -19,12 +19,12 @@
               "blockId": "6aad62fc707aa28d466cd3a1"
             },
             {
-              "label": "아이폰에서 녹음 보내는 법",
+              "label": "아이폰에서 보내는 법",
               "action": "block",
               "blockId": "6ae3305d80857534c13f81ea"
             },
             {
-              "label": "갤럭시에서 녹음 보내는 법",
+              "label": "갤럭시에서 보내는 법",
               "action": "block",
               "blockId": "6ae330850100875ffb658da9"
             }
