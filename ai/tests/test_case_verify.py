@@ -97,6 +97,54 @@ def test_n3_bank_is_not_institution_claim():
     assert r.claims.identity[0].listed_institution is False
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["국세청", "서초세무서", "관세청", "국민건강보험공단", "건강보험공단", "국민연금공단", "고용노동부", "우체국", "출입국관리사무소"],
+)
+def test_public_institution_cautions_but_never_counts_for_floor(name):
+    """자주 사칭되는 공공기관은 주의까지만 쓴다. 자기소개 + 부탁 꼴이어도 L-3 근거가 아니다 (ADR 0010)."""
+    quote = f"{name} 담당자입니다"
+    info = "계좌번호를 불러 주세요"
+    r = _verify(
+        _source(quote, info),
+        _reading(
+            identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name=name, quote=quote)],
+            demands=[DemandClaim(kind=DemandKind.PERSONAL_INFO, quote=info)],
+        ),
+    )
+    assert _floor(r) == {EvidenceCode.INSTITUTION_CLAIM: False, EvidenceCode.INFO_REQUEST: True}
+    assert r.claims.identity[0].listed_institution is True
+
+
+def test_public_institution_found_in_quote_replaces_model_name():
+    quote = "[국세청] 고객님 앞으로"
+    r = _verify(
+        _source(quote + " 미납된 세금이 있습니다"),
+        _reading(identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name="세금 담당", quote=quote)]),
+    )
+    assert _codes(r) == [EvidenceCode.INSTITUTION_CLAIM]
+    assert r.claims.identity[0].name == "국세청"
+
+
+def test_public_institution_name_not_in_source_is_not_trusted():
+    quote = "고객님 앞으로 미납된 세금이"
+    r = _verify(
+        _source(quote + " 있습니다"),
+        _reading(identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name="국세청", quote=quote)]),
+    )
+    assert EvidenceCode.INSTITUTION_CLAIM not in _codes(r)
+    assert r.claims.identity[0].listed_institution is False
+
+
+def test_investigative_institution_still_wins_over_public_one():
+    quote = "서울중앙지검 수사관입니다"
+    r = _verify(
+        _source("국세청 자료를 확인했습니다", quote),
+        _reading(identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name="서울중앙지검", quote=quote)]),
+    )
+    assert _floor(r) == {EvidenceCode.INSTITUTION_CLAIM: True}
+
+
 def test_n4_second_sentence_money_transfer_dropped_by_notice_rule():
     quote = "고객님 명의 계좌가 범죄에 연루됐습니다"
     src = _source("금융감독원 수사관입니다. " + quote)
