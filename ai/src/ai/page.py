@@ -14,7 +14,7 @@ from ai.types import EnvDoubt, FailureCode
 MAX_HTML_BYTES = 262_144
 MAX_PAGE_TEXT_CHARS = 24_000
 MAX_DEPTH = 64
-INSPECTION_TIMEOUT_SECONDS = 0.500
+INSPECTION_TIMEOUT_SECONDS = 1.000
 MAX_INSPECTION_BYTES = 262_144
 IGNORED_TEXT_TAGS = frozenset({"script", "style", "template", "noscript"})
 
