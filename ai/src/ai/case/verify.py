@@ -13,7 +13,7 @@ import re
 from typing import Literal
 
 from ai.case import forms
-from ai.case.lexicon import DEMAND_LEXICON, INSTITUTION_PATTERN
+from ai.case.lexicon import DEMAND_LEXICON, INSTITUTION_PATTERN, PUBLIC_INSTITUTION_PATTERN
 from ai.case.types import (
     ClaimReading,
     ClaimView,
@@ -144,6 +144,23 @@ def _verify_host(raw: str) -> str | None:
     return host if valid_host(host) else None
 
 
+def _find_institution(
+    pattern: re.Pattern[str], claimed_name: str, quote: str, sentences: list[str]
+) -> tuple[str, list[str]] | None:
+    """모델이 적은 이름은 그 기관명이 상대 쪽 말에 실제로 나올 때만 믿는다 (R15).
+
+    아니면 인용만으로 판단하고, 이후 단계가 쓸 이름도 인용에서 찾은 낱말로 바꾼다.
+    돌려주는 값은 (쓸 이름, 기관명이 나온 문장들). 못 찾으면 None.
+    """
+    m_name = pattern.search(claimed_name)
+    named = [s for s in sentences if m_name and m_name.group(0) in s]
+    if named:
+        return claimed_name, named
+    if (m_quote := pattern.search(quote)) is not None:
+        return m_quote.group(0), []
+    return None
+
+
 def _identity_self_side(kind: IdentityKind, sentence: str) -> bool:
     """신원 문장이 받는 사람 쪽 말 꼴인가. 자기소개 꼴이면 물음표가 붙어도 상대 말로 본다."""
     if forms.is_quotation(sentence):
@@ -232,21 +249,19 @@ def verify_call(
         listed = False
         name = ident.name
         if ident.kind == IdentityKind.INSTITUTION:
-            # 모델이 적은 name 은 그 기관명이 상대 쪽 말에 실제로 나올 때만 믿는다 (R15).
-            # 아니면 인용만으로 판단하고, 이후 단계가 쓸 이름도 인용에서 찾은 낱말로 바꾼다
-            m_name = INSTITUTION_PATTERN.search(ident.name)
-            named = [s for s in caller_sentences if m_name and m_name.group(0) in s]
-            if named:
+            if found := _find_institution(INSTITUTION_PATTERN, ident.name, q, caller_sentences):
                 listed = True
-            elif (m_quote := INSTITUTION_PATTERN.search(q)) is not None:
-                listed = True
-                name = m_quote.group(0)
-            if listed:
+                name, named = found
                 # 하한에는 자기소개 꼴("○○지검 수사관입니다")만 쓴다. 기관을 말하기만 한 문장은 주의로 남는다
                 shaped = _asserts(ident.kind, sentence) or any(
                     _asserts(ident.kind, s) for s in named
                 )
                 add(EvidenceCode.INSTITUTION_CLAIM, q, shaped=shaped)
+            elif found := _find_institution(PUBLIC_INSTITUTION_PATTERN, ident.name, q, caller_sentences):
+                # 자주 사칭되는 공공기관은 꼴이 맞아도 주의까지만 쓴다 (ADR 0010)
+                listed = True
+                name = found[0]
+                add(EvidenceCode.INSTITUTION_CLAIM, q, shaped=False)
         elif ident.kind == IdentityKind.ACQUAINTANCE:
             # "엄마 나야", "엄마, 폰 고장 났어" 같은 꼴만 하한에 쓴다. "우리 아들이" 는 남 이야기다
             add(EvidenceCode.ACQUAINTANCE_CLAIM, q, shaped=_asserts(ident.kind, sentence))

@@ -122,6 +122,16 @@ class TestRenderResultCard:
 
         assert card["version"] == "2.0"
 
+    def test_disabling_details_preserves_all_official_card_buttons(self):
+        analysis = _analysis(
+            "official", _part("no_risk_found", brand="CJ대한통운"),
+            _part("no_risk_found"), domain="cjlogistics.com",
+        )
+
+        assert render_result_card(analysis, job_id="job-123", allow_details=False) == render_result_card(
+            analysis, job_id="job-123",
+        )
+
 
 def _r9_description(analysis: dict) -> str:
     card = render_result_card(analysis)

@@ -40,7 +40,7 @@ from ai.types import CaseSearchResult, FailureCode
 
 LOGGER = logging.getLogger(__name__)
 
-SEARCH_BUDGET_S = 1.0
+SEARCH_BUDGET_S = 2.5
 DEFAULT_TIME_BUDGET_S = 25.0
 # read_claims 가 제 시간 초과에서 스스로 어휘표로 폴백하도록, 바깥 한도는 조금 넉넉히 둔다
 _READ_GRACE_S = 0.5

@@ -67,7 +67,7 @@ Content-Type: application/json
 | 413 | 요청 본문 4 KiB 초과 |
 | 503 | 다른 수집이 진행 중. 기다리지 않고 바로 거절한다 |
 
-200 응답 본문은 `CollectResult` 필드 그대로다. 응답 전체는 480 KiB 를 넘지 않게 줄여 보낸다. 메인 서버는 512 KiB 를 넘는 응답을 버린다.
+200 응답 본문은 `CollectResult` 필드 그대로다. 응답 전체는 960 KiB 를 넘지 않게 줄여 보낸다. 메인 서버는 1 MiB 를 넘는 응답을 버린다.
 
 ```json
 {
@@ -91,7 +91,8 @@ Content-Type: application/json
 | `trigger` | 3단계를 돌린 이유. `script_only_page`, `script_redirect`, `status_403_404`, `always` |
 | `final_url` | 마지막으로 실제 열린 주소 |
 | `navigation_chain` | 메인 페이지가 이동한 주소. JS 리다이렉트 포함, 최대 10개 |
-| `html`, `title` | JS 실행 후 화면. HTML 은 128 KiB 상한 |
+| `navigation_requests` | 메인 페이지의 이동 요청 전부. 문서가 열리지 않은 HTTP 리다이렉트 경유도 담는다. 최대 20개 |
+| `html`, `title` | JS 실행 후 화면. HTML 은 256 KiB 상한 |
 | `downloads` | 브라우저가 시작하려던 다운로드 주소. 파일은 받지 않는다. 최대 5개 |
 | `blocked_requests` | 허용 목록 밖 요청, WebSocket, 팝업을 막은 횟수 |
 | `elapsed_ms`, `failures` | 3단계에 걸린 시간과 실패 이유 |
@@ -106,12 +107,13 @@ Content-Type: application/json
 | `timeout` | 2단계, API | 2단계 마감 초과. API 전체 마감을 넘겨도 이 값이다 |
 | `connection_failed`, `tls_cert_verify_failed` | 2단계 | 접속 실패, 인증서 검증 실패 |
 | `redirect_limit`, `invalid_scheme`, `invalid_url` | 2단계 | 리다이렉트 5홉 초과, http(s) 아님, URL 해석 실패 |
-| `html_truncated` | 2·3단계 | HTML 을 128 KiB 에서 잘랐음 |
+| `html_truncated` | 2·3단계 | HTML 을 256 KiB 에서 잘랐음 |
 | `compressed_response_skipped` | 2단계 | 압축 응답이라 본문을 읽지 않았음 |
 | `collector_error` | API | 수집기 내부 오류. 다음 요청은 정상 처리된다 |
 | `invalid_response`, `url_mismatch` | 메인 서버 파서 | 격리 서버 응답을 믿을 수 없음 |
 | `browser_timeout` | 3단계 | 마감 초과. 그때까지 본 화면은 남긴다 |
 | `browser_blocked_navigation` | 3단계 | 메인 페이지가 허용 목록 밖으로 이동하려 해서 막았다 |
+| `browser_navigation_limit` | 3단계 | 이동 요청이 20개를 넘어 뒤쪽을 기록하지 못했다 |
 | `browser_navigation_failed` | 3단계 | 허용한 주소인데 열지 못했다 |
 | `browser_crashed`, `browser_error` | 3단계 | 렌더러 크래시, 그 밖의 브라우저 오류. 브라우저를 다시 띄운다 |
 | `browser_snapshot_failed` | 3단계 | 페이지가 멈춰 화면을 가져오지 못했다 |
@@ -120,7 +122,7 @@ Content-Type: application/json
 
 | 단계 | 하는 일 | 상한 |
 | --- | --- | --- |
-| 2단계 httpx | 리다이렉트를 직접 따라가며 홉마다 허용 목록 확인. HTML 128 KiB | 3.5초 |
+| 2단계 httpx | 리다이렉트를 직접 따라가며 홉마다 허용 목록 확인. HTML 256 KiB | 3.5초 |
 | 3단계 Chromium | JS 실행 후 이동·폼·다운로드 관찰 | 6초 (대기 포함) |
 | API 전체 | 위 두 단계와 정리 시간 | 12.5초. 메인 서버 타임아웃 15초보다 짧다 |
 

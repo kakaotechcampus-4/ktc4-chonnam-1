@@ -18,7 +18,7 @@ from scanner.collect_response import parse_collect_response
 
 
 ISOLATION_TIMEOUT_SECONDS = 15.0
-MAX_RESPONSE_BYTES = 524_288  # 512 KiB: 2단계 HTML 128 KiB + 3단계 HTML 128 KiB + JSON 여유
+MAX_RESPONSE_BYTES = 1_048_576  # 1 MiB: 2단계 HTML 256 KiB + 3단계 HTML 256 KiB + JSON 여유
 
 
 class IsolationClientError(Exception):

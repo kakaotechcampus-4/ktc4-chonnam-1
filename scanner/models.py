@@ -18,12 +18,15 @@ class BrowserResult:
     trigger: str  # 브라우저를 돌린 이유: script_only_page / script_redirect / status_403_404 / always
     final_url: str | None
     navigation_chain: tuple[str, ...]  # 메인 프레임이 이동한 주소 (JS 리다이렉트 포함)
-    html: str  # JS 실행 후 DOM. 128 KiB 상한
+    html: str  # JS 실행 후 DOM. 256 KiB 상한
     title: str | None
     downloads: tuple[str, ...]  # 브라우저가 시작하려던 다운로드 URL. 파일은 받지 않는다
     blocked_requests: int  # 허용 목록 밖 요청·WebSocket·팝업을 막은 횟수
     elapsed_ms: int
     failures: tuple[str, ...] = field(default_factory=tuple)
+    # 메인 프레임의 이동 요청 전부. 문서가 확정되지 않은 HTTP 리다이렉트 경유까지 담는다.
+    # None 은 이 값을 보내지 않는 구버전 수집기, () 는 요청을 하나도 못 봤다는 뜻이다.
+    navigation_requests: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)

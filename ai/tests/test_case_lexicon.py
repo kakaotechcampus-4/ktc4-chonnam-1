@@ -2,6 +2,7 @@ import pytest
 
 from ai.case.lexicon import (
     INSTITUTION_PATTERN,
+    PUBLIC_INSTITUTION_PATTERN,
     classify_demand,
     demand_kinds,
     read_with_lexicon,
@@ -61,6 +62,19 @@ def test_institution_not_triggered(text):
     assert not INSTITUTION_PATTERN.search(text)
     reading = read_with_lexicon(source(seg(text))).reading
     assert all(i.kind != IdentityKind.INSTITUTION for i in reading.identity)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["건강보험료가 빠져나갔어요", "건강검진 받으러 가요", "은행에 다녀왔어요", "택배가 도착했어요"],
+)
+def test_public_institution_not_triggered(text):
+    assert not PUBLIC_INSTITUTION_PATTERN.search(text)
+
+
+def test_attach_gate_lexicon_stays_investigative_only():
+    """사례 첨부 관문의 학습 가중치가 기대는 낱말은 그대로다."""
+    assert not INSTITUTION_PATTERN.search("국세청 담당자입니다")
 
 
 def test_institution_and_acquaintance_identity():

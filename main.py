@@ -1,6 +1,9 @@
 import asyncio
 import hmac
+import logging
 import os
+import re
+import sys
 import tempfile
 import time
 
@@ -56,6 +59,21 @@ from urllib.parse import urlparse
 
 
 app = FastAPI(lifespan=app_lifespan)
+
+# 이슈 #104 진단 로그 전용 로거. uvicorn/Render가 루트 로거에 핸들러를
+# 붙이는 시점과 무관하게 항상 stdout에 찍히도록 핸들러를 직접 단다
+# (print() 대신 logging을 쓰되, basicConfig()의 "루트에 핸들러가 이미
+# 있으면 무시" 동작에 기대지 않는다).
+_official_check_logger = logging.getLogger("official_check_diagnostics")
+if not _official_check_logger.handlers:
+    # 기존 print() 호출들과 같은 스트림(stdout)으로 보낸다.
+    _official_check_handler = logging.StreamHandler(sys.stdout)
+    _official_check_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    )
+    _official_check_logger.addHandler(_official_check_handler)
+_official_check_logger.setLevel(logging.INFO)
+_official_check_logger.propagate = False
 
 
 # ============================================================
@@ -330,6 +348,12 @@ def handle_detail_carousel(job_id: str) -> dict:
             "분석 결과를 찾을 수 없어요. 문자를 다시 보내 주세요."
         )
 
+    if job.get("analysis_kind") != "voice" and job.get("link_count", 0) > 1:
+        return kakao_response(
+            "여러 주소를 함께 확인한 경우에는 상세 결과를 제공하지 않아요. "
+            "확인하고 싶은 주소를 하나씩 다시 보내 주세요."
+        )
+
     final_payload = job.get("final_payload")
 
     if not final_payload:
@@ -514,6 +538,10 @@ _PARTLY_READ_LINKS_TEXT = (
     "아래 결과는 읽은 주소만 확인한 거예요.\n"
     "※ 검사하지 못한 주소는 누르지 마세요."
 )
+_OMITTED_LINK_RESULTS_TEXT = (
+    "일부 검사 결과는 한 번에 표시할 수 없어 생략했어요. "
+    "확인하고 싶은 주소를 하나씩 다시 보내 주세요."
+)
 _TOO_LONG_TEXT = (
     "문자가 너무 길어서 확인하지 못했어요.\n\n"
     "확인하고 싶은 주소가 있는 부분만 복사해 다시 보내 주세요."
@@ -564,9 +592,14 @@ async def run_analysis(
     if not reading.links:
         return await run_message_case(utterance, job_id=job_id, started=started)
 
+    link_count = len(reading.links)
+    if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
+        # 링크별 상세 저장은 지원하지 않는다. 숨겨진 결과로의 직접 조회도 막는다.
+        job["link_count"] = link_count
+
     cards: list[dict] = []
-    # 결과 카드는 링크마다 output 1개. 안내까지 카카오 output 상한(3개)을 넘기지 않는다
-    if reading.unverified_links and len(reading.links) < KAKAO_MAX_OUTPUTS:
+    # 미검사 안내를 먼저 확보한다. 분석은 모두 수행하고 마지막에 표시 개수만 제한한다.
+    if reading.unverified_links:
         cards.append(kakao_response(_PARTLY_READ_LINKS_TEXT))
     # 같은 읽기를 넘겨 추출 LLM 을 다시 부르지 않는다
     message_task = asyncio.create_task(
@@ -598,7 +631,9 @@ async def run_analysis(
                     url=url_analysis, message=message_result, page=page, failure=failure,
                 )
                 final_payload = final_result.model_dump(mode="json")
-                cards.append(render_result_card(final_payload, job_id=job_id))
+                cards.append(render_result_card(
+                    final_payload, job_id=job_id, allow_details=(link_count == 1),
+                ))
                 if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
                     job["final_payload"] = final_payload
             except Exception as error:
@@ -608,7 +643,14 @@ async def run_analysis(
         if not message_task.done() and not message_task.cancelling():
             message_task.cancel()
         await asyncio.gather(message_task, return_exceptions=True)
-    return merge_kakao_responses(cards)
+    response = merge_kakao_responses(cards)
+    outputs = response["template"]["outputs"]
+    if reading.unverified_links and len(outputs) > KAKAO_MAX_OUTPUTS:
+        # 첫 output은 위에서 만든 안내다. 결과 카드의 output 수에 관계없이
+        # 이 안내를 남기고, 이미 분석한 결과 중 일부가 표시되지 않음을 명시한다.
+        outputs[0]["simpleText"]["text"] += "\n\n" + _OMITTED_LINK_RESULTS_TEXT
+        response["template"]["outputs"] = outputs[:KAKAO_MAX_OUTPUTS]
+    return response
 
 
 # ============================================================
@@ -1029,6 +1071,78 @@ def _http_host(url: str | None) -> str | None:
         return None
 
 
+def _log_official_check_diagnostics(
+    *,
+    initial_official: str,
+    final_official: str,
+    initial_check_failure: str | None,
+    demotion_reasons: list[str],
+    browser,
+    collected: CollectResult,
+    final_url: str | None,
+) -> None:
+    """이슈 #104 진단 로그. 판정 로직 자체는 건드리지 않고 원인만 남긴다.
+
+    `initial_check_failure`(최초 판정부터 official이 아니었던 경우)와
+    `demotion_reasons`(official에서 unresolved로 강등된 사유)는 서로
+    배타적이다 — 최초 판정이 official이 아니면 강등 자체가 일어나지
+    않으므로 demotion_reasons는 항상 빈 목록이다. 둘을 같은 목록에
+    섞지 않는다.
+
+    사용자 메시지·전체 URL·쿼리 문자열·HTML 본문·호스트 문자열은
+    남기지 않는다 — 원인 코드·불리언·개수·HTTP 상태 코드만 쓴다.
+    """
+
+    _official_check_logger.info(
+        "[OFFICIAL_CHECK] initial_official=%s final_official=%s "
+        "initial_check_failure=%s demotion_reasons=%s browser_present=%s "
+        "browser_trigger=%s browser_failures=%s http_status=%s "
+        "redirect_count=%d final_url_present=%s http_html_present=%s "
+        "collect_failures=%s",
+        initial_official,
+        final_official,
+        initial_check_failure,
+        demotion_reasons,
+        browser is not None,
+        browser.trigger if browser is not None else None,
+        list(browser.failures) if browser is not None else [],
+        collected.status_code,
+        len(collected.redirect_chain),
+        bool(final_url),
+        bool(collected.html),
+        list(collected.failures),
+    )
+
+
+def _browser_demotion(browser, brand: str | None, judged_domain: str | None) -> tuple[str | None, str | None]:
+    """브라우저 결과가 공식 판정을 내릴 사유와 걸린 호스트를 돌려준다. 없으면 (None, None).
+
+    브라우저가 돌았다는 사실만으로는 내리지 않는다. 스크립트로 이동하는 공식 사이트가 늘 판단 보류가 되기
+    때문이다. 이동 요청 기록이 있으면 HTTP 경유까지 대조하고, 구버전 수집기면 이동 기록만 본다(ADR 0009).
+    """
+
+    if browser is None:
+        return None, None
+    if browser.failures:
+        return "BROWSER_FAILURE", None
+    if browser.downloads:
+        return "BROWSER_DOWNLOAD", None
+    requests = browser.navigation_requests
+    if not browser.navigation_chain or requests == ():
+        return "BROWSER_CHAIN_EMPTY", None
+    # 브라우저도 입력 주소에서 출발한다. redirect_chain 대조처럼 맨 앞의 단축 주소만 건너뛴다.
+    hops = list(requests or ())
+    while hops and is_shortener(_http_host(hops[0])):
+        hops.pop(0)
+    for url in (*browser.navigation_chain, *hops, browser.final_url):
+        host = _http_host(url)
+        if host is None and url != browser.final_url:
+            return "BROWSER_NON_OFFICIAL_HOP", None
+        if host is not None and check_link_official(brand, judged_domain, host) != "official":
+            return "BROWSER_NON_OFFICIAL_HOP", host
+    return None, None
+
+
 def build_ai_url_analysis(
     collected: CollectResult,
     brand: str | None,
@@ -1047,10 +1161,28 @@ def build_ai_url_analysis(
         final_url = browser.final_url
 
     official = check_link_official(brand, judged_domain, _http_host(final_url))
+    initial_official = official
+    # 최초 판정이 official이 아닌 경우는 "강등"이 아니다 — 강등 사유
+    # 목록과는 분리해서 남긴다(아래 _log_official_check_diagnostics 참고).
+    initial_check_failure = (
+        "INITIAL_OFFICIAL_CHECK_FAILED" if initial_official != "official" else None
+    )
+    demotion_reasons: list[str] = []
     if official == "official":
-        # shortcut: browser commits omit HTTP redirect hops; require full request history before confirming.
-        incomplete = (browser is not None or not final_url or not collected.html
+        browser_demotion, demotion_host = _browser_demotion(browser, brand, judged_domain)
+        incomplete = (browser_demotion is not None or not final_url or not collected.html
                       or bool(collected.failures))
+        if browser_demotion:
+            demotion_reasons.append(browser_demotion)
+            if demotion_host:
+                # 화이트리스트 검토용. 경로·쿼리에는 개인정보가 있을 수 있어 호스트만 따로 남긴다
+                print(f"[OFFICIAL_HOP] demotion_host={demotion_host}")
+        if not final_url:
+            demotion_reasons.append("FINAL_URL_MISSING")
+        if not collected.html:
+            demotion_reasons.append("HTTP_HTML_MISSING")
+        if collected.failures:
+            demotion_reasons.append("COLLECT_FAILURE")
         if incomplete:
             official = "unresolved"
         reached_real_host = False
@@ -1061,7 +1193,18 @@ def build_ai_url_analysis(
             reached_real_host = True
             if not host or check_link_official(brand, judged_domain, host) != "official":
                 official = "unresolved"
+                demotion_reasons.append("REDIRECT_HOST_INVALID")
                 break
+
+    _log_official_check_diagnostics(
+        initial_official=initial_official,
+        final_official=official,
+        initial_check_failure=initial_check_failure,
+        demotion_reasons=demotion_reasons,
+        browser=browser,
+        collected=collected,
+        final_url=final_url,
+    )
 
     return UrlAnalysis(
         final_url=final_url,
@@ -1073,6 +1216,39 @@ def build_ai_url_analysis(
 # ============================================================
 # Kakao callback
 # ============================================================
+
+_CALLBACK_CODE_FIELDS = ("status", "code", "errorCode", "error_code", "resultCode", "error")
+_SAFE_CALLBACK_TOKEN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+# 주소 조각이나 토큰처럼 긴 문자열이 섞인 메시지는 버린다.
+_UNSAFE_CALLBACK_MESSAGE = re.compile(r"[/?=&]|[A-Za-z0-9_-]{24,}")
+
+
+def _callback_error_detail(response) -> str:
+    """카카오가 콜백을 거절한 사유를 요약한다.
+
+    콜백 주소에 1회성 토큰이 있고 응답이 요청 주소를 반사할 수 있어 본문을 그대로 남기지 않는다.
+    형식이 정해진 값만 고르고, 나머지는 필드 이름만 남긴다.
+    """
+
+    try:
+        body = response.json()
+    except Exception:  # noqa: BLE001 — 진단 때문에 콜백 처리가 달라지면 안 된다
+        return "body=not_json"
+    if not isinstance(body, dict):
+        return "body=not_object"
+    keys = sorted(k for k in body if isinstance(k, str) and _SAFE_CALLBACK_TOKEN.fullmatch(k))[:10]
+    parts = [f"keys={keys}"]
+    for name in _CALLBACK_CODE_FIELDS:
+        value = body.get(name)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) or (isinstance(value, str) and _SAFE_CALLBACK_TOKEN.fullmatch(value)):
+            parts.append(f"{name}={value}")
+    message = body.get("message")
+    if isinstance(message, str) and message and len(message) <= 160 and not _UNSAFE_CALLBACK_MESSAGE.search(message):
+        parts.append(f"message={message!r}")
+    return " ".join(parts)
+
 
 def _safe_callback_error(error: Exception) -> str:
     """콜백 전송 실패를 안전하게 요약한다.
@@ -1215,6 +1391,9 @@ async def run_analysis_and_callback(
         # 요청 URL을 그대로 반사하면(예: 디버그 echo) 쿼리스트링의 토큰이
         # 로그로 샐 수 있다. 실제로 필요한 결과 상태는 JSON 파싱 후
         # [CALLBACK RESULT STATUS]로 따로 남긴다.
+
+        if response.status_code >= 400:
+            print(f"[CALLBACK ERROR] status={response.status_code} {_callback_error_detail(response)}")
 
         response.raise_for_status()
 

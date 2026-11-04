@@ -163,12 +163,12 @@ async def test_collection_failure_keeps_message_and_partial_facts(
 async def test_html_limit_preserves_message_and_sets_null(monkeypatch):
     import ai.page as page_module
 
-    monkeypatch.setattr(page_module, "MAX_ELEMENTS", 2)
+    monkeypatch.setattr(page_module, "MAX_DEPTH", 2)
     source_message = message()
     source_page = IsolatedPage(
         brand="unknown",
         category="unknown",
-        info='<form><input type="password"><div>미확인</div></form>',
+        info='<form><input type="password"><div><b>미확인</b></div></form>',
     )
 
     result = await public.finalize_analysis(url(True), source_message, source_page)
@@ -182,7 +182,7 @@ async def test_html_limit_preserves_message_and_sets_null(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_initial_inspection_timeout_preserves_message(monkeypatch):
-    clock = iter([0.0, 0.101])
+    clock = iter([0.0, 1.001])
     monkeypatch.setattr(html_page, "monotonic", lambda: next(clock))
     source_message = message()
 
@@ -288,6 +288,6 @@ async def test_client_ownership_and_cancellation(official, owned, cancel, failur
         await asyncio.gather(task, return_exceptions=True)
     assert client.closed is owned
     if owned:
-        factory.assert_called_once_with(2.0)
+        factory.assert_called_once_with(5.0)
     else:
         factory.assert_not_called()

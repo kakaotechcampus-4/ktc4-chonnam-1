@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "infra" / "isolation"))
 
 from collector.app import MAX_RESPONSE_BYTES, create_app  # noqa: E402
+from scanner.fetch import HTML_LIMIT_BYTES  # noqa: E402
 from collector.policy import is_allowed_url, load_allowed_hosts  # noqa: E402
 from scanner.collect_response import parse_collect_response  # noqa: E402
 from scanner.fetch import collect_url  # noqa: E402
@@ -156,7 +157,7 @@ class TestCollect:
     async def test_response_stays_under_main_server_limit(self):
         # 제어 문자는 JSON에서 6바이트(\u0001)로 커진다.
         async def escaping_collect(url, **_):
-            return ok_result(url, html="\x01" * 131_072)
+            return ok_result(url, html="\x01" * HTML_LIMIT_BYTES)
 
         async with client_for(collect=escaping_collect) as c:
             r = await post(c, {"url": OK_URL})
@@ -242,9 +243,9 @@ class TestBrowserStage:
 
     async def test_both_htmls_fit_under_limit(self):
         async def big_collect(url, **_):
-            return ok_result(url, html="\x01" * 131_072)
+            return ok_result(url, html="\x01" * HTML_LIMIT_BYTES)
 
-        renderer = FakeRenderer(browser_result(html='"' * 131_072))
+        renderer = FakeRenderer(browser_result(html='"' * HTML_LIMIT_BYTES))
         async with client_for(collect=big_collect, browser_mode="always", renderer=renderer, trigger=lambda _: "x") as c:
             r = await post(c, {"url": OK_URL})
         assert len(r.content) <= MAX_RESPONSE_BYTES
@@ -269,6 +270,21 @@ class TestParseBrowserField:
         parsed = parse_collect_response(OK_URL, data)
         assert len(parsed.browser.navigation_chain) == 10
         assert len(parsed.browser.downloads) == 5
+        assert parsed.browser.navigation_requests is None  # 구버전 수집기: "없음"과 "빈 기록"을 구분한다
+
+    def test_navigation_requests_are_read_and_capped(self):
+        data = {"input_url": OK_URL, "browser": {"navigation_requests": ["a"] * 50}}
+        parsed = parse_collect_response(OK_URL, data).browser
+        assert len(parsed.navigation_requests) == 20
+        assert "browser_navigation_limit" in parsed.failures
+
+        data = {"input_url": OK_URL, "browser": {"navigation_requests": [OK_URL]}}
+        parsed = parse_collect_response(OK_URL, data).browser
+        assert parsed.navigation_requests == (OK_URL,)
+        assert parsed.failures == ()
+
+        data = {"input_url": OK_URL, "browser": {"navigation_requests": "bad"}}
+        assert parse_collect_response(OK_URL, data).browser.navigation_requests == ()
 
 
 class TestPolicy:

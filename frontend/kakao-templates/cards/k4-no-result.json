@@ -9,14 +9,9 @@
           "buttonLayout": "vertical",
           "buttons": [
             {
-              "label": "문자 다시 보내기",
+              "label": "다시 보내기",
               "action": "block",
               "blockId": "6aa6a4436d537a3eabb81ad5"
-            },
-            {
-              "label": "녹음 다시 보내기",
-              "action": "block",
-              "blockId": "6ae3302425d4bc48e2bb8a61"
             }
           ]
         }
