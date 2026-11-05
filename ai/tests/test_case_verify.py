@@ -535,3 +535,59 @@ def test_v4_negated_condition_is_still_a_demand():
     q = "지금 보내지 않으면 계좌가 정지됩니다"
     r = _verify(_source(q), _reading(demands=[DemandClaim(kind=DemandKind.MONEY_TRANSFER, quote=q)]))
     assert "negated" not in _reasons(r)
+
+
+def test_julraeyo_demand_is_kept_for_floor():
+    quote = "50만원만 보내줄래요"
+    r = _verify(
+        _source(f"엄마 나야. {quote}?"),
+        _reading(demands=[DemandClaim(kind=DemandKind.MONEY_TRANSFER, quote=quote)]),
+    )
+    assert _floor(r) == {EvidenceCode.MONEY_REQUEST: True}
+    assert _reasons(r) == []
+
+
+@pytest.mark.parametrize("sentence", ["50만원만 보내라고요?", "50만원만 보내래요?"])
+def test_echoed_demand_is_still_rejected(sentence):
+    r = _verify(
+        _source(f"엄마 나야. {sentence}"),
+        _reading(demands=[DemandClaim(kind=DemandKind.MONEY_TRANSFER, quote="50만원만 보내")]),
+    )
+    assert _codes(r) == []
+    assert _reasons(r) == ["self_side"]
+
+
+@pytest.mark.parametrize(
+    "name, quote",
+    [
+        ("국세청", "저는 국세청 직원입니다"),
+        ("건강보험공단", "저는 건강보험공단 직원입니다"),
+        ("서초세무서", "저는 서초세무서 담당자입니다"),
+    ],
+)
+def test_public_institution_self_intro_with_first_person_is_kept(name, quote):
+    """"저는" 이 붙어도 공공기관 자기소개는 받는 사람 말이 아니다. 주의까지만 쓴다 (ADR 0010)."""
+    r = _verify(
+        _source(quote),
+        _reading(identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name=name, quote=quote)]),
+    )
+    assert _floor(r) == {EvidenceCode.INSTITUTION_CLAIM: False}
+    assert r.claims.identity[0].listed_institution is True
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "저는 국세청 직원이 아닙니다",
+        "저는 국세청 직원 아니에요",
+        "저는 국세청에 전화했어요",
+        "국세청 직원이라고요?",
+    ],
+)
+def test_public_institution_not_claimed_by_sender_is_rejected(sentence):
+    r = _verify(
+        _source(sentence),
+        _reading(identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name="국세청", quote=sentence)]),
+    )
+    assert _codes(r) == []
+    assert _reasons(r) == ["self_side"]

@@ -454,3 +454,50 @@ def test_message_templates_have_no_forbidden_words():
     for text in [*MESSAGE_TEMPLATES.values(), *MESSAGE_LEADS.values()]:
         assert not any(w in text for w in FORBIDDEN), text
         assert "통화만으로" not in text
+
+
+# ── PR #147 리뷰: 부탁 꼴·공공기관 자기소개가 근거에서 빠지면 안 된다 ──────────
+
+
+FAVOR = "엄마 나야. 50만원만 보내줄래요?"
+FAVOR_READING = {
+    "identity": [{"kind": "acquaintance", "name": "자녀", "quote": "엄마 나야"}],
+    "demands": [{"kind": "money_transfer", "quote": "50만원만 보내줄래요"}],
+}
+
+
+@pytest.mark.parametrize("reading", [FAVOR_READING, None], ids=["llm", "lexicon"])
+async def test_julraeyo_favor_gets_caution_and_questions(reading):
+    r = await _analyze(FAVOR, reading)
+    assert (r.conclusion, r.caution) == (Conclusion.INCONCLUSIVE, True)
+    assert list(_q(r)) == ["already_acted", "called_known_number"]
+
+
+@pytest.mark.parametrize("reading", [None], ids=["lexicon"])
+async def test_echoed_demand_gets_no_caution(reading):
+    r = await _analyze("엄마 나야. 50만원만 보내라고요?", reading)
+    assert r.caution is False
+    assert _q(r) == {}
+
+
+def _public_reading(quote):
+    return {"identity": [{"kind": "institution", "name": "국세청", "quote": quote}]}
+
+
+@pytest.mark.parametrize(
+    "text, reading",
+    [
+        ("저는 국세청 직원입니다", _public_reading("저는 국세청 직원입니다")),
+        ("국세청 직원입니다", _public_reading("국세청 직원입니다")),
+        ("저는 국세청 직원입니다", None),
+        ("국세청 직원입니다", None),
+    ],
+    ids=["first-person-llm", "bare-llm", "first-person-lexicon", "bare-lexicon"],
+)
+async def test_public_institution_self_intro_gets_same_caution(text, reading):
+    """"저는" 유무와 읽기 방식이 달라도 같은 주의 안내와 공식 번호로 이어진다."""
+    r = await _analyze(text, reading)
+    assert (r.conclusion, r.caution, r.floors) == (Conclusion.INCONCLUSIVE, True, [])
+    assert list(_q(r)) == ["already_acted"]
+    assert r.official_contact is not None and r.official_contact.number == "126"
+    assert r.claims.identity[0].name == "국세청"

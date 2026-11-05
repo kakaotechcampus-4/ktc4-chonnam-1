@@ -10,7 +10,13 @@ import re
 from collections.abc import Callable
 from typing import TypeVar
 
-from ai.case.forms import asserts_acquaintance, asserts_institution, is_recipient_side, is_request
+from ai.case.forms import (
+    asserts_acquaintance,
+    asserts_institution,
+    is_quotation,
+    is_recipient_side,
+    is_request,
+)
 from ai.case.types import (
     BlockerClaim,
     ClaimReading,
@@ -60,6 +66,14 @@ INSTITUTION_PATTERN = re.compile(
 PUBLIC_INSTITUTION_PATTERN = re.compile(
     r"국세청|세무서|관세청|국민건강보험|건강보험\s*(?:공단|센터)|건보공단|국민연금|노동부|우체국|출입국"
 )
+
+
+def introduces_institution(sentence: str) -> bool:
+    """수사·금융 기관이나 공공기관 자기소개 꼴인가. 하한(L-3) 판단은 INSTITUTION_PATTERN 으로 따로 한다."""
+    return asserts_institution(sentence, INSTITUTION_PATTERN) or asserts_institution(
+        sentence, PUBLIC_INSTITUTION_PATTERN
+    )
+
 
 # 호칭 뒤에 한글이 더 붙으면 다른 낱말이다(이모티콘, 엄마손파이, 어머니회). 조사·서술어는 허용한다.
 _KIN_TAIL = (
@@ -114,8 +128,11 @@ def read_with_lexicon(
     blockers: list[BlockerClaim] = []
     for seg in source.segments:
         for sentence in _sentences(seg.text):
-            if is_recipient_side(sentence):
-                # 받는 사람 말로 보이는 문장은 상한(3·6개)을 차지하지 않게 미리 뺀다
+            # 받는 사람 말로 보이는 문장은 상한(3·6개)을 차지하지 않게 미리 뺀다.
+            # "저는 국세청 직원입니다" 같은 기관 자기소개는 "저는" 이 있어도 남긴다
+            if is_recipient_side(sentence) and (
+                is_quotation(sentence) or not introduces_institution(sentence)
+            ):
                 continue
             if (m := INSTITUTION_PATTERN.search(sentence) or PUBLIC_INSTITUTION_PATTERN.search(sentence)):
                 identity.append(

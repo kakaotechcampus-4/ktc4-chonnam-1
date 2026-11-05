@@ -158,3 +158,38 @@ def test_demand_kinds_collects_each_sentence_demand():
     found = demand_kinds("상품권 사서 보내 주세요. 인증번호도 불러 주시고요.\n현금은 안 돼요")
     assert found == {DemandKind.GIFT_CARD, DemandKind.AUTH_CODE, DemandKind.CASH_WITHDRAWAL}
     assert demand_kinds("안녕하세요 날씨가 좋네요") == set()
+
+
+@pytest.mark.parametrize(
+    "text, name",
+    [
+        ("저는 국세청 직원입니다", "국세청"),
+        ("저는 건강보험공단 직원입니다", "건강보험공단"),
+        ("저는 서울중앙지검 김검사입니다", "지검"),
+    ],
+)
+def test_fallback_keeps_institution_self_intro_with_first_person(text, name):
+    reading = read_with_lexicon(source(seg(text))).reading
+    assert [(i.kind, i.name, i.quote) for i in reading.identity] == [
+        (IdentityKind.INSTITUTION, name, text)
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "저는 국세청 직원이 아닙니다",
+        "저는 국세청에 전화했어요",
+        "국세청 직원이라고요?",
+        "저는 서울중앙지검 수사관이라고요?",
+    ],
+)
+def test_fallback_still_skips_institution_not_claimed_by_sender(text):
+    assert read_with_lexicon(source(seg(text))).reading.identity == []
+
+
+def test_fallback_keeps_julraeyo_demand():
+    reading = read_with_lexicon(source(seg("엄마 나야. 50만원만 보내줄래요?"))).reading
+    assert [(d.kind, d.quote) for d in reading.demands] == [
+        (DemandKind.MONEY_TRANSFER, "50만원만 보내줄래요?")
+    ]

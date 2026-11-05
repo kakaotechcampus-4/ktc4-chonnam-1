@@ -65,3 +65,23 @@ def test_sentence_at_and_sentences_keep_dotted_numbers():
     assert forms.sentence_at(text, 0, 5) == "금융감독원 수사관입니다."
     assert forms.sentence_at(text, 20, 25) == "확인은 02.1234.5678로 하세요"
     assert forms.sentences(text) == ["금융감독원 수사관입니다.", "확인은 02.1234.5678로 하세요"]
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["50만원만 보내줄래요?", "계좌로 보내 줄래요?", "이 번호로 전화해줄래요?"],
+)
+def test_julraeyo_asks_the_listener(sentence):
+    """"줄래요?" 는 상대에게 하는 부탁이다. 옮긴 말 꼴 "래요" 로 거르면 실제 요청이 빠진다 (PR #147 리뷰)."""
+    assert not forms.is_quotation(sentence)
+    assert not forms.is_recipient_side(sentence)
+    assert forms.is_request(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["보내래요?", "보낸대요?", "보내라고요?", "보내야 돼요?", "보낼래요?"],
+)
+def test_echoing_question_stays_recipient_side(sentence):
+    assert forms.is_recipient_side(sentence)
+    assert not forms.is_request(sentence)
