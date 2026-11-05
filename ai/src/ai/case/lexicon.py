@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import TypeVar
 
 from ai.case.forms import (
+    MONEY_WORD,
     asserts_acquaintance,
     asserts_institution,
     is_quotation,
@@ -108,9 +109,10 @@ def _sentences(text: str) -> list[str]:
 
 
 # 폴백 읽기에서만 쓰는 송금 표현. DEMAND_LEXICON 은 사례 첨부 관문의 입력이라 고치면 모델을 다시
-# 학습해야 하므로 따로 둔다(feature_hash). "보낼" 은 상대에게 묻는 꼴일 때만 요구로 본다
+# 학습해야 하므로 따로 둔다(feature_hash). "보낼" 은 상대에게 묻는 꼴일 때만 요구로 본다.
+# 돈을 집어 말할 때만 본다("문자 보낼 수 있어요?", "우산 좀 빌려줄래?" 는 아니다)
 _READING_MONEY_PATTERN = re.compile(
-    r"보낼\s*(?:수\s*있\S*|래요?)[?？]$|(?:빌려|(?<![가-힣])꿔)\s*(?:줘|주|줄)"
+    rf"(?:{MONEY_WORD}).*(?:보낼\s*(?:수\s*있\S*|래요?)[?？]$|(?:빌려|(?<![가-힣])꿔)\s*(?:줘|주|줄))"
 )
 
 

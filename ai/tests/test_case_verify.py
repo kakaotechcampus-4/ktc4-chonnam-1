@@ -611,3 +611,38 @@ def test_mentioning_institution_with_request_has_no_l3_floor(text):
     reading = read_with_lexicon(source, FailureCode.TIMEOUT).reading
     verify = verify_call(source, reading, derived_by="lexicon")
     assert not any(e.code == EvidenceCode.INSTITUTION_CLAIM and e.counts_for_floor for e in verify.accepted)
+
+
+def _fallback_verify(text: str):
+    source = ReadingSource(
+        kind=InputKind.AUDIO,
+        segments=[Segment(side=Side.UNKNOWN, text=s) for s in forms.sentences(text)],
+    )
+    return verify_call(source, read_with_lexicon(source, FailureCode.TIMEOUT).reading, derived_by="lexicon")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "금융감독원 김대리입니다 고객님 명의로 계좌가 개설됐습니다. 계좌번호 불러 주세요.",
+        "서울중앙지검 수사관입니다 아니 제 말 좀 들어보세요. 계좌번호 불러 주세요.",
+        "금감원에서 연락드렸습니다 고객님. 계좌번호 불러 주세요.",
+    ],
+)
+def test_words_after_self_intro_keep_l3_floor(text):
+    assert any(e.code == EvidenceCode.INSTITUTION_CLAIM and e.counts_for_floor for e in _fallback_verify(text).accepted)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "저는 내일 건강 검사입니다. 계좌번호 불러 주세요.",
+        "나는 경찰서 앞이야. 계좌번호 불러 주세요.",
+        "저는 경찰서 가는 길입니다. 계좌번호 불러 주세요.",
+        "저는 경찰 아들입니다. 계좌번호 불러 주세요.",
+        "저는 경찰청에서 일하는 친구입니다. 계좌번호 불러 주세요.",
+        "제가 경찰이에요? 계좌번호 불러 주세요.",
+    ],
+)
+def test_first_person_without_title_has_no_l3_floor(text):
+    assert not any(e.code == EvidenceCode.INSTITUTION_CLAIM and e.counts_for_floor for e in _fallback_verify(text).accepted)

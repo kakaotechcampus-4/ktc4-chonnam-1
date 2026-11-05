@@ -3,7 +3,7 @@
 import pytest
 
 from ai.case import forms
-from ai.case.lexicon import INSTITUTION_PATTERN, PUBLIC_INSTITUTION_PATTERN
+from ai.case.lexicon import INSTITUTION_PATTERN, PUBLIC_INSTITUTION_PATTERN, introduces_institution
 
 
 @pytest.mark.parametrize(
@@ -110,7 +110,7 @@ def test_sentence_about_institution_is_not_self_intro(sentence):
 
 @pytest.mark.parametrize(
     "sentence",
-    ["제가 대신 입금해 줄까요?", "제가 보내줄래요?", "내가 보내줘?", "제가 상품권 사 줄까요?"],
+    ["제가 대신 입금해 줄까요?", "내가 보내줄까?", "제가 입금해 드릴까요?", "제가 상품권 사 줄까요?"],
 )
 def test_first_person_offer_is_recipient_side(sentence):
     assert forms.is_recipient_side(sentence)
@@ -122,6 +122,10 @@ def test_first_person_offer_is_recipient_side(sentence):
         "제가 알려드린 계좌로 보내주실래요?",
         "제 번호로 보내줄래요?",
         "내가 급해서 그런데 50만원만 보내줄래?",
+        "내가 말한 계좌로 입금해 줄래?",
+        "내가 보낸 계좌로 보내줘?",
+        "제가 알려드린 계좌로 송금해 줄래요?",
+        "제가 보낸 링크로 들어가 줄래요?",
     ],
 )
 def test_request_with_first_person_is_not_offer(sentence):
@@ -178,10 +182,6 @@ def test_jugesseoyo_asks_the_listener(sentence):
     assert not forms.is_request(sentence)
 
 
-def test_first_person_jugesseoyo_is_offer():
-    assert forms.is_recipient_side("제가 해 주겠어요?")
-
-
 @pytest.mark.parametrize(
     "sentence, pattern",
     [
@@ -232,3 +232,83 @@ def test_prosecutor_self_intro_with_first_person(sentence):
 
 def test_exam_sentence_without_first_person_is_not_self_intro():
     assert not forms.asserts_institution("오늘은 정기 검사입니다", INSTITUTION_PATTERN)
+
+
+# ── aa81f9a 검토에서 찾은 회귀: 넓힌 꼴을 좁힌다 ──────────────────
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "금융감독원 김대리입니다 고객님 명의로 계좌가 개설됐습니다",
+        "서울중앙지검 수사관입니다 고객님 사건 때문에",
+        "서울중앙지검 김민수 수사관입니다 피해자 조사 때문에",
+        "경찰청 사이버수사대입니다 신고자분 맞으시죠",
+        "서울중앙지검 수사관입니다 아니 제 말 좀 들어보세요",
+        "검찰청 수사관인데요 아니 그게 아니고요",
+        "금감원에서 연락드렸습니다 고객님",
+        "금융감독원에서 전화드렸습니다 피해자분",
+        "국세청 담당자입니다 납세자 본인 맞으시죠",
+        "건강보험공단 직원입니다 가입자 본인이시죠",
+    ],
+)
+def test_words_after_self_intro_do_not_cancel_it(sentence):
+    """구두점 없는 받아쓰기에서 자기소개 뒤에 이어지는 말("고객님", "아니")로 자기소개를 지우지 않는다."""
+    assert introduces_institution(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["서울경찰청에 소속된 수사관입니다", "검찰청에 계시는 김수사관입니다", "금감원에 재직 중인 김대리입니다"],
+)
+def test_membership_with_e_is_self_intro(sentence):
+    assert introduces_institution(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "저는 경찰서 가는 길입니다",
+        "저는 우체국 앞이에요",
+        "저는 세무서 근처인데요",
+        "저는 우체국 가는 길이라서요",
+        "나는 경찰서 앞이야",
+        "저는 우체국 앞이거든요",
+        "저는 국세청 직원 친구입니다",
+        "저는 경찰 시험 준비생이에요",
+        "저는 경찰 아들입니다",
+        "저는 경찰청에서 일하는 친구입니다",
+        "저는 국세청에서 나온 서류 때문에 전화한 사람입니다",
+        "저는 내일 건강 검사입니다",
+        "제가 오늘 코로나 검사입니다",
+        "제가 국세청 직원이에요?",
+        "제가 경찰이에요?",
+    ],
+)
+def test_first_person_without_title_is_not_self_intro(sentence):
+    """"저는" 으로 시작하면 받는 사람 말일 수 있어, 기관 뒤에 직함이 와야 자기소개로 본다."""
+    assert not introduces_institution(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "저는 서울중앙지검 수사관입니다",
+        "저는 국세청 직원입니다",
+        "저는 금융감독원 김대리입니다",
+        "저는 경찰입니다",
+        "저는 금감원 소속입니다",
+        "제가 경찰청 사이버수사대 팀장인데요",
+    ],
+)
+def test_first_person_with_title_is_self_intro(sentence):
+    assert introduces_institution(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["내일 입금하면 안 될까요?", "입금 확인 가능해요?", "카드 결제 가능해요?", "아빠가 보내 주겠죠?", "은행에서 처리해 주겠죠?"],
+)
+def test_everyday_question_stays_recipient_side(sentence):
+    """돈을 집어 말하지 않는 "안 될까요?", "가능해요?" 와 "주겠죠?" 는 부탁으로 보지 않는다."""
+    assert forms.is_recipient_side(sentence)

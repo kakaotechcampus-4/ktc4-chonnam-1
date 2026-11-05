@@ -224,3 +224,11 @@ def test_fallback_skips_sentence_without_money_request(sentence):
 def test_reading_only_money_words_do_not_change_gate_lexicon():
     assert classify_demand("50만원만 빌려줄래요?") is None
     assert classify_demand("돈 좀 보낼 수 있어?") is None
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["문자 보낼 수 있어요?", "메일 보낼 수 있어?", "사진 보낼래요?", "우산 좀 빌려줄래?", "책 빌려주세요", "차 좀 빌려줄 수 있어?"],
+)
+def test_fallback_needs_money_word_for_bonael_and_borrowing(sentence):
+    assert read_with_lexicon(source(seg(sentence))).reading.demands == []
