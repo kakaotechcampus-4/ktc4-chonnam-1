@@ -193,3 +193,34 @@ def test_fallback_keeps_julraeyo_demand():
     assert [(d.kind, d.quote) for d in reading.demands] == [
         (DemandKind.MONEY_TRANSFER, "50만원만 보내줄래요?")
     ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "저는 국세청 직원이 아니라 민원인입니다",
+        "제가 경찰에 신고한 사람입니다",
+        "저는 건강보험공단 가입자입니다",
+    ],
+)
+def test_fallback_skips_people_who_only_mention_institution(text):
+    assert read_with_lexicon(source(seg(text))).reading.identity == []
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["돈 좀 보낼 수 있어?", "돈 좀 보낼래요?", "50만원만 빌려줄래요?", "50만원만 빌려줘", "10만원만 꿔 줄래?"],
+)
+def test_fallback_reads_bonael_question_and_borrowing(sentence):
+    reading = read_with_lexicon(source(seg(sentence))).reading
+    assert [d.kind for d in reading.demands] == [DemandKind.MONEY_TRANSFER]
+
+
+@pytest.mark.parametrize("sentence", ["책을 빌려서 읽었어요", "어제 꿈을 꿨어요", "문서를 보낼 예정입니다", "딸 바꿔 주세요"])
+def test_fallback_skips_sentence_without_money_request(sentence):
+    assert read_with_lexicon(source(seg(sentence))).reading.demands == []
+
+
+def test_reading_only_money_words_do_not_change_gate_lexicon():
+    assert classify_demand("50만원만 빌려줄래요?") is None
+    assert classify_demand("돈 좀 보낼 수 있어?") is None

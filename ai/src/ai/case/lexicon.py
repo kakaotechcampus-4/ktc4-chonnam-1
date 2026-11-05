@@ -107,6 +107,13 @@ def _sentences(text: str) -> list[str]:
     return [p for p in parts if p]
 
 
+# 폴백 읽기에서만 쓰는 송금 표현. DEMAND_LEXICON 은 사례 첨부 관문의 입력이라 고치면 모델을 다시
+# 학습해야 하므로 따로 둔다(feature_hash). "보낼" 은 상대에게 묻는 꼴일 때만 요구로 본다
+_READING_MONEY_PATTERN = re.compile(
+    r"보낼\s*(?:수\s*있\S*|래요?)[?？]$|(?:빌려|(?<![가-힣])꿔)\s*(?:줘|주|줄)"
+)
+
+
 def classify_demand(sentence: str) -> DemandKind | None:
     for kind, pattern in DEMAND_LEXICON:
         if pattern.search(sentence):
@@ -142,7 +149,10 @@ def read_with_lexicon(
                 identity.append(
                     IdentityClaim(kind=IdentityKind.ACQUAINTANCE, name=m.group(0), quote=sentence)
                 )
-            if (kind := classify_demand(sentence)) is not None:
+            kind = classify_demand(sentence)
+            if kind is None and _READING_MONEY_PATTERN.search(sentence):
+                kind = DemandKind.MONEY_TRANSFER
+            if kind is not None:
                 demands.append(DemandClaim(kind=kind, quote=sentence))
             if BLOCKER_PATTERN.search(sentence):
                 blockers.append(BlockerClaim(quote=sentence))

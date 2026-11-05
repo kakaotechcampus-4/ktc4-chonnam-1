@@ -14,22 +14,36 @@ import re
 _SENTENCE_END = re.compile(r"[.?!…](?=\s|$)")
 _TRAILING = re.compile(r"[\s.!…~]+$")
 _INTERJECTION = r"^(?:(?:아|어|네|예|응)\s+)?"
+# ㄹ 받침 글자. "보내래요" 는 옮긴 말이고 "보낼래요", "보내줄래요" 는 묻거나 부탁하는 말이다
+_RIEUL = "".join(chr(0xAC00 + i * 28 + 8) for i in range(399))
 
 # 옮긴 말·되묻기. "~라고 합니다" 는 자기소개라 뺀다
 _QUOTATION = re.compile(
     r"(?:라|다|냐|자)\s?(?:고|구)(?=요|[?？]|\s*$|\s+(?:했|하셨|하던|하더|하는|그러|그랬|말))"
     r"|(?:라|다)(?:면서|며)(?:요)?(?=[\s?？.!]|$)"
     r"|(?:라|다)는\s*(?:거|건|게|말|얘기|소리)"
-    # "주실래요", "보내줄래요" 는 옮긴 말이 아니라 상대에게 하는 부탁이다
-    r"|(?<![실줄])(?:래|대)요(?=[\s?？.!]|$)"
+    rf"|(?:(?<![{_RIEUL}])|(?<=말))(?:래|대)요(?=[\s?？.!]|$)"
+)
+# "돈 보낼래요?" 는 상대에게 묻는 말, "돈 보낼래요." 는 자기 뜻을 말하는 문장이다
+_L_RAE = re.compile(rf"(?<!말)(?<=[{_RIEUL}])래요?[?？]?$")
+# "보낼 수 있어?", "보내면 안 될까?", "입금 가능해요?" 는 상대가 할 수 있는지 묻는 말이다
+_CAN_ASK = re.compile(
+    rf"[{_RIEUL}]\s*수\s*있(?:어|나|니|죠|을까|겠)[가-힣]*[?？]?$"
+    r"|면\s*안\s*될까요?[?？]?$"
+    r"|가능(?:해|하|할|한)[가-힣]*[?？]?$"
 )
 _QUESTION = re.compile(r"(?:[?？]|나요|까요|냐)$")
 # 끝 세 어절에 높임·해 달라는 말이 있으면 받는 사람이 자기 일을 되묻는 말이 아니다.
 # "주" 는 뒤에 어미가 붙을 때만 본다("주민번호" 는 아니다)
-_LISTENER = re.compile(r"[시세셔실]|주(?=[세시실면라어고])|줘|줄")
+_LISTENER = re.compile(r"[시세셔실]|주(?=[세시실면라어고겠])|줘|줄")
 # 그중 해 달라는 물음: "불러 주시겠어요?", "어떻게 되세요?". "주시는 건가요?" 는 되묻기라 아니다
 _ASK = re.compile(r"시겠|실래|실\s*수|세요|시죠|십니까|줄래|줄\s*수|주면\s*안|줘")
 _PROMISE = re.compile(r"(?:게|께)요?$")
+# "제가 대신 입금해 줄까요?" 는 받는 사람의 제안이다. 사정을 대는 절이 있으면
+# ("내가 급해서 그런데 보내줄래?") 주어가 부탁과 다른 절이라 제안으로 보지 않는다
+_OFFER_SUBJECT = re.compile(_INTERJECTION + r"(?:제가|내가)(?![가-힣])")
+_OFFER_END = re.compile(r"(?:줄까|줄래|드릴까)요?[?？]?$|주겠[가-힣]*[?？]?$|줘[?？]$")
+_OFFER_REASON = re.compile(r"는데|해서|라서|니까")
 _FIRST_PERSON = re.compile(
     _INTERJECTION + r"(?:(?:제가|내가|저는|나는|저도|나도)(?![가-힣])"
     r"|(?:제|내)\s*(?:번호|전화번호|핸드폰|휴대폰|연락처))"
@@ -48,6 +62,11 @@ _REQUEST = re.compile(
 # "~에서" 는 연락했다는 말("금감원에서 연락드렸습니다")일 때만 자기소개로 본다
 # "~에 있는 ○○입니다", "~의 ○○입니다" 처럼 소속을 꾸미는 조사는 막지 않는다
 _PARTICLE_END = re.compile(r"(?:에게|한테|께서|으로|로|을|를|이|가|은|는|와|과|랑|도|만)$")
+_MEMBER_OF = re.compile(r"에\s*(?:있는|계신|근무|소속)")
+# 직원이 아니라고 하거나 기관을 이용하는 사람의 말은 자기소개가 아니다
+_NOT_STAFF = re.compile(
+    r"아니|가입자|납세자|수급자|민원인|피해자|이용자|신고자|신고인|구직자|고객(?!센터|상담|지원)"
+)
 # "저희 서울중앙지검으로 오셔서" 처럼 기관을 "저희" 로 부르면 그 기관 사람이 하는 말이다
 _OURS = re.compile(r"저희\s*(?:\S+\s+)?\S*$")
 _WORD_END = r"(?=[\s,.?!…~]|$)"
@@ -55,6 +74,10 @@ _SELF_INTRO = re.compile(
     r"(?:입니다|이에요|예요|이예요|인데요?|이고요?|이구요|라고\s*합니다)" + _WORD_END
 )
 _CONTACT = re.compile(r"(?:연락|전화)\s*(?:드렸|드립|드려)|나왔(?:습니다|어요|는데)")
+# "국세청 직원이거든요". 기관 낱말에 바로 붙으면("경찰이며 검찰이며") 나열이라 직함이 있어야 한다
+_CASUAL_INTRO = re.compile(r"\S(?:이거든요?|이며|이야|이라서요?)" + _WORD_END)
+# "국세청에서 나온 직원입니다" 처럼 소속을 꾸미는 "~에서" 는 자기소개로 끝날 때만 본다
+_AFFILIATED = re.compile(r"에서\s*(?:나온|근무하는|일하는|파견된)")
 _BREAK = re.compile(r"[,.?!…]")
 # 기관 낱말 뒤 이 글자 수 안에서 자기소개가 끝나야 한다("서울중앙지검 금융범죄수사팀 김○○ 수사관입니다")
 _MAX_INTRO_TAIL = 24
@@ -123,9 +146,15 @@ def is_self_talk(sentence: str) -> bool:
     """받는 사람이 자기 일을 말하거나 되묻는 꼴: "보내야 돼요?", "제가 보낼게요"."""
     s = _bare(sentence)
     if is_question(s):
+        if _OFFER_SUBJECT.search(s) and _OFFER_END.search(s) and not _OFFER_REASON.search(s):
+            return True
+        if (_L_RAE.search(s) or _CAN_ASK.search(s)) and not _FIRST_PERSON.search(s):
+            return False
         return not _listener_marked(s)
     # "입금해 주면 오늘 갚을게" 처럼 부탁이 함께 있으면 상대 말이다
-    return bool(_PROMISE.search(s) or _FIRST_PERSON.search(s)) and not _REQUEST.search(s)
+    return bool(
+        _PROMISE.search(s) or _FIRST_PERSON.search(s) or _L_RAE.search(s)
+    ) and not _REQUEST.search(s)
 
 
 def is_recipient_side(sentence: str) -> bool:
@@ -138,10 +167,28 @@ def asserts_institution(sentence: str, pattern: re.Pattern[str]) -> bool:
     for m in pattern.finditer(sentence):
         if _OURS.search(sentence[: m.start()]):
             return True
+        # 패턴이 어미까지 품은 "검사입니다". "저는" 이 없으면("정기 검사입니다") 직함인지 알 수 없다
+        if _SELF_INTRO.search(m.group(0)) and _FIRST_PERSON.search(sentence):
+            return True
         after = sentence[m.end() :]
         rest = re.match(r"\S*", after).group(0)
         brk = _BREAK.search(after)
         window = after[: brk.start() if brk else len(after)][:_MAX_INTRO_TAIL]
+        if _NOT_STAFF.search(window):
+            continue
+        if rest.endswith("에") and not _MEMBER_OF.search(window):
+            continue
+        if (
+            not _PARTICLE_END.search(rest)
+            and "에서" not in rest
+            and _FIRST_PERSON.search(sentence)
+            and not is_question(sentence)
+            and not pattern.search(window)
+            and _CASUAL_INTRO.search(window[len(rest) :])
+        ):
+            return True
+        if _AFFILIATED.search(window) and _SELF_INTRO.search(window):
+            return True
         contact = _CONTACT.search(window)
         if contact and "에서" in window[: contact.start()]:
             return True

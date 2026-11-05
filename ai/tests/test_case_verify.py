@@ -19,7 +19,10 @@ from ai.case.types import (
     Segment,
     Side,
 )
+from ai.case import forms
+from ai.case.lexicon import read_with_lexicon
 from ai.case.verify import verify_call
+from ai.types import FailureCode
 
 
 def _source(*lines: str) -> ReadingSource:
@@ -591,3 +594,20 @@ def test_public_institution_not_claimed_by_sender_is_rejected(sentence):
     )
     assert _codes(r) == []
     assert _reasons(r) == ["self_side"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "제가 경찰에 신고한 사람입니다. 계좌번호 불러 주세요.",
+        "저는 서울중앙지검 수사관이 아니라 피해자입니다. 계좌번호 불러 주세요.",
+    ],
+)
+def test_mentioning_institution_with_request_has_no_l3_floor(text):
+    source = ReadingSource(
+        kind=InputKind.AUDIO,
+        segments=[Segment(side=Side.UNKNOWN, text=s) for s in forms.sentences(text)],
+    )
+    reading = read_with_lexicon(source, FailureCode.TIMEOUT).reading
+    verify = verify_call(source, reading, derived_by="lexicon")
+    assert not any(e.code == EvidenceCode.INSTITUTION_CLAIM and e.counts_for_floor for e in verify.accepted)
