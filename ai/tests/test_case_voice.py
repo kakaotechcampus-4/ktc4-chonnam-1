@@ -671,3 +671,32 @@ def test_lexicon_fallback_respects_which_action_is_negated(line, suspected):
     result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, Calls())))
 
     assert (result.conclusion is Conclusion.SUSPECTED) is suspected
+
+
+def test_reading_outcome_is_logged_as_counts_only(caplog):
+    # 읽기 결과가 근거로 이어졌는지 로그로 볼 수 있어야 한다. 인용·원문은 남기지 않는다
+    case = {
+        "transcript": ["서울중앙지검 김민수 수사관입니다", "안전계좌로 지금 이체하셔야 합니다"],
+        "input": {},
+        "runtime": {
+            "reading": {
+                "identity": [{"kind": "institution", "name": "서울중앙지검", "quote": "서울중앙지검 김민수 수사관입니다"}],
+                "demands": [
+                    {"kind": "money_transfer", "quote": "안전계좌로 지금 이체하셔야 합니다"},
+                    {"kind": "money_transfer", "quote": "원문에 없는 문장입니다"},
+                ],
+            }
+        },
+    }
+    with caplog.at_level("WARNING", logger="ai.case.voice"):
+        result = asyncio.run(analyze_call(_transcript(case), runtime=_runtime(case, Calls())))
+
+    lines = [r.getMessage() for r in caplog.records if "voice reading" in r.getMessage()]
+    assert len(lines) == 1
+    line = lines[0]
+    assert "status=ok" in line
+    assert "read=identity:1,pretexts:0,demands:2,blockers:0,hosts:0" in line
+    assert f"accepted={len(result.evidence)}" in line
+    assert "rejected=not_in_source:1" in line
+    assert f"conclusion={result.conclusion.value}" in line
+    assert "김민수" not in line and "안전계좌" not in line

@@ -156,3 +156,28 @@ async def test_model_order(src, make_parse_client, monkeypatch):
 
     await read_claims(src, client=client, model="arg-model")
     assert parse.await_args.kwargs["model"] == "arg-model"
+
+
+def _validation_error():
+    from pydantic import ValidationError
+
+    try:
+        ClaimReading.model_validate(
+            {"identity": [{"kind": "비밀값", "name": "홍길동", "quote": "서울중앙지검 홍길동입니다"}]}
+        )
+    except ValidationError as exc:
+        return exc
+    raise AssertionError("검증 오류가 나야 한다")
+
+
+async def test_validation_failure_logs_field_and_reason_without_text(src, make_parse_client, caplog):
+    # 운영 로그에 "ValidationError" 만 남아 원인을 재현 실험으로 찾아야 했다.
+    # 어느 칸이 왜 깨졌는지 남기되, 모델 출력·원문은 남기지 않는다
+    client, _ = make_parse_client(side_effect=_validation_error())
+    with caplog.at_level("WARNING", logger="ai.llm.claims"):
+        result = await read_claims(src, client=client)
+    assert (result.status, result.failure) == ("fallback", FailureCode.INVALID_OUTPUT)
+    logged = caplog.text
+    assert "ValidationError" in logged
+    assert "identity.0.kind:enum" in logged
+    assert "비밀값" not in logged and "홍길동" not in logged and "서울중앙지검" not in logged

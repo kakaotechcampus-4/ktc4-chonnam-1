@@ -228,9 +228,12 @@ def decide_call(
             ),
         ]
 
-    # U-5: 통화에는 링크 후보 조건이 없지만 말로 부른 링크는 요구로 센다
+    # U-5: 통화에는 링크 후보 조건이 없지만 말로 부른 링크는 요구로 센다.
+    # 읽기가 실패해 어휘표로 떨어졌으면 "주장이 없다"고 단정할 수 없으므로
+    # 입력 요청 대신 아래의 판단 보류(INCONCLUSIVE)로 보낸다
     if (
-        not link_spoken
+        reading_status != "fallback"
+        and not link_spoken
         and not (codes & _ANY_DEMAND)
         and not (codes & {_E.INSTITUTION_CLAIM, _E.ACQUAINTANCE_CLAIM})
     ):
