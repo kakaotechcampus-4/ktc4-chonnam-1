@@ -207,14 +207,17 @@ def _log_reading(
     rejected = ",".join(
         f"{reason}:{n}" for reason, n in sorted(Counter(x.reason for x in verify.rejected).items())
     )
+    unused = ",".join(f"{label}:{n}" for label, n in sorted(Counter(verify.unused).items()))
     LOGGER.warning(
-        "voice reading status=%s failure=%s read=%s accepted=%d(%s) rejected=%s conclusion=%s",
+        "voice reading status=%s failure=%s read=%s accepted=%d(%s) rejected=%s unused=%s"
+        " conclusion=%s",
         reading.status,
         reading.failure.value if reading.failure else "-",
         read,
         len(verify.accepted),
         codes or "-",
         rejected or "-",
+        unused or "-",
         result.conclusion.value,
     )
 

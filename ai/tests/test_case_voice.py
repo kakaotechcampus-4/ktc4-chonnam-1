@@ -698,5 +698,6 @@ def test_reading_outcome_is_logged_as_counts_only(caplog):
     assert "read=identity:1,pretexts:0,demands:2,blockers:0,hosts:0" in line
     assert f"accepted={len(result.evidence)}" in line
     assert "rejected=not_in_source:1" in line
+    assert "unused=-" in line
     assert f"conclusion={result.conclusion.value}" in line
     assert "김민수" not in line and "안전계좌" not in line

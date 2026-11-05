@@ -105,6 +105,9 @@ class VerifyResult(StrictModel):
     rejected: list[RejectedClaim]
     spoken_hosts: list[str]
     claims: ClaimView
+    # 원문에서 찾았지만 근거 코드로 바꿀 수 없어 쓰지 않은 주장("종류:사유"). 진단 로그용.
+    # rejected 는 계약에 실리므로 사유를 늘리지 않고 여기 따로 센다
+    unused: list[str] = []
 
 
 def _norm(text: str) -> str:
@@ -221,6 +224,7 @@ def verify_call(
     texts = [_norm(seg.text) for seg in source.segments]
     accepted: list[Evidence] = []
     rejected: list[RejectedClaim] = []
+    unused: list[str] = []
 
     def locate(kind: str, quote: str, self_side):
         """V-1·V-2. 통과하면 (인용, 세그먼트 텍스트, 인용 끝 위치, 인용을 품은 문장), 아니면 None.
@@ -291,9 +295,13 @@ def verify_call(
                 listed = True
                 name = found[0]
                 add(EvidenceCode.INSTITUTION_CLAIM, q, shaped=False)
+            else:
+                unused.append("identity:unlisted_institution")
         elif ident.kind == IdentityKind.ACQUAINTANCE:
             # "엄마 나야", "엄마, 폰 고장 났어" 같은 꼴만 하한에 쓴다. "우리 아들이" 는 남 이야기다
             add(EvidenceCode.ACQUAINTANCE_CLAIM, q, shaped=_asserts(ident.kind, sentence))
+        else:
+            unused.append(f"identity:{ident.kind.value}")
         claims.identity.append(
             ClaimViewIdentity(
                 kind=ident.kind, name=name, quote=q, listed_institution=listed
@@ -325,6 +333,9 @@ def verify_call(
         if code is not None:
             # 하한에는 부탁 꼴("옮기셔야 합니다", "불러 주세요")만 쓴다. 혼잣말·이야기 속 "보내" 는 주의로 남는다
             add(code, q, shaped=_demand_shaped(demand.kind, sentence))
+        elif demand.kind != DemandKind.VISIT_LINK:
+            # 링크 요구는 근거 코드 대신 말로 부른 링크(R16)로 쓴다
+            unused.append(f"demand:{demand.kind.value}")
         claims.demands.append(ClaimViewDemand(kind=demand.kind, quote=q))
 
     for blocker in reading.blockers:
@@ -346,4 +357,5 @@ def verify_call(
         rejected=rejected,
         spoken_hosts=hosts,
         claims=claims,
+        unused=unused,
     )
