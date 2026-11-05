@@ -122,9 +122,9 @@ Content-Type: application/json
 
 | 단계 | 하는 일 | 상한 |
 | --- | --- | --- |
-| 2단계 httpx | 리다이렉트를 직접 따라가며 홉마다 허용 목록 확인. HTML 256 KiB | 3.5초 |
+| 2단계 httpx | 리다이렉트를 직접 따라가며 홉마다 허용 목록 확인. HTML 256 KiB | 2초, 시간 초과면 5초로 1회 재시도 |
 | 3단계 Chromium | JS 실행 후 이동·폼·다운로드 관찰 | 6초 (대기 포함) |
-| API 전체 | 위 두 단계와 정리 시간 | 12.5초. 메인 서버 타임아웃 15초보다 짧다 |
+| API 전체 | 위 두 단계와 정리 시간 | 16초. 메인 서버 타임아웃 17초보다 짧다 |
 
 3단계로 넘기는 조건은 설계 문서와 같다. 2단계가 실패했거나 HTML 이 없으면 넘기지 않는다.
 
@@ -161,7 +161,8 @@ Content-Type: application/json
 | --- | --- | --- |
 | `COLLECTOR_ALLOWED_HOSTS` | (필수) | 허용 호스트, 쉼표 구분. 비어 있으면 서버가 뜨지 않는다 |
 | `COLLECTOR_BROWSER` | `auto` | `off` 2단계만 / `auto` 신호가 있을 때만 / `always` 매번 (가짜 페이지 시험용) |
-| `COLLECTOR_FETCH_TIMEOUT_SECONDS` | `3.5` | 2단계 상한 |
+| `COLLECTOR_FETCH_TIMEOUT_SECONDS` | `2` | 2단계 1차 상한 |
+| `COLLECTOR_FETCH_RETRY_TIMEOUT_SECONDS` | `5` | 1차가 시간 초과일 때 한 번 더 받는 상한 |
 | `COLLECTOR_BROWSER_TIMEOUT_SECONDS` | `6` | 3단계 상한 |
 | `COLLECTOR_MAX_CONCURRENCY` | `1` | 동시 수집 수. 넘치면 503 |
 | `COLLECTOR_BROWSER_RESTART_EVERY` | `50` | 브라우저 재시작 주기 (페이지 수) |
@@ -242,7 +243,7 @@ Content-Type: application/json
 | 가짜 페이지 인증서 | 운영에서는 브라우저가 인증서 오류를 무시하지 않는다. 가짜 페이지 서버에 정상 인증서가 필요하다 |
 | 프록시 본문 | 프록시는 터널만 열고 본문은 보지 않는다. 허용 호스트 안에서 오가는 내용의 크기는 컨테이너 메모리 상한이 막는다 |
 | 메인 서버 로그 | `main.py` 의 Shadow 비교 로그는 아직 `browser` 필드를 찍지 않는다 |
-| 시간 예산 | 3.5초·6초는 설계 문서의 가설값이다. EC2 실측으로 조정한다 |
+| 시간 예산 | 2초·5초·6초는 가설값이다(2초·5초는 2026-11-06 응답 14건 기준, 최대 1.36초). EC2 실측으로 조정한다 |
 | 고정 IP | 단축 서비스·가짜 페이지 IP 가 바뀌면 접속이 실패한다. 메인 서버는 그 링크를 판단 보류로 안내하므로 틀린 안내는 나가지 않지만, 배포 전마다 `check-egress-ips.py` 로 확인한다 |
 | 단축 도메인 목록 | 메인 서버 `services/link_resolution.py` 의 `SHORTENER_HOSTS` 와 `egress-hosts` 를 함께 고친다. 한쪽에만 있으면 그 단축 주소는 늘 판단 보류가 된다 |
 | AI 입력 연결 | `browser.html` 을 `IsolatedPage.info` 로 넘기는 연결은 아직 없다 |

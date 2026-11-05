@@ -17,7 +17,7 @@ from scanner.models import CollectResult
 from scanner.collect_response import parse_collect_response
 
 
-ISOLATION_TIMEOUT_SECONDS = 15.0
+ISOLATION_TIMEOUT_SECONDS = 17.0
 MAX_RESPONSE_BYTES = 1_048_576  # 1 MiB: 2단계 HTML 256 KiB + 3단계 HTML 256 KiB + JSON 여유
 
 
