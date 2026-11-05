@@ -39,8 +39,10 @@ from scanner.models import BrowserResult, CollectResult
 MAX_REQUEST_BYTES = 4096
 # 메인 서버는 1 MiB를 넘는 응답을 버린다. JSON 이스케이프로 커지는 몫을 두고 줄인다.
 MAX_RESPONSE_BYTES = 960 * 1024
-# 2단계 + 3단계 + 정리 여유가 메인 서버 타임아웃(15초)보다 짧아야 실패 이유가 메인까지 간다.
-DEFAULT_FETCH_TIMEOUT_SECONDS = 3.5
+# 2단계(1차·재시도) + 3단계 + 정리 여유가 메인 서버 타임아웃(17초)보다 짧아야 실패 이유가 메인까지 간다.
+# 1차는 정상 응답이 거의 다 통과하는 시간이다. 멈춘 연결만 넉넉한 시간으로 한 번 더 받는다.
+DEFAULT_FETCH_TIMEOUT_SECONDS = 2.0
+DEFAULT_FETCH_RETRY_TIMEOUT_SECONDS = 5.0
 DEFAULT_BROWSER_TIMEOUT_SECONDS = 6.0
 BACKSTOP_EXTRA_SECONDS = 3.0
 BROWSER_MODES = ("off", "auto", "always")
@@ -132,6 +134,7 @@ def create_app(
     allowed_hosts: frozenset[str],
     max_concurrency: int = 1,
     fetch_timeout: float = DEFAULT_FETCH_TIMEOUT_SECONDS,
+    fetch_retry_timeout: float = DEFAULT_FETCH_RETRY_TIMEOUT_SECONDS,
     browser_timeout: float = DEFAULT_BROWSER_TIMEOUT_SECONDS,
     browser_mode: str = "off",
     renderer: Renderer | None = None,
@@ -157,20 +160,28 @@ def create_app(
 
     expected_auth = f"Bearer {token}".encode()
     active = 0
-    backstop = fetch_timeout + (browser_timeout if browser_mode != "off" else 0) + BACKSTOP_EXTRA_SECONDS
+    backstop = (fetch_timeout + fetch_retry_timeout
+                + (browser_timeout if browser_mode != "off" else 0) + BACKSTOP_EXTRA_SECONDS)
 
     def url_allowed(url: str) -> bool:
         return policy.url_allowed(url)
+
+    async def fetch_with_retry(url: str, **options) -> CollectResult:
+        fetched = await collect(url, timeout=fetch_timeout, url_allowed=url_allowed, **options)
+        if fetched.failures != ("timeout",):
+            return fetched
+        log.info("event=fetch_retry host=%s", _host_for_log(url))
+        return await collect(url, timeout=fetch_retry_timeout, url_allowed=url_allowed, **options)
 
     async def run_stages(url: str) -> CollectResult:
         if policy.mode == "public":
             await proxy.start()
             # Both stages use this CONNECT proxy. No environment proxies or TLS bypass.
             async with httpx.AsyncClient(proxy=proxy.url, trust_env=False) as client:
-                fetched = await collect(url, timeout=fetch_timeout, url_allowed=url_allowed,
-                                        client=client, resolve=policy.resolve, allow_insecure_retry=False)
+                fetched = await fetch_with_retry(
+                    url, client=client, resolve=policy.resolve, allow_insecure_retry=False)
         else:
-            fetched = await collect(url, timeout=fetch_timeout, url_allowed=url_allowed)
+            fetched = await fetch_with_retry(url)
         if browser_mode == "off":
             return fetched
         reason = "always" if browser_mode == "always" else trigger(fetched)
@@ -271,6 +282,8 @@ def create_app_from_env() -> Starlette:
         allowed_hosts=allowed_hosts,
         max_concurrency=int(os.getenv("COLLECTOR_MAX_CONCURRENCY", "1")),
         fetch_timeout=float(os.getenv("COLLECTOR_FETCH_TIMEOUT_SECONDS", str(DEFAULT_FETCH_TIMEOUT_SECONDS))),
+        fetch_retry_timeout=float(
+            os.getenv("COLLECTOR_FETCH_RETRY_TIMEOUT_SECONDS", str(DEFAULT_FETCH_RETRY_TIMEOUT_SECONDS))),
         browser_timeout=float(os.getenv("COLLECTOR_BROWSER_TIMEOUT_SECONDS", str(DEFAULT_BROWSER_TIMEOUT_SECONDS))),
         browser_mode=browser_mode,
         renderer=renderer,

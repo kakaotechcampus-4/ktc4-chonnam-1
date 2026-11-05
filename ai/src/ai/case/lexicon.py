@@ -10,7 +10,14 @@ import re
 from collections.abc import Callable
 from typing import TypeVar
 
-from ai.case.forms import asserts_acquaintance, asserts_institution, is_recipient_side, is_request
+from ai.case.forms import (
+    MONEY_WORD,
+    asserts_acquaintance,
+    asserts_institution,
+    is_quotation,
+    is_recipient_side,
+    is_request,
+)
 from ai.case.types import (
     BlockerClaim,
     ClaimReading,
@@ -61,6 +68,14 @@ PUBLIC_INSTITUTION_PATTERN = re.compile(
     r"국세청|세무서|관세청|국민건강보험|건강보험\s*(?:공단|센터)|건보공단|국민연금|노동부|우체국|출입국"
 )
 
+
+def introduces_institution(sentence: str) -> bool:
+    """수사·금융 기관이나 공공기관 자기소개 꼴인가. 하한(L-3) 판단은 INSTITUTION_PATTERN 으로 따로 한다."""
+    return asserts_institution(sentence, INSTITUTION_PATTERN) or asserts_institution(
+        sentence, PUBLIC_INSTITUTION_PATTERN
+    )
+
+
 # 호칭 뒤에 한글이 더 붙으면 다른 낱말이다(이모티콘, 엄마손파이, 어머니회). 조사·서술어는 허용한다.
 _KIN_TAIL = (
     r"(?:께서|이랑|하고|한테|에게|이에요|입니다|인데|이야|예요|이다|은|는|이|가|을|를|의|도|만|랑|와|과|야|아|인|다)?"
@@ -93,6 +108,14 @@ def _sentences(text: str) -> list[str]:
     return [p for p in parts if p]
 
 
+# 폴백 읽기에서만 쓰는 송금 표현. DEMAND_LEXICON 은 사례 첨부 관문의 입력이라 고치면 모델을 다시
+# 학습해야 하므로 따로 둔다(feature_hash). "보낼" 은 상대에게 묻는 꼴일 때만 요구로 본다.
+# 돈을 집어 말할 때만 본다("문자 보낼 수 있어요?", "우산 좀 빌려줄래?" 는 아니다)
+_READING_MONEY_PATTERN = re.compile(
+    rf"(?:{MONEY_WORD}).*(?:보낼\s*(?:수\s*있\S*|래요?)[?？]$|(?:빌려|(?<![가-힣])꿔)\s*(?:줘|주|줄))"
+)
+
+
 def classify_demand(sentence: str) -> DemandKind | None:
     for kind, pattern in DEMAND_LEXICON:
         if pattern.search(sentence):
@@ -114,8 +137,11 @@ def read_with_lexicon(
     blockers: list[BlockerClaim] = []
     for seg in source.segments:
         for sentence in _sentences(seg.text):
-            if is_recipient_side(sentence):
-                # 받는 사람 말로 보이는 문장은 상한(3·6개)을 차지하지 않게 미리 뺀다
+            # 받는 사람 말로 보이는 문장은 상한(3·6개)을 차지하지 않게 미리 뺀다.
+            # "저는 국세청 직원입니다" 같은 기관 자기소개는 "저는" 이 있어도 남긴다
+            if is_recipient_side(sentence) and (
+                is_quotation(sentence) or not introduces_institution(sentence)
+            ):
                 continue
             if (m := INSTITUTION_PATTERN.search(sentence) or PUBLIC_INSTITUTION_PATTERN.search(sentence)):
                 identity.append(
@@ -125,7 +151,10 @@ def read_with_lexicon(
                 identity.append(
                     IdentityClaim(kind=IdentityKind.ACQUAINTANCE, name=m.group(0), quote=sentence)
                 )
-            if (kind := classify_demand(sentence)) is not None:
+            kind = classify_demand(sentence)
+            if kind is None and _READING_MONEY_PATTERN.search(sentence):
+                kind = DemandKind.MONEY_TRANSFER
+            if kind is not None:
                 demands.append(DemandClaim(kind=kind, quote=sentence))
             if BLOCKER_PATTERN.search(sentence):
                 blockers.append(BlockerClaim(quote=sentence))

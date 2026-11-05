@@ -454,3 +454,122 @@ def test_message_templates_have_no_forbidden_words():
     for text in [*MESSAGE_TEMPLATES.values(), *MESSAGE_LEADS.values()]:
         assert not any(w in text for w in FORBIDDEN), text
         assert "통화만으로" not in text
+
+
+# ── PR #147 리뷰: 부탁 꼴·공공기관 자기소개가 근거에서 빠지면 안 된다 ──────────
+
+
+FAVOR = "엄마 나야. 50만원만 보내줄래요?"
+FAVOR_READING = {
+    "identity": [{"kind": "acquaintance", "name": "자녀", "quote": "엄마 나야"}],
+    "demands": [{"kind": "money_transfer", "quote": "50만원만 보내줄래요"}],
+}
+
+
+@pytest.mark.parametrize("reading", [FAVOR_READING, None], ids=["llm", "lexicon"])
+async def test_julraeyo_favor_gets_caution_and_questions(reading):
+    r = await _analyze(FAVOR, reading)
+    assert (r.conclusion, r.caution) == (Conclusion.INCONCLUSIVE, True)
+    assert list(_q(r)) == ["already_acted", "called_known_number"]
+
+
+@pytest.mark.parametrize("reading", [None], ids=["lexicon"])
+async def test_echoed_demand_gets_no_caution(reading):
+    r = await _analyze("엄마 나야. 50만원만 보내라고요?", reading)
+    assert r.caution is False
+    assert _q(r) == {}
+
+
+def _public_reading(quote):
+    return {"identity": [{"kind": "institution", "name": "국세청", "quote": quote}]}
+
+
+@pytest.mark.parametrize(
+    "text, reading",
+    [
+        ("저는 국세청 직원입니다", _public_reading("저는 국세청 직원입니다")),
+        ("국세청 직원입니다", _public_reading("국세청 직원입니다")),
+        ("저는 국세청 직원입니다", None),
+        ("국세청 직원입니다", None),
+    ],
+    ids=["first-person-llm", "bare-llm", "first-person-lexicon", "bare-lexicon"],
+)
+async def test_public_institution_self_intro_gets_same_caution(text, reading):
+    """"저는" 유무와 읽기 방식이 달라도 같은 주의 안내와 공식 번호로 이어진다."""
+    r = await _analyze(text, reading)
+    assert (r.conclusion, r.caution, r.floors) == (Conclusion.INCONCLUSIVE, True, [])
+    assert list(_q(r)) == ["already_acted"]
+    assert r.official_contact is not None and r.official_contact.number == "126"
+    assert r.claims.identity[0].name == "국세청"
+
+
+# 합성 사례(2026-11-05 검수). LLM 이 정확히 읽은 경우와 어휘표 폴백을 모두 본다
+_ACQ = {"kind": "acquaintance", "name": "자녀", "quote": "엄마 나야"}
+
+
+@pytest.mark.parametrize(
+    "sentence, kind",
+    [
+        ("돈 좀 보낼 수 있어?", "money_transfer"),
+        ("급한데 돈 좀 보내면 안 될까?", "money_transfer"),
+        ("오늘까지 50만원만 입금 가능해요?", "money_transfer"),
+        ("송금 좀 해 주겠어요?", "money_transfer"),
+        ("돈 좀 보낼래요?", "money_transfer"),
+        ("50만원만 빌려줄래요?", "money_transfer"),
+        ("상품권 좀 사 볼래요?", "gift_card"),
+        ("인증번호 나한테 보낼 수 있어?", "auth_code"),
+        ("이 앱 설치해 볼래요?", "app_install"),
+        ("신분증 사진 좀 보낼래요?", "personal_info"),
+    ],
+)
+@pytest.mark.parametrize("path", ["llm", "lexicon"])
+async def test_asking_sentence_gets_caution(sentence, kind, path):
+    reading = {"identity": [_ACQ], "demands": [{"kind": kind, "quote": sentence.rstrip("?")}]}
+    r = await _analyze(f"엄마 나야. {sentence}", reading if path == "llm" else None)
+    assert (r.conclusion, r.caution) == (Conclusion.INCONCLUSIVE, True)
+
+
+@pytest.mark.parametrize(
+    "sentence, name",
+    [
+        ("저는 국세청에서 나온 직원입니다", "국세청"),
+        ("저는 경찰청에서 근무하는 김민수 경위입니다", "경찰청"),
+        ("저는 국세청 직원이거든요", "국세청"),
+        ("저는 국세청 직원이며 미납 건으로 문자드립니다", "국세청"),
+        ("저는 김민수 검사입니다", "검사"),
+        ("나는 국세청 직원이야", "국세청"),
+    ],
+)
+@pytest.mark.parametrize("path", ["llm", "lexicon"])
+async def test_self_intro_sentence_gets_caution(sentence, name, path):
+    reading = {"identity": [{"kind": "institution", "name": name, "quote": sentence}]}
+    r = await _analyze(sentence, reading if path == "llm" else None)
+    assert (r.conclusion, r.caution) == (Conclusion.INCONCLUSIVE, True)
+
+
+@pytest.mark.parametrize(
+    "sentence, reading",
+    [
+        (
+            "저는 국세청 직원이 아니라 민원인입니다",
+            {"identity": [{"kind": "institution", "name": "국세청", "quote": "저는 국세청 직원이 아니라 민원인입니다"}]},
+        ),
+        (
+            "제가 경찰에 신고한 사람입니다",
+            {"identity": [{"kind": "institution", "name": "경찰", "quote": "제가 경찰에 신고한 사람입니다"}]},
+        ),
+        (
+            "저는 건강보험공단 가입자입니다",
+            {"identity": [{"kind": "institution", "name": "건강보험공단", "quote": "저는 건강보험공단 가입자입니다"}]},
+        ),
+        (
+            "제가 대신 입금해 줄까요?",
+            {"demands": [{"kind": "money_transfer", "quote": "제가 대신 입금해 줄까요"}]},
+        ),
+    ],
+)
+@pytest.mark.parametrize("path", ["llm", "lexicon"])
+async def test_sentence_not_from_impersonator_gets_no_caution(sentence, reading, path):
+    r = await _analyze(sentence, reading if path == "llm" else None)
+    assert r.caution is False
+    assert _q(r) == {}
