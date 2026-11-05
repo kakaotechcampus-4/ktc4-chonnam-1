@@ -103,6 +103,7 @@ _BREAK = re.compile(r"[,.?!…]")
 # 기관 낱말 뒤 이 글자 수 안에서 자기소개가 끝나야 한다("서울중앙지검 금융범죄수사팀 김○○ 수사관입니다")
 _MAX_INTRO_TAIL = 24
 
+_SERVICE_TALK = re.compile(r"고객님|성함|명의자|생년월일|상담원")
 _KIN = r"(?:엄마|아빠|어머니|아버지|아들|딸(?!기)|언니|오빠|누나|동생|이모|삼촌|고모|친구|형(?:님)?)"
 _ACQ_ASSERT = (
     # "엄마 나야", "저예요"
@@ -223,4 +224,7 @@ def asserts_institution(sentence: str, pattern: re.Pattern[str]) -> bool:
 
 def asserts_acquaintance(sentence: str) -> bool:
     s = sentence.strip()
+    # 상담원이 고객을 "어머니" 라고 부르는 말은 가족이라는 주장이 아니다
+    if _SERVICE_TALK.search(s):
+        return False
     return any(p.search(s) for p in _ACQ_ASSERT)

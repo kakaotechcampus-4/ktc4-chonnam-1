@@ -87,6 +87,14 @@ _NEGATED_PREDICATE = re.compile(
     r")$"
 )
 _TRAILING_PUNCT = re.compile(r"[.!\s]+$")
+# 신분증을 들고 직접 오라는 안내. 넘기라는 요구가 아니라서 하한에 쓰지 않는다
+_ID_CARD = re.compile(r"신분증|면허증")
+_VISIT_GUIDE = re.compile(r"방문|오셔서|오세요|오시면|오실\s*때|오셔도|지참|수령")
+# 돈이 아닌 것을 보내라는 말: "계약서 사진 보내 줘", "문자로 보내 주세요"
+_NON_MONEY_OBJECT = re.compile(r"문자|사진|계약서|메일|서류|파일|영상|캡처|자료|영수증|주소")
+_MONEY_WORD = re.compile(rf"{forms.MONEY_WORD}|입금|이체|송금")
+# 찍어 보내라는 말은 방문 안내가 아니라 신분증을 넘기라는 요구다
+_HAND_OVER = re.compile(r"보내|전송|찍어|올려|불러")
 
 _CLAUSE_BREAK = re.compile(r"(?:고(?=\s+(?!있|계시|싶))|며|지만|는데|,)\s+")
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://")
@@ -114,6 +122,22 @@ def _is_notice_sentence(quote: str) -> bool:
     m = _NOTICE_DOEMNIDA.search(sentence)
     # "발송됩니다" 같은 상태 알림만 거른다. 의무·조건 꼴은 요구라서 통과한다
     return bool(m) and not _DOEMNIDA_REQUEST.search(sentence[: m.start()].rstrip())
+
+
+def _demand_shaped(kind: DemandKind, sentence: str) -> bool:
+    """하한에 쓸 수 있는 요구인가. 부탁 꼴이어도 돈·정보를 넘기라는 말이 아니면 주의로만 남긴다."""
+    if not forms.is_request(sentence):
+        return False
+    if (
+        kind == DemandKind.PERSONAL_INFO
+        and _ID_CARD.search(sentence)
+        and _VISIT_GUIDE.search(sentence)
+        and not _HAND_OVER.search(sentence)
+    ):
+        return False
+    if kind == DemandKind.MONEY_TRANSFER and _NON_MONEY_OBJECT.search(sentence):
+        return bool(_MONEY_WORD.search(sentence))
+    return True
 
 
 def _last_clause_start(quote: str) -> int:
@@ -300,7 +324,7 @@ def verify_call(
         code = _DEMAND_CODE.get(demand.kind)
         if code is not None:
             # 하한에는 부탁 꼴("옮기셔야 합니다", "불러 주세요")만 쓴다. 혼잣말·이야기 속 "보내" 는 주의로 남는다
-            add(code, q, shaped=forms.is_request(sentence))
+            add(code, q, shaped=_demand_shaped(demand.kind, sentence))
         claims.demands.append(ClaimViewDemand(kind=demand.kind, quote=q))
 
     for blocker in reading.blockers:

@@ -312,3 +312,17 @@ def test_first_person_with_title_is_self_intro(sentence):
 def test_everyday_question_stays_recipient_side(sentence):
     """돈을 집어 말하지 않는 "안 될까요?", "가능해요?" 와 "주겠죠?" 는 부탁으로 보지 않는다."""
     assert forms.is_recipient_side(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["어머니, 고객님 성함이 어떻게 되세요?", "아버님, 명의자분 생년월일 말씀해 주세요", "어머니 저희 고객센터 상담원입니다"],
+)
+def test_customer_service_address_is_not_acquaintance(sentence):
+    """상담원이 부르는 "어머니" 는 가족이라는 주장이 아니다."""
+    assert not forms.asserts_acquaintance(sentence)
+
+
+@pytest.mark.parametrize("sentence", ["엄마, 폰 고장 났어", "엄마 나 급해", "아빠 나 아들인데", "엄마, 폰 고장 나서 고객센터에 맡겼어"])
+def test_family_address_stays_acquaintance(sentence):
+    assert forms.asserts_acquaintance(sentence)
