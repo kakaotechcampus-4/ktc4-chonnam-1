@@ -13,7 +13,12 @@ import re
 from typing import Literal
 
 from ai.case import forms
-from ai.case.lexicon import DEMAND_LEXICON, INSTITUTION_PATTERN, PUBLIC_INSTITUTION_PATTERN
+from ai.case.lexicon import (
+    DEMAND_LEXICON,
+    INSTITUTION_PATTERN,
+    PUBLIC_INSTITUTION_PATTERN,
+    introduces_institution,
+)
 from ai.case.types import (
     ClaimReading,
     ClaimView,
@@ -165,7 +170,7 @@ def _identity_self_side(kind: IdentityKind, sentence: str) -> bool:
     """신원 문장이 받는 사람 쪽 말 꼴인가. 자기소개 꼴이면 물음표가 붙어도 상대 말로 본다."""
     if forms.is_quotation(sentence):
         return True
-    if kind == IdentityKind.INSTITUTION and forms.asserts_institution(sentence, INSTITUTION_PATTERN):
+    if kind == IdentityKind.INSTITUTION and introduces_institution(sentence):
         return False
     if kind == IdentityKind.ACQUAINTANCE and forms.asserts_acquaintance(sentence):
         return False
