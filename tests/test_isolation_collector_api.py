@@ -133,7 +133,7 @@ class TestCollect:
                 await asyncio.sleep(60)
             return ok_result(url)
 
-        async with client_for(collect=hang_once, fetch_timeout=0.05) as c:
+        async with client_for(collect=hang_once, fetch_timeout=0.05, fetch_retry_timeout=0.05) as c:
             first = await post(c, {"url": OK_URL})
             second = await post(c, {"url": OK_URL})
         assert first.json()["failures"] == ["timeout"]
@@ -235,7 +235,7 @@ class TestBrowserStage:
         renderer = FakeRenderer(hang=True)
         async with client_for(
             browser_mode="always", renderer=renderer, trigger=lambda _: "x",
-            fetch_timeout=0.01, browser_timeout=0.01,
+            fetch_timeout=0.01, fetch_retry_timeout=0.01, browser_timeout=0.01,
         ) as c:
             r = await post(c, {"url": OK_URL})
         assert r.json()["failures"] == ["timeout"]
@@ -351,3 +351,78 @@ class TestMainClientCertPin:
         monkeypatch.setenv("ISOLATION_API_CA_CERT", "-----BEGIN CERTIFICATE-----\nnope\n-----END CERTIFICATE-----")
         with pytest.raises(IsolationClientError):
             _tls_verify()
+
+
+class TestFetchRetry:
+    """1차 수집이 시간 초과면 더 넉넉한 시간으로 한 번만 다시 받는다."""
+
+    @staticmethod
+    def collect_with(*results):
+        timeouts: list[float] = []
+        remaining = list(results)
+
+        async def collect(url, *, timeout, **_):
+            timeouts.append(timeout)
+            return remaining.pop(0)(url)
+
+        return collect, timeouts
+
+    @staticmethod
+    def timed_out(url):
+        return ok_result(url, status_code=None, html="", failures=("timeout",))
+
+    async def test_first_success_does_not_retry(self):
+        collect, timeouts = self.collect_with(ok_result)
+        async with client_for(collect=collect, fetch_timeout=2.0, fetch_retry_timeout=5.0) as c:
+            r = await post(c, {"url": OK_URL})
+        assert r.json()["failures"] == []
+        assert timeouts == [2.0]
+
+    async def test_timeout_retries_once_with_longer_limit(self, caplog):
+        collect, timeouts = self.collect_with(self.timed_out, ok_result)
+        with caplog.at_level("INFO", logger="collector"):
+            async with client_for(collect=collect, fetch_timeout=2.0, fetch_retry_timeout=5.0) as c:
+                r = await post(c, {"url": OK_URL})
+        assert r.json()["failures"] == []
+        assert r.json()["status_code"] == 200
+        assert timeouts == [2.0, 5.0]
+        assert "event=fetch_retry host=fake.ktc-test.kr" in caplog.text
+
+    async def test_second_timeout_stays_a_failure(self):
+        collect, timeouts = self.collect_with(self.timed_out, self.timed_out)
+        async with client_for(collect=collect, fetch_timeout=2.0, fetch_retry_timeout=5.0) as c:
+            r = await post(c, {"url": OK_URL})
+        assert r.json()["failures"] == ["timeout"]
+        assert timeouts == [2.0, 5.0]
+
+    @pytest.mark.parametrize("failures", [("connection_failed",), ("blocked_address",), ("tls_cert_verify_failed",)])
+    async def test_other_failures_do_not_retry(self, failures):
+        collect, timeouts = self.collect_with(
+            lambda url: ok_result(url, status_code=None, html="", failures=failures),
+        )
+        async with client_for(collect=collect, fetch_timeout=2.0, fetch_retry_timeout=5.0) as c:
+            r = await post(c, {"url": OK_URL})
+        assert r.json()["failures"] == list(failures)
+        assert timeouts == [2.0]
+
+    async def test_retry_success_still_reaches_browser(self):
+        collect, _ = self.collect_with(self.timed_out, ok_result)
+        renderer = FakeRenderer(browser_result())
+        async with client_for(
+            collect=collect, fetch_timeout=2.0, fetch_retry_timeout=5.0,
+            browser_mode="auto", renderer=renderer, trigger=lambda _: "script_redirect",
+        ) as c:
+            r = await post(c, {"url": OK_URL})
+        assert r.json()["browser"] is not None
+
+    def test_default_budget_fits_main_server_timeout(self):
+        from collector.app import (
+            BACKSTOP_EXTRA_SECONDS, DEFAULT_BROWSER_TIMEOUT_SECONDS,
+            DEFAULT_FETCH_RETRY_TIMEOUT_SECONDS, DEFAULT_FETCH_TIMEOUT_SECONDS,
+        )
+        from scanner.isolation_client import ISOLATION_TIMEOUT_SECONDS
+
+        assert DEFAULT_FETCH_TIMEOUT_SECONDS == 2.0
+        assert DEFAULT_FETCH_RETRY_TIMEOUT_SECONDS == 5.0
+        assert (DEFAULT_FETCH_TIMEOUT_SECONDS + DEFAULT_FETCH_RETRY_TIMEOUT_SECONDS
+                + DEFAULT_BROWSER_TIMEOUT_SECONDS + BACKSTOP_EXTRA_SECONDS) < ISOLATION_TIMEOUT_SECONDS

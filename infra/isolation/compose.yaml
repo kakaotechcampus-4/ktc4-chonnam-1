@@ -23,8 +23,9 @@ services:
       COLLECTOR_PROTECTED_HOSTS: "${COLLECTOR_PROTECTED_HOSTS:-}"
       COLLECTOR_PROTECTED_IPS: "${COLLECTOR_PROTECTED_IPS:-}"
       COLLECTOR_MAX_CONCURRENCY: "1"
-      # 2단계 httpx 3.5초 + 3단계 브라우저 6초 + 정리 여유 3초 < 메인 서버 15초
-      COLLECTOR_FETCH_TIMEOUT_SECONDS: "3.5"
+      # 2단계 httpx 2초 + 시간 초과 시 재시도 5초 + 3단계 브라우저 6초 + 정리 여유 3초 < 메인 서버 17초
+      COLLECTOR_FETCH_TIMEOUT_SECONDS: "2"
+      COLLECTOR_FETCH_RETRY_TIMEOUT_SECONDS: "5"
       COLLECTOR_BROWSER_TIMEOUT_SECONDS: "6"
       # off: httpx 만 / auto: JS 의존 신호가 있을 때만 / always: 가짜 페이지 시험용, 매번
       COLLECTOR_BROWSER: auto
