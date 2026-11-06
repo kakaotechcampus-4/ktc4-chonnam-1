@@ -4,6 +4,7 @@ import asyncio
 import sys
 import ssl
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 
@@ -171,6 +172,28 @@ async def test_proxy_close_cancels_open_tunnels():
     assert await asyncio.wait_for(reader.read(), 0.2) == b""
     writer.close()
     await writer.wait_closed()
+
+
+async def test_connection_handled_after_close_opens_no_tunnel():
+    dials = []
+
+    async def connect_ip(host, port):
+        dials.append(host)
+        return "127.0.0.1"
+
+    proxy = EgressProxy(lambda *_: True, connect_ip=connect_ip)
+    await proxy.start()
+    await proxy.close()
+    client, server = socket.socketpair()
+    reader, writer = await asyncio.open_connection(sock=server)
+    c_reader, c_writer = await asyncio.open_connection(sock=client)
+    c_writer.write(b"CONNECT allowed.example:443 HTTP/1.1\r\n\r\n")
+    await c_writer.drain()
+    await asyncio.wait_for(proxy._handle(reader, writer), 0.2)
+    assert not proxy._handlers
+    assert dials == []
+    assert await asyncio.wait_for(c_reader.read(), 0.2) == b""
+    c_writer.close()
 
 
 async def test_httpx_real_tls_tunnel_and_redirect_keep_pinned_ip(tmp_path, monkeypatch):
