@@ -15,6 +15,7 @@ from ai.case.types import (
     EvidenceCode as E,
     NumberCheck,
     Origin,
+    RejectedClaim,
     ResponseAction as R,
     Scenario,
     StopAction as S,
@@ -173,6 +174,24 @@ def test_u5_failed_reading_with_blocker_only_is_inconclusive():
 def test_u5_ignores_contact_blocker_only():
     r = _decide(_verify(E.CONTACT_BLOCKER))
     assert r.conclusion == Conclusion.INPUT_REQUIRED
+
+
+def test_u5_self_side_rejections_are_not_input_required():
+    # 꼴 때문에 버린 신원·요구가 있으면 "사칭·요구하는 말이 없다"고 단정하지 않는다
+    v = _verify().model_copy(
+        update={"rejected": [RejectedClaim(kind="demand", quote="전화하시라고요", reason="self_side")]}
+    )
+    r = _decide(v)
+    assert r.conclusion == Conclusion.INCONCLUSIVE
+    assert r.caution is False
+    assert r.stop_actions == [S.HANG_UP]
+
+
+def test_u5_not_in_source_rejections_stay_input_required():
+    v = _verify().model_copy(
+        update={"rejected": [RejectedClaim(kind="demand", quote="", reason="not_in_source")]}
+    )
+    assert _decide(v).conclusion == Conclusion.INPUT_REQUIRED
 
 
 def test_u5_spoken_host_counts_as_demand():
