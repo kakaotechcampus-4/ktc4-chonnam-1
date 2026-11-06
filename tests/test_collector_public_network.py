@@ -1,6 +1,7 @@
 """Public collection fails closed and connects only to the checked IPv4."""
 
 import asyncio
+import contextlib
 import sys
 import ssl
 import shutil
@@ -169,9 +170,14 @@ async def test_proxy_close_cancels_open_tunnels():
     await asyncio.sleep(0)
     await proxy.close()
     assert not proxy._handlers
-    assert await asyncio.wait_for(reader.read(), 0.2) == b""
+    # 읽지 않은 헤더가 남은 채 닫히면 EOF 대신 RST 가 온다. 둘 다 닫힌 것이다
+    try:
+        assert await asyncio.wait_for(reader.read(), 0.2) == b""
+    except ConnectionResetError:
+        pass
     writer.close()
-    await writer.wait_closed()
+    with contextlib.suppress(ConnectionResetError):
+        await writer.wait_closed()
 
 
 async def test_connection_handled_after_close_opens_no_tunnel():
