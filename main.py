@@ -175,8 +175,8 @@ def create_analysis_job(
         "result": None,
         # 이슈 #69: "자세히 보기" 클릭 시 캐러셀(+ 공식 확인 방법 카드)을
         # 다시 만들려면 렌더링 끝난 카카오 카드(result)가 아니라 원본
-        # 분석 결과가 필요하다. 링크 여러 개면 마지막 것만 남는다 —
-        # r7-multiple-urls 라우팅과 마찬가지로 다중 링크는 이번 범위 밖.
+        # 분석 결과가 필요하다. 다중 링크는 마지막 결과만 저장하므로
+        # 잘못 연결되지 않도록 상세 버튼과 직접 상세 조회를 차단한다.
         "final_payload": None,
         "error": None,
         "callback_status": "pending",
@@ -344,9 +344,7 @@ def handle_detail_carousel(job_id: str) -> dict:
     job = ANALYSIS_JOBS.get(job_id)
 
     if job is None:
-        return kakao_response(
-            "분석 결과를 찾을 수 없어요. 문자를 다시 보내 주세요."
-        )
+        return kakao_response(_CASE_NOT_FOUND_TEXT)
 
     if job.get("analysis_kind") != "voice" and job.get("link_count", 0) > 1:
         return kakao_response(
@@ -357,9 +355,7 @@ def handle_detail_carousel(job_id: str) -> dict:
     final_payload = job.get("final_payload")
 
     if not final_payload:
-        return kakao_response(
-            "분석 결과를 찾을 수 없어요. 문자를 다시 보내 주세요."
-        )
+        return kakao_response(_CASE_NOT_FOUND_TEXT)
 
     # 음성(VoiceCaseResult)과 문자·URL(AnalysisResponse)은 모양이 완전히
     # 달라서 같은 렌더러로 돌리면 안 된다 — 음성 결과를 문자 캐러셀
@@ -425,11 +421,12 @@ async def kakao_skill(
             media = attachment_media
     is_voice_message = media.get("type") == "audio"
 
-    # 음성은 utterance(또는 그 안의 서명된 CDN URL)를 로그에 남기지 않는다.
+    # 문자 원문·서명 URL·사용자 ID 대신 요청 종류와 길이만 진단에 남긴다.
     print(
         f"[KAKAO] "
-        f"user={user_id} "
-        f"utterance={'<voice message>' if is_voice_message else utterance}"
+        f"input_type={'voice' if is_voice_message else 'text'} "
+        f"utterance_length={len(utterance) if isinstance(utterance, str) else 0} "
+        f"user_present={bool(user_id)}"
     )
 
     print(
@@ -544,7 +541,7 @@ _OMITTED_LINK_RESULTS_TEXT = (
 )
 _TOO_LONG_TEXT = (
     "문자가 너무 길어서 확인하지 못했어요.\n\n"
-    "확인하고 싶은 주소가 있는 부분만 복사해 다시 보내 주세요."
+    "확인하고 싶은 부분만 복사해 다시 보내 주세요."
 )
 
 
@@ -664,7 +661,7 @@ async def run_analysis(
 # 5초를 빼고, 이미 쓴 read_message() 시간을 뺀다(docs/latency-budget.md).
 MESSAGE_CASE_BUDGET_S = CALLBACK_DEADLINE_SECONDS - 5.0
 
-_CASE_NOT_FOUND_TEXT = "분석 결과를 찾을 수 없어요. 다시 확인하려면 문자를 다시 보내 주세요."
+_CASE_NOT_FOUND_TEXT = "분석 결과를 찾을 수 없어요. 문자나 통화 녹음을 다시 보내 주세요."
 
 
 async def run_message_case(
@@ -1044,13 +1041,13 @@ def handle_voice_answer(job_id: str, option_id: str) -> dict:
     final_payload = job.get("final_payload") if job else None
 
     if job is None or job.get("analysis_kind") != "voice" or not final_payload:
-        return kakao_response("분석 결과를 찾을 수 없어요. 녹음을 다시 보내 주세요.")
+        return kakao_response(_CASE_NOT_FOUND_TEXT)
 
     try:
         result = VoiceCaseResult.model_validate(final_payload)
     except Exception as error:
         print(f"[VOICE ANSWER ERROR] {type(error).__name__}")
-        return kakao_response("분석 결과를 찾을 수 없어요. 녹음을 다시 보내 주세요.")
+        return kakao_response(_CASE_NOT_FOUND_TEXT)
 
     answers: list[str] = job.setdefault("qa_answers", [])
     answers.append(option_id)
