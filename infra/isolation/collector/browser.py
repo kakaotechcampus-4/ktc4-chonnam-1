@@ -30,16 +30,19 @@ from playwright.async_api import async_playwright
 
 from collector.egress_proxy import EgressProxy
 from scanner.fetch import DEFAULT_HEADERS, HTML_LIMIT_BYTES, extract_title
-from scanner.models import BrowserResult, CollectResult
+from scanner.models import (
+    MAX_DOWNLOADS,
+    MAX_NAVIGATION_REQUESTS,
+    MAX_NAVIGATIONS,
+    MAX_URL_CHARS,
+    BrowserResult,
+    CollectResult,
+)
 
 log = logging.getLogger("collector.browser")
 
 BLOCKED_RESOURCE_TYPES = frozenset({"image", "font", "media"})  # 속도·메모리 (설계 §t3.medium)
 FORM_SELECTOR = "form, input[type=password], input[type=tel]"
-MAX_NAVIGATIONS = 10
-MAX_NAVIGATION_REQUESTS = 20
-MAX_DOWNLOADS = 5
-MAX_URL_CHARS = 2048
 SNAPSHOT_RESERVE_SECONDS = 1.0  # 마감 뒤에도 그때까지 본 화면을 가져올 몫
 CLOSE_TIMEOUT_SECONDS = 1.5
 BROWSER_ENV_KEYS = ("PATH", "HOME", "LANG", "PLAYWRIGHT_BROWSERS_PATH")
@@ -209,12 +212,11 @@ def _is_main_navigation(request, main_page) -> bool:
         return False
 
 
-def _classify(exc: BaseException, proxy_blocked: int) -> str:
+def _classify(exc: BaseException) -> str:
     message = str(exc)
     if isinstance(exc, (TimeoutError, PlaywrightTimeoutError)):
         return "browser_timeout"
-    # route 가 막으면 ERR_BLOCKED_BY_CLIENT, 리다이렉트 끝을 프록시가 막으면 다른 오류로 끝난다.
-    if "ERR_BLOCKED_BY_CLIENT" in message or proxy_blocked:
+    if "ERR_BLOCKED_BY_CLIENT" in message:
         return "browser_blocked_navigation"
     if "crash" in message.lower():
         return "browser_crashed"
@@ -224,8 +226,10 @@ def _classify(exc: BaseException, proxy_blocked: int) -> str:
 class BrowserRenderer:
     """브라우저 하나를 띄워 두고 요청마다 새 컨텍스트로 연다 (웜 풀 1개).
 
-    한 번에 한 작업만 한다. `restart_every` 페이지마다, 또는 크래시·정리 실패 뒤에는
-    브라우저를 다시 띄운다. 쿠키·캐시는 컨텍스트를 닫을 때 함께 사라진다.
+    한 번에 한 작업만 한다. `restart_every` 페이지마다, 또는 크래시·정리 실패·시간 초과나
+    막힌 요청이 있던 작업 뒤에는 브라우저를 다시 띄운다. 그런 페이지가 브라우저 프로세스에
+    남긴 것이 다음 사람의 주소(수신자 토큰이 들어 있을 수 있다)를 보지 못하게 하기 위해서다.
+    쿠키·캐시는 컨텍스트를 닫을 때 함께 사라진다.
     """
 
     def __init__(
@@ -247,6 +251,7 @@ class BrowserRenderer:
         self._browser = None
         self._served = 0
         self._broken = False
+        self._closed = False
         self._tasks: set[asyncio.Task] = set()
 
     # -- 수명 관리
@@ -260,6 +265,8 @@ class BrowserRenderer:
         )
 
     async def _ensure(self):
+        if self._closed:
+            raise RuntimeError("renderer is closed")
         if self._healthy():
             return self._browser
         await self._shutdown()
@@ -272,6 +279,8 @@ class BrowserRenderer:
         self._browser = await self._pw.chromium.launch(
             chromium_sandbox=self._sandbox,
             proxy={"server": self._proxy.url},
+            # 사이트마다 렌더러 프로세스가 생겨 PID·메모리 한도를 API 와 함께 다 쓰지 않게 한다.
+            args=["--renderer-process-limit=2"],
             env=env,
             handle_sigint=False,
             handle_sigterm=False,
@@ -302,6 +311,9 @@ class BrowserRenderer:
                 log.exception("event=browser_start_failed")
 
     async def close(self) -> None:
+        self._closed = True
+        for task in tuple(self._tasks):
+            task.cancel()
         async with self._lock:
             await self._shutdown()
             await self._proxy.close()
@@ -376,7 +388,13 @@ class BrowserRenderer:
             try:
                 await self._bounded(self._visit(page, url, budget, seen), budget + 0.5)
             except (TimeoutError, PlaywrightError) as exc:
-                seen.fail(_classify(exc, self._proxy.blocked - proxy_blocked_before))
+                # 서버 리다이렉트 끝을 프록시가 막으면 오류 문구가 대상마다 다르다. 하위 자원이
+                # 막힌 것과 섞지 않도록, 메인 프레임이 마지막으로 요청한 주소가 금지인지로 가린다.
+                last = seen.navigation_requests[-1] if seen.navigation_requests else None
+                if last is not None and not self._url_allowed(last):
+                    seen.blocked_navigation = True
+                else:
+                    seen.fail(_classify(exc))
             if seen.blocked_navigation:
                 seen.fail("browser_blocked_navigation")
             final_url, html = await self._snapshot(page, seen)
@@ -394,7 +412,7 @@ class BrowserRenderer:
                     await self._bounded(context.close(), CLOSE_TIMEOUT_SECONDS)
                 except Exception:  # noqa: BLE001
                     self._broken = True
-            if seen.crashed:
+            if seen.crashed or seen.blocked or "browser_timeout" in seen.failures:
                 self._broken = True
             needs_restart = not self._healthy()
             self._lock.release()
