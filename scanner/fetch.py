@@ -51,7 +51,8 @@ DEFAULT_HEADERS = {
 
 Resolver = Callable[[str], Awaitable[list[str]]]
 
-_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+# 태그 이름만 소문자로 바꾼다. str.lower() 는 일부 글자의 길이를 바꿔 위치가 어긋난다.
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 
 async def default_resolve(host: str) -> list[str]:
@@ -101,10 +102,18 @@ async def address_blocked(host: str, resolve: Resolver) -> bool:
 
 
 def extract_title(html: str) -> str | None:
-    match = _TITLE_RE.search(html)
-    if not match:
+    # 정규식으로 찾으면 닫히지 않은 <title 이 반복된 페이지에서 시간이 길이의 제곱으로 는다.
+    lower = html.translate(_ASCII_LOWER)
+    opening = lower.find("<title")
+    if opening < 0:
         return None
-    title = re.sub(r"\s+", " ", match.group(1)).strip()
+    body_start = lower.find(">", opening) + 1
+    if body_start == 0:
+        return None
+    body_end = lower.find("</title>", body_start)
+    if body_end < 0:
+        return None
+    title = re.sub(r"\s+", " ", html[body_start:body_end]).strip()
     return title or None
 
 
@@ -303,7 +312,13 @@ async def _collect(
             try:
                 location = response.headers.get("location")
                 if response.status_code in REDIRECT_STATUSES and location:
-                    current = urljoin(current, location)
+                    try:
+                        current = urljoin(current, location)
+                    except ValueError:
+                        return _result(
+                            url, chain, final_url=current, elapsed_start=start,
+                            failures=("invalid_url",),
+                        )
                     chain.append(current)
                     continue
 
