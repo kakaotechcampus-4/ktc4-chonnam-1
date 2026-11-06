@@ -12,12 +12,23 @@
 전체 분석이 죽으면 안 된다.
 """
 
-from scanner.fetch import HTML_LIMIT_BYTES
-from scanner.models import BrowserResult, CollectResult
+import re
 
-MAX_NAVIGATIONS = 10
-MAX_NAVIGATION_REQUESTS = 20
-MAX_DOWNLOADS = 5
+from scanner.fetch import HTML_LIMIT_BYTES, MAX_REDIRECTS
+from scanner.models import (
+    BROWSER_TRIGGERS,
+    MAX_DOWNLOADS,
+    MAX_NAVIGATION_REQUESTS,
+    MAX_NAVIGATIONS,
+    MAX_TITLE_CHARS,
+    MAX_URL_CHARS,
+    BrowserResult,
+    CollectResult,
+)
+
+MAX_FAILURES = 32
+# 실패 코드는 로그에 그대로 찍히므로 줄바꿈 등 다른 글자가 들어오면 버린다.
+_FAILURE_CODE = re.compile(r"[a-z0-9_]{1,64}")
 
 # failures 에 이 모듈이 추가로 쓰는 값:
 # - invalid_response: data가 dict가 아니거나, 응답에 input_url이 없음
@@ -49,6 +60,28 @@ def _as_str_tuple_capped(value: object, cap: int) -> tuple[str, ...]:
     return _as_str_tuple(value)[:cap]
 
 
+def _as_url(value: object) -> str | None:
+    text = _as_str(value)
+    return text[:MAX_URL_CHARS] if text is not None else None
+
+
+def _as_urls(value: object, cap: int) -> tuple[str, ...]:
+    return tuple(url[:MAX_URL_CHARS] for url in _as_str_tuple_capped(value, cap))
+
+
+def _as_title(value: object) -> str | None:
+    text = _as_str(value)
+    return text[:MAX_TITLE_CHARS] if text is not None else None
+
+
+def _as_failures(value: object) -> list[str]:
+    reported = _as_str_tuple(value)
+    failures = [code for code in reported if _FAILURE_CODE.fullmatch(code)][:MAX_FAILURES]
+    if len(failures) != len(reported):
+        failures.append("invalid_response")
+    return failures
+
+
 def _parse_browser(value: object) -> BrowserResult | None:
     """`browser` 필드를 읽는다. 없거나 null 이면 3단계를 돌리지 않은 것(None)이다.
 
@@ -63,24 +96,28 @@ def _parse_browser(value: object) -> BrowserResult | None:
             trigger="", final_url=None, navigation_chain=(), html="", title=None,
             downloads=(), blocked_requests=0, elapsed_ms=0, failures=("invalid_response",),
         )
-    failures = list(_as_str_tuple(value.get("failures")))
+    failures = _as_failures(value.get("failures"))
     html, truncated = _truncate_html(_as_str(value.get("html")) or "", HTML_LIMIT_BYTES)
     if truncated and "html_truncated" not in failures:
         failures.append("html_truncated")
     requests = value.get("navigation_requests")
-    navigation_requests = None if requests is None else _as_str_tuple(requests)
-    if navigation_requests is not None and len(navigation_requests) > MAX_NAVIGATION_REQUESTS:
+    if not isinstance(requests, list) and "invalid_response" not in failures:
+        # 이동 요청 기록이 없으면 HTTP 경유를 대조할 수 없다.
+        failures.append("invalid_response")
+    navigation_requests = _as_urls(requests, MAX_NAVIGATION_REQUESTS + 1)
+    if len(navigation_requests) > MAX_NAVIGATION_REQUESTS:
         # 잘라낸 뒤쪽을 대조하지 못하므로 조용히 버리지 않고 실패로 남긴다.
         navigation_requests = navigation_requests[:MAX_NAVIGATION_REQUESTS]
         if "browser_navigation_limit" not in failures:
             failures.append("browser_navigation_limit")
+    trigger = _as_str(value.get("trigger")) or ""
     return BrowserResult(
-        trigger=_as_str(value.get("trigger")) or "",
-        final_url=_as_str(value.get("final_url")),
-        navigation_chain=_as_str_tuple_capped(value.get("navigation_chain"), MAX_NAVIGATIONS),
+        trigger=trigger if trigger in BROWSER_TRIGGERS else "unknown",
+        final_url=_as_url(value.get("final_url")),
+        navigation_chain=_as_urls(value.get("navigation_chain"), MAX_NAVIGATIONS),
         html=html,
-        title=_as_str(value.get("title")),
-        downloads=_as_str_tuple_capped(value.get("downloads"), MAX_DOWNLOADS),
+        title=_as_title(value.get("title")),
+        downloads=_as_urls(value.get("downloads"), MAX_DOWNLOADS),
         blocked_requests=_as_int(value.get("blocked_requests")) or 0,
         elapsed_ms=_as_int(value.get("elapsed_ms")) or 0,
         failures=tuple(failures),
@@ -144,7 +181,7 @@ def parse_collect_response(expected_url: str, data: dict) -> CollectResult:
     if reported_url != expected_url:
         return _invalid(expected_url, "url_mismatch")
 
-    failures = list(_as_str_tuple(data.get("failures")))
+    failures = _as_failures(data.get("failures"))
 
     html = _as_str(data.get("html")) or ""
     html, truncated = _truncate_html(html, HTML_LIMIT_BYTES)
@@ -153,12 +190,12 @@ def parse_collect_response(expected_url: str, data: dict) -> CollectResult:
 
     return CollectResult(
         input_url=expected_url,
-        final_url=_as_str(data.get("final_url")),
-        redirect_chain=_as_str_tuple(data.get("redirect_chain")),
+        final_url=_as_url(data.get("final_url")),
+        redirect_chain=_as_urls(data.get("redirect_chain"), MAX_REDIRECTS + 1),
         status_code=_as_int(data.get("status_code")),
-        content_type=_as_str(data.get("content_type")),
+        content_type=_as_title(data.get("content_type")),
         html=html,
-        title=_as_str(data.get("title")),
+        title=_as_title(data.get("title")),
         elapsed_ms=_as_int(data.get("elapsed_ms")) or 0,
         failures=tuple(failures),
         browser=_parse_browser(data.get("browser")),

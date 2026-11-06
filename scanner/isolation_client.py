@@ -5,6 +5,7 @@
 응답 스키마 검증 및 CollectResult 변환은 별도 파서에 위임한다.
 """
 
+import asyncio
 import json
 import os
 import ssl
@@ -73,17 +74,22 @@ async def collect_url_isolated(
 
     try:
         try:
-            async with client.stream(
+            # httpx 의 timeout 은 읽기 한 번마다 다시 잰다. 조금씩 흘려 보내는 응답도 17초에 끊는다.
+            async with asyncio.timeout(ISOLATION_TIMEOUT_SECONDS), client.stream(
                 "POST",
                 endpoint,
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
                     "Accept": "application/json",
+                    "Accept-Encoding": "identity",
                 },
                 json={"url": url},
             ) as response:
                 response.raise_for_status()
+                if response.headers.get("content-encoding", "identity").lower() != "identity":
+                    # 압축을 풀기 전에는 크기를 알 수 없다.
+                    raise IsolationClientError("격리환경 API 응답이 압축되어 있습니다.")
 
                 chunks = []
                 total_bytes = 0
@@ -100,7 +106,7 @@ async def collect_url_isolated(
 
                 raw_body = b"".join(chunks)
 
-        except httpx.TimeoutException as exc:
+        except (TimeoutError, httpx.TimeoutException) as exc:
             raise IsolationClientError(
                 "격리환경 API 요청 시간 초과"
             ) from exc
@@ -118,7 +124,7 @@ async def collect_url_isolated(
 
         try:
             data = json.loads(raw_body.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
             raise IsolationClientError(
                 "격리환경 API 응답이 유효한 UTF-8 JSON이 아닙니다."
             ) from exc

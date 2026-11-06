@@ -1,23 +1,73 @@
 """Run inside the offline browser container: python /app/verify.py."""
+import ctypes
 import json
 import errno
 import os
 import socket
+import ssl
+import subprocess
+import time
 from pathlib import Path
 
-from collector.policy import NetworkPolicy, load_allowed_hosts
+from collector.policy import NetworkPolicy, parse_list
+
+
+IO_URING_SETUP_X86_64 = 425
+
+
+def public_policy():
+    if os.getenv("COLLECTOR_NETWORK_MODE", "allowlist") != "public":
+        return None
+    return NetworkPolicy(
+        mode="public",
+        protected_hosts=parse_list(os.getenv("COLLECTOR_PROTECTED_HOSTS", "")),
+        protected_ips=parse_list(os.getenv("COLLECTOR_PROTECTED_IPS", "")),
+    )
 
 
 def blocked_probe_addresses():
     targets = ("169.254.169.254", "10.0.1.1")
-    if os.getenv("COLLECTOR_NETWORK_MODE", "allowlist") == "public":
-        policy = NetworkPolicy(
-            mode="public",
-            protected_hosts=load_allowed_hosts(os.getenv("COLLECTOR_PROTECTED_HOSTS", "")),
-            protected_ips=load_allowed_hosts(os.getenv("COLLECTOR_PROTECTED_IPS", "")),
-        )
+    policy = public_policy()
+    if policy:
         return (*targets, *sorted(policy.protected_ips))
     return (*targets, "1.1.1.1")
+
+
+def addresses_outside(answers, protected):
+    return [address for address in dict.fromkeys(answers) if address not in protected]
+
+
+def days_until_expiry(not_after, now):
+    return (ssl.cert_time_to_seconds(not_after) - now) / 86400
+
+
+def check_kernel_surface():
+    libc = ctypes.CDLL(None, use_errno=True)
+    params = ctypes.create_string_buffer(120)
+    assert libc.syscall(IO_URING_SETUP_X86_64, 1, params) == -1, "io_uring_setup is allowed"
+    assert ctypes.get_errno() in (errno.EPERM, errno.ENOSYS), ctypes.get_errno()
+    probe = Path("/tmp/exec-probe.sh")
+    probe.write_text("#!/bin/sh\nexit 0\n")
+    probe.chmod(0o700)
+    try:
+        subprocess.run([str(probe)], check=False)
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("/tmp allows exec")
+    finally:
+        probe.unlink()
+
+
+def check_certificate_and_protected_hosts(policy):
+    not_after = ssl._ssl._test_decode_cert("/run/secrets/collector_cert")["notAfter"]
+    assert days_until_expiry(not_after, time.time()) > 14, f"TLS certificate expires {not_after}"
+    if policy is None:
+        return
+    for host in sorted(policy.protected_hosts):
+        answers = [info[4][0] for info in socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)]
+        outside = addresses_outside(answers, policy.protected_ips)
+        assert not outside, f"{host} resolves outside COLLECTOR_PROTECTED_IPS: {outside}"
 
 
 def main():
@@ -35,6 +85,8 @@ def main():
         assert error.errno == errno.EROFS, error
     else:
         raise AssertionError("root filesystem is writable")
+    check_kernel_surface()
+    check_certificate_and_protected_hosts(public_policy())
     for address in blocked_probe_addresses():
         try:
             socket.create_connection((address, 443), timeout=1).close()

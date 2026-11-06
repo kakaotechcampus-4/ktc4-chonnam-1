@@ -2,14 +2,14 @@
 
 import asyncio
 import ipaddress
-import os
 import re
 import socket
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from urllib.parse import urlsplit
 
-MAX_URL_LENGTH = 2048
+from scanner.models import MAX_URL_CHARS
+
 HOST_PATTERN = re.compile(r"(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(?:\.(?!-)[a-z0-9-]{1,63}(?<!-))+")
 Resolver = Callable[[str], Awaitable[list[str]]]
 
@@ -19,9 +19,8 @@ async def default_resolve(host: str) -> list[str]:
     return [info[4][0] for info in infos]
 
 
-def load_allowed_hosts(raw: str | None = None) -> frozenset[str]:
-    """`COLLECTOR_ALLOWED_HOSTS`(쉼표 구분)를 소문자·끝 점 제거한 집합으로 읽는다."""
-    raw = os.getenv("COLLECTOR_ALLOWED_HOSTS", "") if raw is None else raw
+def parse_list(raw: str) -> frozenset[str]:
+    """쉼표로 구분한 호스트나 IP 목록을 소문자, 끝 점 제거한 집합으로 읽는다."""
     return frozenset(
         host.strip().lower().rstrip(".") for host in raw.split(",") if host.strip()
     )
@@ -34,7 +33,7 @@ def is_allowed_url(url: str, allowed_hosts: frozenset[str]) -> bool:
     호스트가 맞아 보여도 거부한다. 숫자·16진수 IP 표기는 허용 목록의 호스트명과
     일치하지 않으므로 따로 처리하지 않아도 거부된다.
     """
-    if not url or len(url) > MAX_URL_LENGTH or "\\" in url:
+    if not url or len(url) > MAX_URL_CHARS or "\\" in url:
         return False
     if any(ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in url):
         return False

@@ -31,10 +31,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from collector.policy import MAX_URL_LENGTH, NetworkPolicy, load_allowed_hosts
+from collector.policy import NetworkPolicy, parse_list
 from collector.egress_proxy import EgressProxy
 from scanner.fetch import collect_url
-from scanner.models import BrowserResult, CollectResult
+from scanner.models import MAX_TITLE_CHARS, MAX_URL_CHARS, BrowserResult, CollectResult
 
 MAX_REQUEST_BYTES = 4096
 # 메인 서버는 1 MiB를 넘는 응답을 버린다. JSON 이스케이프로 커지는 몫을 두고 줄인다.
@@ -46,7 +46,6 @@ DEFAULT_FETCH_RETRY_TIMEOUT_SECONDS = 5.0
 DEFAULT_BROWSER_TIMEOUT_SECONDS = 6.0
 BACKSTOP_EXTRA_SECONDS = 3.0
 BROWSER_MODES = ("off", "auto", "always")
-MAX_TITLE_CHARS = 300
 MIN_TOKEN_LENGTH = 32
 
 Collect = Callable[..., Awaitable[CollectResult]]
@@ -76,10 +75,17 @@ def encode_result(result: CollectResult, limit: int = MAX_RESPONSE_BYTES) -> byt
     def short(title: str | None) -> str | None:
         return title[:MAX_TITLE_CHARS] if title else title
 
+    def short_url(url: str | None) -> str | None:
+        return url[:MAX_URL_CHARS] if url else url
+
     browser = result.browser
     if browser is not None:
-        browser = replace(browser, title=short(browser.title))
-    result = replace(result, title=short(result.title), browser=browser)
+        browser = replace(browser, title=short(browser.title), final_url=short_url(browser.final_url))
+    # 리다이렉트 Location 은 2048자를 넘을 수 있다. HTML 을 다 비워도 상한을 넘지 않게 자른다.
+    result = replace(
+        result, title=short(result.title), final_url=short_url(result.final_url),
+        redirect_chain=tuple(short_url(url) for url in result.redirect_chain), browser=browser,
+    )
 
     while True:
         body = json.dumps(asdict(result), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -105,7 +111,8 @@ def _host_for_log(url: str) -> str:
 
 async def _read_body(request: Request) -> bytes | None:
     declared = request.headers.get("content-length")
-    if declared is not None and (not declared.isdigit() or int(declared) > MAX_REQUEST_BYTES):
+    if declared is not None and (not (declared.isascii() and declared.isdigit())
+                                 or int(declared) > MAX_REQUEST_BYTES):
         return None
     body = bytearray()
     async for chunk in request.stream():
@@ -123,7 +130,7 @@ def _parse_url(body: bytes) -> str | None:
     if not isinstance(data, dict) or set(data) != {"url"}:
         return None
     url = data["url"]
-    if not isinstance(url, str) or not url or len(url) > MAX_URL_LENGTH:
+    if not isinstance(url, str) or not url or len(url) > MAX_URL_CHARS:
         return None
     return url
 
@@ -131,7 +138,7 @@ def _parse_url(body: bytes) -> str | None:
 def create_app(
     *,
     token: str,
-    allowed_hosts: frozenset[str],
+    network_policy: NetworkPolicy,
     max_concurrency: int = 1,
     fetch_timeout: float = DEFAULT_FETCH_TIMEOUT_SECONDS,
     fetch_retry_timeout: float = DEFAULT_FETCH_RETRY_TIMEOUT_SECONDS,
@@ -140,18 +147,12 @@ def create_app(
     renderer: Renderer | None = None,
     trigger: Callable[[CollectResult], str | None] | None = None,
     collect: Collect = collect_url,
-    network_policy: NetworkPolicy | None = None,
     egress_proxy: EgressProxy | None = None,
 ) -> Starlette:
     if len(token) < MIN_TOKEN_LENGTH:
         raise RuntimeError("수집 토큰이 너무 짧습니다")
-    try:
-        policy = network_policy or NetworkPolicy(allowed_hosts=allowed_hosts)
-    except ValueError as exc:
-        raise RuntimeError(str(exc)) from exc
-    proxy = egress_proxy
-    if policy.mode == "public" and proxy is None:
-        proxy = EgressProxy(policy.host_allowed, connect_ip=policy.connect_ip)
+    policy = network_policy
+    proxy = egress_proxy or EgressProxy(policy.host_allowed, connect_ip=policy.connect_ip)
 
     if browser_mode not in BROWSER_MODES:
         raise RuntimeError(f"COLLECTOR_BROWSER 는 {BROWSER_MODES} 중 하나여야 합니다")
@@ -163,25 +164,19 @@ def create_app(
     backstop = (fetch_timeout + fetch_retry_timeout
                 + (browser_timeout if browser_mode != "off" else 0) + BACKSTOP_EXTRA_SECONDS)
 
-    def url_allowed(url: str) -> bool:
-        return policy.url_allowed(url)
-
     async def fetch_with_retry(url: str, **options) -> CollectResult:
-        fetched = await collect(url, timeout=fetch_timeout, url_allowed=url_allowed, **options)
+        fetched = await collect(url, timeout=fetch_timeout, url_allowed=policy.url_allowed, **options)
         if fetched.failures != ("timeout",):
             return fetched
         log.info("event=fetch_retry host=%s", _host_for_log(url))
-        return await collect(url, timeout=fetch_retry_timeout, url_allowed=url_allowed, **options)
+        return await collect(url, timeout=fetch_retry_timeout, url_allowed=policy.url_allowed, **options)
 
     async def run_stages(url: str) -> CollectResult:
-        if policy.mode == "public":
-            await proxy.start()
-            # Both stages use this CONNECT proxy. No environment proxies or TLS bypass.
-            async with httpx.AsyncClient(proxy=proxy.url, trust_env=False) as client:
-                fetched = await fetch_with_retry(
-                    url, client=client, resolve=policy.resolve, allow_insecure_retry=False)
-        else:
-            fetched = await fetch_with_retry(url)
+        await proxy.start()
+        # 두 단계 모두 이 CONNECT 프록시로만 나간다. 환경변수 프록시와 TLS 검증 끄기는 쓰지 않는다.
+        async with httpx.AsyncClient(proxy=proxy.url, trust_env=False) as client:
+            fetched = await fetch_with_retry(
+                url, client=client, resolve=policy.resolve, allow_insecure_retry=False)
         if browser_mode == "off":
             return fetched
         reason = "always" if browser_mode == "always" else trigger(fetched)
@@ -195,7 +190,7 @@ def create_app(
 
         given = request.headers.get("authorization", "").encode()
         if not hmac.compare_digest(given, expected_auth):
-            log.warning("event=auth_rejected")
+            log.warning("event=auth_rejected peer=%s", request.client.host if request.client else "-")
             return JSONResponse({"error": "unauthorized"}, status_code=401)
 
         body = await _read_body(request)
@@ -205,7 +200,7 @@ def create_app(
         if url is None:
             return JSONResponse({"error": "invalid_request"}, status_code=400)
 
-        if not url_allowed(url):
+        if not policy.url_allowed(url):
             result = _failed(url, "blocked_address")
         elif active >= max_concurrency:
             log.warning("event=busy host=%s", _host_for_log(url))
@@ -238,8 +233,7 @@ def create_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
-        if proxy is not None:
-            await proxy.start()
+        await proxy.start()
         if renderer is not None and browser_mode != "off":
             await renderer.start()
         try:
@@ -247,8 +241,7 @@ def create_app(
         finally:
             if renderer is not None:
                 await renderer.close()
-            if proxy is not None:
-                await proxy.close()
+            await proxy.close()
 
     return Starlette(routes=[Route("/collect", collect_endpoint, methods=["POST"])], lifespan=lifespan)
 
@@ -257,11 +250,11 @@ def create_app_from_env() -> Starlette:
     """uvicorn `--factory` 진입점. 토큰은 파일, 나머지는 환경변수에서 읽는다."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     token_file = os.getenv("COLLECTOR_TOKEN_FILE", "/run/secrets/collect_token")
-    allowed_hosts = load_allowed_hosts()
     policy = NetworkPolicy(
-        mode=os.getenv("COLLECTOR_NETWORK_MODE", "allowlist"), allowed_hosts=allowed_hosts,
-        protected_hosts=load_allowed_hosts(os.getenv("COLLECTOR_PROTECTED_HOSTS", "")),
-        protected_ips=load_allowed_hosts(os.getenv("COLLECTOR_PROTECTED_IPS", "")),
+        mode=os.getenv("COLLECTOR_NETWORK_MODE", "allowlist"),
+        allowed_hosts=parse_list(os.getenv("COLLECTOR_ALLOWED_HOSTS", "")),
+        protected_hosts=parse_list(os.getenv("COLLECTOR_PROTECTED_HOSTS", "")),
+        protected_ips=parse_list(os.getenv("COLLECTOR_PROTECTED_IPS", "")),
     )
     proxy = EgressProxy(policy.host_allowed, connect_ip=policy.connect_ip)
     browser_mode = os.getenv("COLLECTOR_BROWSER", "auto")
@@ -279,7 +272,6 @@ def create_app_from_env() -> Starlette:
         trigger = browser_trigger
     return create_app(
         token=Path(token_file).read_text(encoding="utf-8").strip(),
-        allowed_hosts=allowed_hosts,
         max_concurrency=int(os.getenv("COLLECTOR_MAX_CONCURRENCY", "1")),
         fetch_timeout=float(os.getenv("COLLECTOR_FETCH_TIMEOUT_SECONDS", str(DEFAULT_FETCH_TIMEOUT_SECONDS))),
         fetch_retry_timeout=float(

@@ -249,3 +249,35 @@ class TestFailuresHandling:
         ))
 
         assert result.failures == ("tls_cert_verify_failed", "html_truncated")
+
+
+class TestUntrustedFieldsAreCapped:
+    def test_strings_and_lists_are_capped(self):
+        long_url = "https://a.example/" + "x" * 5000
+        parsed = parse_collect_response(URL, _full_response(
+            final_url=long_url, title="t" * 1000, redirect_chain=[long_url] * 50,
+        ))
+        assert len(parsed.final_url) == 2048
+        assert len(parsed.title) == 300
+        assert len(parsed.redirect_chain) == 6
+        assert all(len(hop) == 2048 for hop in parsed.redirect_chain)
+
+    def test_unexpected_failure_codes_are_not_passed_on(self):
+        parsed = parse_collect_response(URL, _full_response(
+            failures=["timeout", "x\ninjected=1", "y" * 500] + ["blocked_address"] * 100,
+        ))
+        assert parsed.failures[:2] == ("timeout", "blocked_address")
+        assert "invalid_response" in parsed.failures
+        assert all("\n" not in f and len(f) <= 64 for f in parsed.failures)
+        assert len(parsed.failures) <= 33
+
+    def test_unknown_browser_trigger_is_replaced(self):
+        parsed = parse_collect_response(URL, _full_response(
+            browser={"trigger": "always\nfake=1", "navigation_requests": []},
+        ))
+        assert parsed.browser.trigger == "unknown"
+
+    def test_browser_without_navigation_requests_is_a_failure(self):
+        parsed = parse_collect_response(URL, _full_response(browser={"trigger": "always"}))
+        assert parsed.browser.navigation_requests == ()
+        assert "invalid_response" in parsed.browser.failures
