@@ -21,6 +21,10 @@ set +a
 python3 render-egress.py /opt/ktc-isolation
 sha256sum compose.egress.yaml egress-ips.txt >> image-record.txt
 systemctl restart ktc-isolation-firewall
-docker compose -f compose.yaml -f compose.egress.yaml --env-file .env --env-file collector.env \
-    up -d --force-recreate
+systemctl restart ktc-isolation-collector
+systemctl start ktc-isolation-recreate.timer ktc-isolation-health.timer
+for _ in $(seq 60); do
+    [ "$(docker inspect --format '{{.State.Running}}' ktc-isolation-browser 2>/dev/null)" = true ] && break
+    sleep 1
+done
 timeout 30 docker exec ktc-isolation-browser python /app/verify.py

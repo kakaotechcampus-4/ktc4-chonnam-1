@@ -31,9 +31,15 @@ sshd -t
 systemctl reload ssh
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl
+apt-get install -y ca-certificates curl gnupg
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+docker_key=$(gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc | awk -F: '$1 == "fpr" {print $10; exit}')
+if [ "$docker_key" != 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 ]; then
+    rm -f /etc/apt/keyrings/docker.asc
+    echo "unexpected Docker apt key fingerprint: $docker_key" >&2
+    exit 1
+fi
 chmod a+r /etc/apt/keyrings/docker.asc
 cat > /etc/apt/sources.list.d/docker.sources <<EOF
 Types: deb
@@ -69,7 +75,64 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
+# compose.yaml 은 restart: "no" 다. 컨테이너는 방화벽이 성공한 뒤에만 이 유닛이 띄운다.
+cat > /etc/systemd/system/ktc-isolation-collector.service <<'EOF'
+[Unit]
+Description=KTC isolation collector container
+After=ktc-isolation-firewall.service docker.service
+Requires=ktc-isolation-firewall.service docker.service
+ConditionPathExists=/opt/ktc-isolation/.env
+
+[Service]
+WorkingDirectory=/opt/ktc-isolation
+ExecStart=/usr/bin/docker compose -f compose.yaml -f compose.egress.yaml --env-file .env --env-file collector.env up --force-recreate --abort-on-container-exit
+ExecStop=/usr/bin/docker compose -f compose.yaml -f compose.egress.yaml --env-file .env --env-file collector.env down
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+cat > /etc/systemd/system/ktc-isolation-recreate.service <<'EOF'
+[Unit]
+Description=Recreate the KTC isolation collector container
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart ktc-isolation-collector
+EOF
+cat > /etc/systemd/system/ktc-isolation-recreate.timer <<'EOF'
+[Unit]
+Description=Daily KTC isolation collector recreation
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+cat > /etc/systemd/system/ktc-isolation-health.service <<'EOF'
+[Unit]
+Description=Restart the KTC isolation collector when unhealthy
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/ktc-isolation/health-restart.sh
+EOF
+cat > /etc/systemd/system/ktc-isolation-health.timer <<'EOF'
+[Unit]
+Description=KTC isolation collector health check
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
+EOF
 systemctl daemon-reload
 # Start only after image installation and direct SSH verification.
-systemctl enable ktc-isolation-firewall
+systemctl enable ktc-isolation-firewall ktc-isolation-collector ktc-isolation-recreate.timer ktc-isolation-health.timer
 docker version --format '{{.Server.Version}}'
