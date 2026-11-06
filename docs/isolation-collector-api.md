@@ -206,7 +206,7 @@ Content-Type: application/json
    ```bash
    python3 infra/isolation/check-egress-ips.py --print infra/isolation/egress-hosts.example
    ```
-4. 토큰과 인증서를 만든다. 출력된 값은 6번에서 Render 에 넣는다.
+4. 토큰과 인증서를 만든다. 출력된 값은 8번에서 Render 에 넣는다.
    ```bash
    sudo bash /opt/ktc-isolation/make-secrets.sh <격리 서버 공인 IP>
    ```
@@ -219,7 +219,31 @@ Content-Type: application/json
    ```bash
    sudo bash /opt/ktc-isolation/build.sh
    ```
-7. Render 에 6절의 환경변수 세 개를 넣는다.
+8. Render 에 6절의 환경변수 세 개를 넣는다.
+
+### 이미 돌아가는 서버에 다시 올리기
+
+토큰, 인증서, `collector.env`, `egress-hosts` 는 서버에 있는 것을 그대로 쓴다. 위의 3~5번과 8번은 하지 않는다. 특히 `make-secrets.sh` 를 다시 돌리면 토큰과 인증서가 바뀌어 Render 가 접속하지 못한다.
+
+1. 노트북에서 이미지를 만들어 파일로 저장한다. 서버는 바깥으로 나갈 수 없어 서버에서 빌드하지 않는다.
+   ```bash
+   bash infra/isolation/prepare.sh
+   docker build --platform linux/amd64 -t ktc-isolation:approved infra/isolation
+   docker save ktc-isolation:approved -o ktc-isolation.tar
+   ```
+2. 이미지 파일을 서버의 `/tmp/ktc-isolation.tar` 로, `infra/isolation/` 를 서버로 옮긴다(`ssh ktc-isolation` 이나 `connect.ps1` 경로). `/opt/ktc-isolation/` 에 덮어쓰되 `collector.env`, `egress-hosts`, `secrets/`, `.env` 는 덮어쓰지 않는다. 저장소에서 지운 `stub_api.py`, `ktc-isolation-stub.service` 는 서버에서도 지운다.
+3. 되돌릴 때 쓸 지금 이미지 ID 를 적어 둔다.
+   ```bash
+   sudo docker inspect ktc-isolation-browser --format '{{.Image}}' | sudo tee /opt/ktc-isolation/previous-image.txt
+   ```
+4. 유닛을 설치하고(위 6번), 옮긴 이미지로 띄운다. `build.sh` 가 방화벽, 컨테이너, 타이머를 차례로 켜고 `verify.py` 를 돌린다.
+   ```bash
+   sudo bash /opt/ktc-isolation/install-units.sh
+   sudo IMAGE_TAR=/tmp/ktc-isolation.tar bash /opt/ktc-isolation/build.sh
+   ```
+5. 아래 8절 확인 목록과 챗봇으로 공식 링크(✅), 가짜 주소(🔎)를 확인한다.
+
+되돌리기: `.env` 의 `ISOLATION_IMAGE` 를 `previous-image.txt` 의 값으로 바꾸고 `sudo systemctl restart ktc-isolation-collector` 를 실행한다. 새 유닛이 뜨지 않으면 `sudo systemctl disable --now ktc-isolation-collector` 뒤에 예전처럼 `docker compose -f compose.yaml -f compose.egress.yaml --env-file .env --env-file collector.env up -d` 로 띄운다.
 
 ## 8. EC2 확인 목록
 
