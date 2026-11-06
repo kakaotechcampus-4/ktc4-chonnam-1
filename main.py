@@ -185,8 +185,7 @@ def create_analysis_job(
 
     print(
         f"[JOB CREATED] "
-        f"job_id={job_id} "
-        f"user={user_id}"
+        f"job_id={job_id}"
     )
 
     return job_id
@@ -731,7 +730,7 @@ def handle_case_answer(
         return kakao_response(_CASE_NOT_FOUND_TEXT)
 
     if option_id not in _MESSAGE_QUESTION_OPTIONS.get(question_id, ()):
-        print(f"[MESSAGE ANSWER IGNORED] question={question_id} option={option_id}")
+        print("[MESSAGE ANSWER IGNORED] reason=unsupported_option")
         return kakao_response(_CASE_NOT_FOUND_TEXT)
 
     return handle_message_answer(case_id, question_id, option_id, user_id)
@@ -839,7 +838,7 @@ async def download_voice_media(url: str) -> tuple[str, int]:
     host = media_host(media_url := url)
 
     if not is_allowed_media_url(url):
-        print(f"[VOICE DOWNLOAD REJECTED] host={host}")
+        print("[VOICE DOWNLOAD REJECTED] reason=not_allowed")
         raise MediaDownloadBlocked("허용되지 않은 다운로드 주소")
 
     await assert_resolves_to_public_ip(host)
@@ -875,8 +874,23 @@ async def download_voice_media(url: str) -> tuple[str, int]:
         os.remove(path)
         raise invalid_audio("녹음 파일이 비어 있어요")
 
-    print(f"[VOICE DOWNLOAD OK] host={host} size={total}")
+    print(f"[VOICE DOWNLOAD OK] size={total}")
     return path, total
+
+
+def _log_voice_stage(job_id: str | None, stage: str, status: str, started: float, **summary) -> None:
+    """호출부에서 고른 고정 코드·숫자만 기록한다. 원문·예외 메시지는 넘기지 않는다."""
+    details = " ".join(f"{key}={value}" for key, value in summary.items())
+    print(
+        f"[VOICE STAGE] job_id={job_id or 'none'} stage={stage} status={status} "
+        f"elapsed_s={time.monotonic() - started:.3f}" + (f" {details}" if details else "")
+    )
+
+
+def _voice_failure_card(job_id: str | None, card: str, started: float, reason_line: str = "") -> dict:
+    result = render_card(card, {"reason_line": reason_line})
+    _log_voice_stage(job_id, "card", "completed", started, card=card)
+    return result
 
 
 async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
@@ -895,14 +909,19 @@ async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
     try:
         path, _size = await download_voice_media(media_url)
     except VoiceInputRejected as error:
-        return render_card(error.card, {"reason_line": error.reason_line})
+        _log_voice_stage(job_id, "download", "rejected", started)
+        return _voice_failure_card(job_id, error.card, started, error.reason_line)
     except asyncio.CancelledError:
+        _log_voice_stage(job_id, "download", "cancelled", started)
         raise
     except Exception as error:
+        _log_voice_stage(job_id, "download", "failed", started, error=type(error).__name__)
         print(f"[VOICE ANALYSIS ERROR] download failed: {type(error).__name__}")
         # Download failures have a user-facing R4 result even for callback Jobs.
         # Never forward a network exception containing the signed media URL.
-        return render_card("r4-unavailable")
+        return _voice_failure_card(job_id, "r4-unavailable", started)
+
+    _log_voice_stage(job_id, "download", "completed", started, bytes=_size)
 
     try:
         try:
@@ -913,7 +932,7 @@ async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
             print(f"[VOICE ANALYSIS ERROR] read failed: {type(error).__name__}")
             if job_id is not None:
                 raise RuntimeError("음성 파일 읽기 실패") from error
-            return render_card("r4-unavailable")
+            return _voice_failure_card(job_id, "r4-unavailable", started)
     finally:
         # 녹음 원본은 바이트로 읽은 즉시 지운다(분석 단계로 넘기지 않는다).
         try:
@@ -927,20 +946,30 @@ async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
             max_seconds=MAX_VOICE_DURATION_SECONDS,
         )
     except VoiceInputRejected as error:
-        return render_card(error.card, {"reason_line": error.reason_line})
+        _log_voice_stage(job_id, "validation", "rejected", started)
+        return _voice_failure_card(job_id, error.card, started, error.reason_line)
 
     # transcribe_call()·analyze_call()은 계약상 CancelledError만 올리고
     # 그 외 실패는 예외 대신 실패 결과로 돌려준다(ai.case) — 외부 함수라
     # 그래도 방어적으로 감싼다.
+    stt_started = time.monotonic()
     try:
         transcript = await transcribe_call(audio_bytes, filename)
     except asyncio.CancelledError:
+        _log_voice_stage(job_id, "stt", "cancelled", stt_started)
         raise
     except Exception as error:
+        _log_voice_stage(job_id, "stt", "failed", stt_started, error=type(error).__name__)
         print(f"[VOICE ANALYSIS ERROR] transcribe failed: {type(error).__name__}")
         if job_id is not None:
             raise RuntimeError("음성 받아쓰기 실패") from error
-        return render_card("r4-unavailable")
+        return _voice_failure_card(job_id, "r4-unavailable", started)
+
+    _log_voice_stage(
+        job_id, "stt", "failed" if transcript.failure else "completed", stt_started,
+        failure=transcript.failure.value if transcript.failure else "none",
+        segments=len(transcript.segments), chars=sum(len(segment.text) for segment in transcript.segments),
+    )
 
     elapsed = time.monotonic() - started
     remaining_budget = VOICE_ANALYZE_BUDGET_S - elapsed
@@ -952,22 +981,39 @@ async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
         remaining_budget if remaining_budget >= VOICE_MIN_ANALYZE_BUDGET_S else 0.0
     )
 
+    analysis_started = time.monotonic()
     try:
         result = await analyze_call(transcript, time_budget_s=analyze_budget)
     except asyncio.CancelledError:
+        _log_voice_stage(job_id, "analysis", "cancelled", analysis_started)
         raise
     except Exception as error:
+        _log_voice_stage(job_id, "analysis", "failed", analysis_started, error=type(error).__name__)
         print(f"[VOICE ANALYSIS ERROR] analyze failed: {type(error).__name__}")
         if job_id is not None:
             raise RuntimeError("통화 분석 실패") from error
-        return render_card("r4-unavailable")
+        return _voice_failure_card(job_id, "r4-unavailable", started)
+
+    _log_voice_stage(
+        job_id, "analysis",
+        "unavailable" if result.conclusion.value == "not_analyzable" else "completed", analysis_started,
+        conclusion=result.conclusion.value, reading_status=result.reading_status,
+        failures=len(result.failures), evidence=len(result.evidence), rejected=len(result.rejected),
+        failure_codes=",".join(sorted({failure.value for failure in result.failures})) or "none",
+        budget_s=f"{analyze_budget:.3f}",
+    )
 
     payload = result.model_dump(mode="json")
 
     if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
         job["final_payload"] = payload
 
-    return render_voice_result_card(payload, job_id)
+    card = render_voice_result_card(payload, job_id)
+    card_name = {"not_analyzable": "ve3-unrecognized", "input_required": "ve4-no-claim"}.get(
+        result.conclusion.value, "v1-voice-result",
+    )
+    _log_voice_stage(job_id, "card", "completed", started, card=card_name)
+    return card
 
 
 async def handle_voice_message(
@@ -1275,6 +1321,7 @@ async def run_analysis_and_callback(
     카카오 callbackUrl로 최종 결과를 전송한다.
     """
 
+    started = time.monotonic()
     try:
         # ----------------------------------------------------
         # 1. 분석 수행
@@ -1309,13 +1356,15 @@ async def run_analysis_and_callback(
         except asyncio.TimeoutError:
             print(
                 f"[ANALYSIS TIMEOUT] "
-                f"user={user_id}"
+                f"job_id={job_id}"
             )
 
             result = render_card("r4-unavailable") if voice_media_url is not None else kakao_response(
                 "분석이 예상보다 오래 걸리고 있어요. "
                 "잠시 후 다시 확인해주세요."
             )
+            if voice_media_url is not None:
+                _log_voice_stage(job_id, "card", "completed", started, card="r4-unavailable")
 
             job = ANALYSIS_JOBS.get(job_id)
 
@@ -1334,23 +1383,23 @@ async def run_analysis_and_callback(
 
         except Exception as e:
             print(
-                f"[ANALYSIS ERROR] "
-                f"{type(e).__name__}: {e}"
+                f"[ANALYSIS ERROR] job_id={job_id} "
+                f"{type(e).__name__}"
             )
 
             result = kakao_response(
                 "분석 중 문제가 발생했습니다. "
                 "잠시 후 다시 시도해주세요."
             )
+            if voice_media_url is not None:
+                _log_voice_stage(job_id, "card", "completed", started, card="analysis-error-message")
 
             job = ANALYSIS_JOBS.get(job_id)
 
             if job:
                 job["status"] = "failed"
                 job["result"] = result
-                job["error"] = (
-                    f"{type(e).__name__}: {e}"
-                )
+                job["error"] = type(e).__name__
                 job["completed_at"] = datetime.now(
                     timezone.utc
                 ).isoformat()
@@ -1365,7 +1414,7 @@ async def run_analysis_and_callback(
         # ----------------------------------------------------
 
         print(
-            "[CALLBACK] 결과 전송 시작"
+            f"[CALLBACK] job_id={job_id} 결과 전송 시작"
         )
 
         # 입구에서 이미 걸렀지만, 다른 경로로 들어와도 내부 주소로 보내지 않게 한 번 더 본다.
@@ -1380,7 +1429,7 @@ async def run_analysis_and_callback(
         )
 
         print(
-            f"[CALLBACK STATUS] "
+            f"[CALLBACK STATUS] job_id={job_id} "
             f"{response.status_code}"
         )
 
@@ -1390,7 +1439,7 @@ async def run_analysis_and_callback(
         # [CALLBACK RESULT STATUS]로 따로 남긴다.
 
         if response.status_code >= 400:
-            print(f"[CALLBACK ERROR] status={response.status_code} {_callback_error_detail(response)}")
+            print(f"[CALLBACK ERROR] job_id={job_id} status={response.status_code}")
 
         response.raise_for_status()
 
@@ -1404,9 +1453,12 @@ async def run_analysis_and_callback(
             callback_result_status = callback_result.get(
                 "status"
             )
+            # 응답이 원문·토큰을 status에 반사해도 로그나 Job에 저장하지 않는다.
+            if callback_result_status not in ("SUCCESS", "FAIL"):
+                callback_result_status = "UNKNOWN"
         
             print(
-                f"[CALLBACK RESULT STATUS] "
+                f"[CALLBACK RESULT STATUS] job_id={job_id} status="
                 f"{callback_result_status}"
             )
         
@@ -1442,7 +1494,7 @@ async def run_analysis_and_callback(
                 job["callback_error"] = "invalid_callback_response"
         
             print(
-                "[CALLBACK WARNING] "
+                f"[CALLBACK WARNING] job_id={job_id} "
                 "응답을 JSON으로 파싱할 수 없습니다."
             )
         
@@ -1460,7 +1512,7 @@ async def run_analysis_and_callback(
             job["callback_error"] = safe_error
 
         print(
-            f"[CALLBACK SEND FAILED] "
+            f"[CALLBACK SEND FAILED] job_id={job_id} "
             f"{safe_error}"
         )
     
@@ -1477,7 +1529,7 @@ async def run_analysis_and_callback(
 
             print(
                 f"[RUNNING USER REMOVED] "
-                f"user={user_id}"
+                f"job_id={job_id}"
             )
 
 
