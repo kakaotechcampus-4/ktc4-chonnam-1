@@ -236,6 +236,11 @@ def decide_call(
         and not link_spoken
         and not (codes & _ANY_DEMAND)
         and not (codes & {_E.INSTITUTION_CLAIM, _E.ACQUAINTANCE_CLAIM})
+        # 꼴 때문에 버린 신원·요구가 있으면 "말이 없다"고 단정하지 않는다
+        and not any(
+            r.reason == "self_side" and r.kind in ("identity", "demand")
+            for r in verify.rejected
+        )
     ):
         return VoiceCaseResult(
             conclusion=Conclusion.INPUT_REQUIRED,

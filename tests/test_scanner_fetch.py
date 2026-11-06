@@ -8,11 +8,12 @@ redirect, timeout, 잘못된 URL, localhost/private IP, HTML 이 아닌 응답,
 
 import asyncio
 import ssl
+import time
 from collections.abc import Callable
 
 import httpx
 
-from scanner.fetch import HTML_LIMIT_BYTES, collect_url
+from scanner.fetch import HTML_LIMIT_BYTES, collect_url, extract_title
 from scanner.models import CollectResult
 
 PUBLIC_IP = "93.184.216.34"
@@ -433,3 +434,27 @@ class TestTooLargeResponse:
 
         assert result.failures == ("html_truncated",)
         assert len(result.html) == HTML_LIMIT_BYTES
+
+
+class TestHostilePage:
+    def test_unclosed_title_tags_do_not_stall(self):
+        html = "<title>" * (HTML_LIMIT_BYTES // len("<title>"))
+        start = time.perf_counter()
+        assert extract_title(html) is None
+        assert time.perf_counter() - start < 1.0
+
+    def test_title_is_read_the_same_way(self):
+        assert extract_title('<TITLE lang="ko">  배송\n 조회 </Title>') == "배송 조회"
+        assert extract_title("<title>첫째</title><title>둘째</title>") == "첫째"
+        assert extract_title("<title>닫히지 않음") is None
+        assert extract_title("<title>   </title>") is None
+
+    def test_unparseable_redirect_keeps_what_was_seen(self):
+        result, _ = run("https://bit.ly/a", {
+            "https://bit.ly/a": redirect("https://hop.example/b"),
+            "https://hop.example/b": redirect("https://["),
+        })
+
+        assert result.failures == ("invalid_url",)
+        assert result.final_url == "https://hop.example/b"
+        assert result.redirect_chain == ("https://hop.example/b",)

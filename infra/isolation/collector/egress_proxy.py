@@ -100,6 +100,10 @@ class EgressProxy:
             await writer.drain()
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        # 받아들인 연결의 처리가 close() 뒤에 시작되면 close() 가 취소할 목록에 없었다
+        if self._server is None:
+            writer.close()
+            return
         task = asyncio.current_task()
         self._handlers.add(task)
         upstream: asyncio.StreamWriter | None = None

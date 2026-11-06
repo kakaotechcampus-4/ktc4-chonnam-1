@@ -5,6 +5,14 @@
 
 from dataclasses import dataclass, field
 
+# 격리 서버와 메인 서버가 함께 지키는 상한. 메인 서버는 격리 서버를 믿지 않고 다시 자른다.
+MAX_URL_CHARS = 2048
+MAX_TITLE_CHARS = 300
+MAX_NAVIGATIONS = 10
+MAX_NAVIGATION_REQUESTS = 20
+MAX_DOWNLOADS = 5
+BROWSER_TRIGGERS = frozenset({"always", "status_403_404", "script_redirect", "script_only_page"})
+
 
 @dataclass(frozen=True)
 class BrowserResult:
@@ -25,8 +33,7 @@ class BrowserResult:
     elapsed_ms: int
     failures: tuple[str, ...] = field(default_factory=tuple)
     # 메인 프레임의 이동 요청 전부. 문서가 확정되지 않은 HTTP 리다이렉트 경유까지 담는다.
-    # None 은 이 값을 보내지 않는 구버전 수집기, () 는 요청을 하나도 못 봤다는 뜻이다.
-    navigation_requests: tuple[str, ...] | None = None
+    navigation_requests: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

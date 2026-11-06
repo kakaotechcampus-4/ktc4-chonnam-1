@@ -221,3 +221,65 @@ def test_result_feeds_analyze_call_v1_suspected(reading):
     assert len(transcript.segments) == sum(len(split_sentences(t)) for t in lines)
     result = asyncio.run(analyze_call(transcript, runtime=_runtime(case, Calls())))
     assert result.conclusion.value == case["expect"]["conclusion"] == "suspected"
+
+
+# 문장 부호 없이 받아쓴 통화. 한 문장으로 붙으면 그 안의 물음·옮긴 말 하나 때문에
+# 모든 주장이 받는 사람 말로 버려졌다 (운영 2026-11-06 우체국 사칭 녹음)
+_UNPUNCTUATED = (
+    "네 여보세요 안녕하세요 우체국 배송기사입니다 네 네 기사님 맞으시죠 "
+    "네 네 이거 30분 후에 배송할 여정인데 집에 계신가요 뭐 뭐 뭐가 와요 "
+    "네 롯데카드사에서 신용카드 하나가 보내왔거든요 어 신청 안 했는데 왜 그래요"
+)
+
+
+def test_unpunctuated_transcript_splits_at_sentence_endings():
+    assert split_sentences(_UNPUNCTUATED) == [
+        "네 여보세요",
+        "안녕하세요",
+        "우체국 배송기사입니다",
+        "네 네 기사님 맞으시죠",
+        "네 네 이거 30분 후에 배송할 여정인데 집에 계신가요",
+        "뭐 뭐 뭐가 와요",
+        "네 롯데카드사에서 신용카드 하나가 보내왔거든요",
+        "어 신청 안 했는데 왜 그래요",
+    ]
+
+
+def test_ending_split_keeps_punctuation_on_last_piece():
+    assert split_sentences("검찰청 수사관입니다 계좌 확인하셨나요?") == [
+        "검찰청 수사관입니다",
+        "계좌 확인하셨나요?",
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "보증서 발급이 필요 없어요",  # "필요" 는 어미가 아니다
+        "중요 서류라서 직접 받으셔야 합니다",
+        "거의 다 끝났어요",  # 홀로 쓴 "다" 는 어미가 아니다
+        "검찰이라고 하더라고요",
+        "안전계좌로 옮기셔야 합니다.",
+    ],
+)
+def test_ending_split_leaves_single_sentences(text):
+    assert split_sentences(text) == [text]
+
+
+def test_unpunctuated_call_keeps_caller_identity():
+    from ai.case.types import ClaimReading, InputKind, ReadingSource, Segment, Side
+    from ai.case.verify import verify_call
+
+    source = ReadingSource(
+        kind=InputKind.AUDIO,
+        segments=[Segment(side=Side.UNKNOWN, text=s) for s in split_sentences(_UNPUNCTUATED)],
+    )
+    reading = ClaimReading.model_validate(
+        {
+            "identity": [{"kind": "institution", "name": "우체국", "quote": "우체국 배송기사입니다"}],
+            "pretexts": [{"quote": "이거 30분 후에 배송할 여정인데 집에 계신가요"}],
+        }
+    )
+    v = verify_call(source, reading, derived_by="llm")
+    assert [r.reason for r in v.rejected] == []
+    assert v.claims.pretexts == ["이거 30분 후에 배송할 여정인데 집에 계신가요"]

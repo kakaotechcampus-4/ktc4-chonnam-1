@@ -132,7 +132,7 @@ async def test_family_message_gets_r6b_with_q1_and_q2(monkeypatch, stub_read_mes
     assert outputs[1]["listCard"]["header"]["title"] == "🙋 이미 하신 게 있나요?"
     q1 = _list_items(card, 1)
     assert [i["title"] for i in q1] == [
-        "정보를 입력했어요", "앱을 설치했어요", "돈이나 상품권을 보냈어요", "아직 안 했어요",
+        "정보를 입력했어요", "앱을 설치했어요", "돈이나 상품권을 보냈어요", "아무것도 안 했어요",
     ]
     assert outputs[2]["listCard"]["header"]["title"] == "📞 원래 알던 번호로 통화해 보셨나요?"
     q2 = _list_items(card, 2)
