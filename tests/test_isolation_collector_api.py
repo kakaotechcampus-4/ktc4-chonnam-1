@@ -448,3 +448,10 @@ class TestStageTwoEgress:
         assert len(body) <= MAX_RESPONSE_BYTES
         parsed = json.loads(body)
         assert all(len(hop) <= 2048 for hop in parsed["redirect_chain"])
+
+
+async def test_non_ascii_content_length_is_rejected_not_crashed():
+    async with client_for() as c:
+        r = await c.post("/collect", content=json.dumps({"url": OK_URL}),
+                         headers={**AUTH, "Content-Length": "²".encode("latin-1")})
+        assert r.status_code == 413

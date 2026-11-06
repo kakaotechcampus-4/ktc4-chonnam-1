@@ -111,7 +111,8 @@ def _host_for_log(url: str) -> str:
 
 async def _read_body(request: Request) -> bytes | None:
     declared = request.headers.get("content-length")
-    if declared is not None and (not declared.isdigit() or int(declared) > MAX_REQUEST_BYTES):
+    if declared is not None and (not (declared.isascii() and declared.isdigit())
+                                 or int(declared) > MAX_REQUEST_BYTES):
         return None
     body = bytearray()
     async for chunk in request.stream():
