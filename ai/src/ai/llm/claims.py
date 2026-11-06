@@ -84,7 +84,14 @@ async def read_claims(
     except (TimeoutError, APITimeoutError) as exc:
         LOGGER.warning("claims reading failed: %s", type(exc).__name__)
         return _fallback(source, FailureCode.TIMEOUT)
-    except (ValidationError, APIResponseValidationError, LengthFinishReasonError) as exc:
+    except ValidationError as exc:
+        # 어느 칸이 왜 깨졌는지만 남긴다. 입력값(모델 출력·원문)은 남기지 않는다
+        fields = ",".join(
+            f"{'.'.join(map(str, e['loc']))}:{e['type']}" for e in exc.errors(include_input=False)
+        )
+        LOGGER.warning("claims reading failed: ValidationError fields=%s", fields)
+        return _fallback(source, FailureCode.INVALID_OUTPUT)
+    except (APIResponseValidationError, LengthFinishReasonError) as exc:
         LOGGER.warning("claims reading failed: %s", type(exc).__name__)
         return _fallback(source, FailureCode.INVALID_OUTPUT)
     except Exception as exc:

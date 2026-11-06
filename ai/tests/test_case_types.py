@@ -141,9 +141,31 @@ def test_transcript_accuracy_is_unchecked_item():
         ("spoken_hosts", "a.com", 4),
     ],
 )
-def test_reading_limits(field, item, n):
+def test_reading_limits_keep_first_items(field, item, n):
+    # 상한을 넘으면 읽기 전체를 버리지 않고 앞에서부터 상한까지만 남긴다.
+    # 긴 통화에서 모델이 명분을 4개 이상 뽑아 읽기가 통째로 어휘표로 떨어지던 문제
+    items = [item if isinstance(item, str) else {**item, "quote": f"q{i}"} for i in range(n)]
+    if isinstance(item, str):
+        items = [f"a{i}.com" for i in range(n)]
+    reading = ClaimReading.model_validate({field: items})
+    kept = getattr(reading, field)
+    assert len(kept) == n - 1
+    first = kept[0] if isinstance(kept[0], str) else kept[0].quote
+    assert first in ("q0", "a0.com")
+
+
+def test_reading_limits_apply_to_json_too():
+    # SDK 의 parse() 는 JSON 문자열을 검증한다. 같은 규칙이 적용돼야 한다
+    reading = ClaimReading.model_validate_json(
+        '{"pretexts": [{"quote": "a"}, {"quote": "b"}, {"quote": "c"}, {"quote": "d"}, {"quote": "e"}]}'
+    )
+    assert [p.quote for p in reading.pretexts] == ["a", "b", "c"]
+
+
+def test_reading_items_still_validated():
+    # 개수만 자른다. 항목 모양이 틀리면 여전히 실패다
     with pytest.raises(ValidationError):
-        ClaimReading.model_validate({field: [item] * n})
+        ClaimReading.model_validate({"identity": [{"kind": "bogus", "name": "n", "quote": "q"}]})
 
 
 def test_reading_limits_boundary_ok():
