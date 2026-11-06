@@ -80,9 +80,12 @@ def test_known_category_rejects_custom_label():
         )
 
 
-def test_contract_rejects_unknown_fields():
+def test_contract_drops_unknown_fields_so_llm_cannot_add_a_verdict():
+    # LLM 이 판정 칸을 지어내 붙여도 계약에 실리지 않는다. 답 전체는 버리지 않는다(#145)
+    extracted = ExtractedMessage.model_validate({"risk_verdict": "malicious"})
+    assert "risk_verdict" not in extracted.model_dump()
     with pytest.raises(ValidationError):
-        ExtractedMessage.model_validate({"risk_verdict": "malicious"})
+        MessageAnalysis.model_validate({"analysis_status": "completed", "risk_verdict": "malicious"})
 
 
 def test_category_taxonomy_matches_approved_design():

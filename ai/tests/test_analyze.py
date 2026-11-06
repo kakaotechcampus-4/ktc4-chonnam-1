@@ -577,6 +577,54 @@ async def test_field_that_is_not_an_object_keeps_the_rest_of_the_llm_answer(name
     assert "자녀" not in caplog.text
 
 
+async def test_issue_145_answer_with_made_up_field_keeps_the_rest(caplog):
+    """#145 운영 로그와 같은 답: 두 칸이 문자열이고, 스키마에 없는 칸이 붙었다. 답 전체를 버리지 않는다."""
+    payload = _llm_output(
+        claimed_sender="자녀",
+        claimed_purpose="상품권 구매",
+        claimed_sender_evidence_placeholder="엄마 나",
+        requested_actions=[{"value": "핀번호 전달", "evidence": "핀번호 보내줘"}],
+        persuasion_signals=[{"code": "relationship", "evidence": "엄마 나"}],
+    )
+    with caplog.at_level("WARNING", logger="ai.types"):
+        result = await analyze_message(SECRET_TEXT, client=_sdk_client(payload), model="m")
+
+    assert result.analysis_status is AnalysisStatus.COMPLETED
+    assert result.claimed_sender == EvidenceField()
+    assert [a.evidence for a in result.requested_actions] == ["핀번호 보내줘"]
+    assert [p.evidence for p in result.persuasion_signals] == ["엄마 나"]
+    assert "undeclared=claimed_sender_evidence_placeholder" in caplog.text
+    assert "claimed_sender=not_object:str" in caplog.text
+    assert "엄마" not in caplog.text and "자녀" not in caplog.text
+
+
+async def test_made_up_field_name_is_logged_without_message_text(caplog):
+    """칸 이름도 LLM 이 지어낸 글자다. 한글 등은 지우고 줄여서 남긴다."""
+    payload = _llm_output(**{"문화상품권_핀번호": "1234", "x" * 60: 1})
+    with caplog.at_level("WARNING", logger="ai.types"):
+        result = await analyze_message(SECRET_TEXT, client=_sdk_client(payload), model="m")
+
+    assert result.analysis_status is AnalysisStatus.COMPLETED
+    assert "문화상품권" not in caplog.text and "1234" not in caplog.text
+    assert "x" * 40 in caplog.text and "x" * 41 not in caplog.text
+
+
+async def test_made_up_field_inside_a_declared_field_still_fails(caplog):
+    """최상위 칸만 버린다. 선언한 칸 안의 모르는 칸은 지금처럼 거부한다."""
+    payload = _llm_output(claimed_sender={"value": "자녀", "evidence": "엄마 나", "note": "x"})
+    with caplog.at_level("WARNING", logger="ai.llm.analyze"):
+        result = await analyze_message(SECRET_TEXT, client=_sdk_client(payload), model="m")
+
+    assert result.analysis_status is AnalysisStatus.FALLBACK
+    assert result.failure is FailureCode.INVALID_OUTPUT
+    assert "claimed_sender.note:extra_forbidden" in caplog.text
+
+
+def test_result_type_still_rejects_undeclared_fields():
+    with pytest.raises(ValidationError):
+        MessageAnalysis.model_validate({"analysis_status": "completed", "made_up": 1})
+
+
 async def test_missing_field_is_not_reported_as_repaired(caplog):
     payload = _llm_output()
     del payload["claimed_sender"]

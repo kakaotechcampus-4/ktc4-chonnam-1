@@ -21,6 +21,14 @@ def test_quotation(sentence):
     assert forms.is_recipient_side(sentence)
 
 
+@pytest.mark.parametrize("sentence", ["아 불러줘서 전화하시라고요.", "그 번호로 전화하시라고요"])
+def test_honorific_rago_is_caller_side(sentence):
+    # "-시라고요" 는 듣는 사람을 높인 꼴이라 상대가 자기 지시를 되풀이한 말이다.
+    # 받는 사람이 되묻는 "송금하라고요?" 에는 '시' 가 없다 (test_quotation)
+    assert not forms.is_quotation(sentence)
+    assert not forms.is_recipient_side(sentence)
+
+
 def test_self_intro_with_rago_hamnida_is_not_quotation():
     s = "검찰청 수사관 김민수라고 합니다"
     assert not forms.is_quotation(s)

@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import Field, ValidationInfo, field_validator
 
-from ai.types import CaseSearchResult, FailureCode, LinkCandidate, StrictModel
+from ai.types import CaseSearchResult, FailureCode, LinkCandidate, LLMAnswer, StrictModel
 
 
 # ── enum ────────────────────────────────────────────────────
@@ -227,7 +227,7 @@ class BlockerClaim(StrictModel):
     quote: str
 
 
-class ClaimReading(StrictModel):
+class ClaimReading(LLMAnswer):
     # 개수 제한은 프롬프트가 아니라 검증으로 건다 (v3 §5.1)
     identity: list[IdentityClaim] = Field(default_factory=list, max_length=3)
     pretexts: list[PretextClaim] = Field(default_factory=list, max_length=3)
