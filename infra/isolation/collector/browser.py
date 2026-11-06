@@ -49,16 +49,108 @@ MOBILE_VIEWPORT = {"width": 412, "height": 915}
 
 MIN_VISIBLE_TEXT_CHARS = 200
 STAGE2_OK_FAILURES = frozenset({"html_truncated"})
-_SCRIPT_BODY_RE = re.compile(r"<script\b[^>]*>(.*?)</script\s*>", re.IGNORECASE | re.DOTALL)
-_NON_TEXT_RE = re.compile(r"<(script|style|noscript)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
-_TAG_RE = re.compile(r"<[^>]+>")
 _REDIRECT_HINT_RE = re.compile(r"\blocation(?:\.href)?\s*=(?!=)|\blocation\.(?:replace|assign)\s*\(")
-_META_REFRESH_RE = re.compile(r"<meta[^>]+http-equiv\s*=\s*[\"']?refresh", re.IGNORECASE)
+_HTTP_EQUIV_REFRESH_RE = re.compile(r"http-equiv\s*=\s*[\"']?refresh")
+_NON_TEXT_TAGS = ("script", "style", "noscript")
+# 태그 이름만 소문자로 바꾼다. str.lower() 는 일부 글자의 길이를 바꿔 위치가 어긋난다.
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+# 아래 함수들은 정규식 대신 앞에서부터 한 번만 훑는다. 닫히지 않은 태그를 반복한 페이지에서
+# `.*?` 정규식은 시간이 길이의 제곱으로 늘어 이벤트 루프(프록시 포함)를 수십 초 멈췄다.
+
+
+def _visible_chars(text: str) -> int:
+    return len("".join(text.split()))
+
+
+def _starts_tag(lower: str, at: int, name: str) -> bool:
+    end = at + 1 + len(name)
+    return lower.startswith(name, at + 1) and not (
+        end < len(lower) and (lower[end].isalnum() or lower[end] == "_")
+    )
+
+
+def _closing_tag(lower: str, name: str, start: int) -> tuple[int, int] | None:
+    marker = "</" + name
+    while (found := lower.find(marker, start)) >= 0:
+        end = found + len(marker)
+        while end < len(lower) and lower[end].isspace():
+            end += 1
+        if end < len(lower) and lower[end] == ">":
+            return found, end + 1
+        start = found + 1
+    return None
+
+
+def _script_bodies(html: str, lower: str) -> list[str]:
+    bodies = []
+    pos = 0
+    while (opening := lower.find("<script", pos)) >= 0:
+        if not _starts_tag(lower, opening, "script"):
+            pos = opening + 1
+            continue
+        body_start = lower.find(">", opening) + 1
+        if body_start == 0:
+            break
+        closing = _closing_tag(lower, "script", body_start)
+        if closing is None:
+            break
+        bodies.append(html[body_start:closing[0]])
+        pos = closing[1]
+    return bodies
+
+
+def _has_meta_refresh(lower: str) -> bool:
+    pos = 0
+    while (opening := lower.find("<meta", pos)) >= 0:
+        tag_end = lower.find(">", opening)
+        if tag_end < 0:
+            tag_end = len(lower)
+        if _HTTP_EQUIV_REFRESH_RE.search(lower, opening + len("<meta") + 1, tag_end):
+            return True
+        pos = tag_end + 1
+    return False
+
+
+def _without_non_text(html: str) -> str:
+    lower = html.translate(_ASCII_LOWER)
+    parts = []
+    pos = search = 0
+    unclosed: set[str] = set()
+    while (opening := lower.find("<", search)) >= 0:
+        name = next((n for n in _NON_TEXT_TAGS
+                     if n not in unclosed and _starts_tag(lower, opening, n)), None)
+        if name is None:
+            search = opening + 1
+            continue
+        tag_end = lower.find(">", opening)
+        if tag_end < 0:
+            break
+        closing = _closing_tag(lower, name, tag_end + 1)
+        if closing is None:
+            unclosed.add(name)
+            search = opening + 1
+            continue
+        parts += [html[pos:opening], " "]
+        pos = search = closing[1]
+    parts.append(html[pos:])
+    return "".join(parts)
 
 
 def visible_text_length(html: str) -> int:
-    text = _TAG_RE.sub(" ", _NON_TEXT_RE.sub(" ", html))
-    return len(re.sub(r"\s+", "", text))
+    text = _without_non_text(html)
+    count = pos = 0
+    while (opening := text.find("<", pos)) >= 0:
+        tag_end = text.find(">", opening + 1)
+        if tag_end < 0:
+            break
+        count += _visible_chars(text[pos:opening])
+        if tag_end == opening + 1:
+            count += 1
+            pos = opening + 1
+        else:
+            pos = tag_end + 1
+    return count + _visible_chars(text[pos:])
 
 
 def browser_trigger(result: CollectResult) -> str | None:
@@ -70,11 +162,12 @@ def browser_trigger(result: CollectResult) -> str | None:
         return None
     if result.status_code in (403, 404):
         return "status_403_404"
-    if _META_REFRESH_RE.search(result.html) or any(
-        _REDIRECT_HINT_RE.search(body) for body in _SCRIPT_BODY_RE.findall(result.html)
+    lower = result.html.translate(_ASCII_LOWER)
+    if _has_meta_refresh(lower) or any(
+        _REDIRECT_HINT_RE.search(body) for body in _script_bodies(result.html, lower)
     ):
         return "script_redirect"
-    if "<script" in result.html.lower() and visible_text_length(result.html) < MIN_VISIBLE_TEXT_CHARS:
+    if "<script" in lower and visible_text_length(result.html) < MIN_VISIBLE_TEXT_CHARS:
         return "script_only_page"
     return None
 
