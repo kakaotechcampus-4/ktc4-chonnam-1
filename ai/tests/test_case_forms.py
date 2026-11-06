@@ -312,3 +312,68 @@ def test_first_person_with_title_is_self_intro(sentence):
 def test_everyday_question_stays_recipient_side(sentence):
     """돈을 집어 말하지 않는 "안 될까요?", "가능해요?" 와 "주겠죠?" 는 부탁으로 보지 않는다."""
     assert forms.is_recipient_side(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["어머니, 고객님 성함이 어떻게 되세요?", "아버님, 명의자분 생년월일 말씀해 주세요", "어머니 저희 고객센터 상담원입니다"],
+)
+def test_customer_service_address_is_not_acquaintance(sentence):
+    """상담원이 부르는 "어머니" 는 가족이라는 주장이 아니다."""
+    assert not forms.asserts_acquaintance(sentence)
+
+
+@pytest.mark.parametrize("sentence", ["엄마, 폰 고장 났어", "엄마 나 급해", "아빠 나 아들인데", "엄마, 폰 고장 나서 고객센터에 맡겼어"])
+def test_family_address_stays_acquaintance(sentence):
+    assert forms.asserts_acquaintance(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # 회상 어미 "-더라고요" 는 남의 말을 옮긴 꼴이 아니다 (통화 05 재측정)
+        "새끼들이 연락이 안 되더라고요",
+        "다른 전화기로 전화하니까 바로 전화 끊어버리더라고요",
+        # 상대가 스스로 설명하는 "~다는 말씀입니다" (통화 02 재측정)
+        "본인 모르게 통장이 개설되어 악용이 됐다는 말씀입니다",
+        "명의가 도용됐다는 말씀드리려고 연락드렸습니다",
+    ],
+)
+def test_not_quotation(sentence):
+    assert not forms.is_quotation(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # 옮긴 말은 여전히 옮긴 말이다
+        "검찰이라고 하더라고요",
+        "돈 보내라고 하더라고요",
+        "보내라는 말씀이세요?",
+        "옮기라는 말이에요?",
+        # "-더라고요" 를 풀어도 앞의 옮긴 말 꼴로 잡혀야 한다 (normal_real 회귀)
+        "메일로 보내라고 돼있더라고요",
+        "공문을 보내달라고 하시더라고요",
+        "계좌로 입금하라고 되어 있더라고요",
+    ],
+)
+def test_still_quotation(sentence):
+    assert forms.is_quotation(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence,recipient",
+    [
+        # 높임 "셨"·"신" 이 붙은 물음은 상대에게 묻는 말이다 (통화 02·07 재측정)
+        ("범죄에 이용된 사실을 인지를 하고 계셨나요?", False),
+        ("신분증이나 여권 같은 거 잃어버리신 적은요?", False),
+        ("통장 개설하신 적 있으세요?", False),
+        # 받는 사람이 되묻는 말은 그대로 걸러진다. "신" 이 낱말 안에 있으면 높임이 아니다
+        ("신분증도 보내야 되나요?", True),
+        ("신청서 써야 하나요?", True),
+        ("제가 신고해야 되나요?", True),
+        ("돈 보내야 돼요?", True),
+    ],
+)
+def test_honorific_question_side(sentence, recipient):
+    assert forms.is_recipient_side(sentence) is recipient

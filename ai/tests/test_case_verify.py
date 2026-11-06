@@ -646,3 +646,36 @@ def test_words_after_self_intro_keep_l3_floor(text):
 )
 def test_first_person_without_title_has_no_l3_floor(text):
     assert not any(e.code == EvidenceCode.INSTITUTION_CLAIM and e.counts_for_floor for e in _fallback_verify(text).accepted)
+
+
+def _floors(text: str) -> dict[EvidenceCode, bool]:
+    source = ReadingSource(
+        kind=InputKind.AUDIO,
+        segments=[Segment(side=Side.UNKNOWN, text=s) for s in forms.sentences(text)],
+    )
+    verify = verify_call(source, read_with_lexicon(source, FailureCode.TIMEOUT).reading, derived_by="lexicon")
+    return {e.code: e.counts_for_floor for e in verify.accepted}
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["신분증 가지고 민원실로 오세요", "오실 때 신분증 챙겨 오세요", "민원실에 방문하셔서 신분증 보여 주세요"],
+)
+def test_visit_guide_is_not_info_floor(sentence):
+    """직접 오라는 안내는 신분증을 넘기라는 요구와 다르다. 주의 근거로는 남긴다."""
+    assert _floors(f"서초경찰서 민원실입니다. {sentence}.")[EvidenceCode.INFO_REQUEST] is False
+
+
+@pytest.mark.parametrize("sentence", ["신분증 사진 찍어서 보내 주세요", "주민번호 불러 주세요", "방문 전에 신분증 찍어서 보내 주세요"])
+def test_handing_over_info_keeps_floor(sentence):
+    assert _floors(f"서초경찰서 수사관입니다. {sentence}.")[EvidenceCode.INFO_REQUEST] is True
+
+
+@pytest.mark.parametrize("sentence", ["계약서 사진 보내 줘", "문자로 보내 주세요", "메일 보내 주세요"])
+def test_sending_non_money_is_not_money_floor(sentence):
+    assert _floors(f"엄마 나야. {sentence}.")[EvidenceCode.MONEY_REQUEST] is False
+
+
+@pytest.mark.parametrize("sentence", ["50만원 보내 줘", "이 계좌로 사진값 보내 줘", "돈 좀 보내 주세요", "입금해 주세요", "입금하시고 영수증을 팩스로 보내십시오"])
+def test_sending_money_keeps_floor(sentence):
+    assert _floors(f"엄마 나야. {sentence}.")[EvidenceCode.MONEY_REQUEST] is True

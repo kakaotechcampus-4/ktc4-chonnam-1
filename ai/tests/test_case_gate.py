@@ -142,6 +142,34 @@ def test_u5_nothing_accepted_is_input_required():
     assert r.questions == []
 
 
+def _decide_fallback(verify):
+    return decide_call(
+        transcript_empty=False,
+        verify=verify,
+        number_checks=[],
+        similar=None,
+        failures=[FailureCode.INVALID_OUTPUT],
+        reading_status="fallback",
+    )
+
+
+def test_u5_failed_reading_is_inconclusive_not_input_required():
+    # 읽기가 실패해 어휘표만으로 아무것도 못 찾았다면 "사칭·요구가 없다"고 말할 수 없다.
+    # input_required 는 "녹음에 사칭·요구하는 말이 없어요" 카드라 잘못된 안심을 준다
+    r = _decide_fallback(_verify())
+    assert r.conclusion == Conclusion.INCONCLUSIVE
+    assert r.caution is False
+    assert r.floors == []
+    assert r.questions == []
+    assert r.reading_status == "fallback"
+
+
+def test_u5_failed_reading_with_blocker_only_is_inconclusive():
+    r = _decide_fallback(_verify(E.CONTACT_BLOCKER))
+    assert r.conclusion == Conclusion.INCONCLUSIVE
+    assert r.caution is False
+
+
 def test_u5_ignores_contact_blocker_only():
     r = _decide(_verify(E.CONTACT_BLOCKER))
     assert r.conclusion == Conclusion.INPUT_REQUIRED
