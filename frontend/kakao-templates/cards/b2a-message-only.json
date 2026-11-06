@@ -5,7 +5,7 @@
       {
         "basicCard": {
           "title": "📵 문자 속 요구에 따르지 마세요",
-          "description": "문자를 이 채팅창에 보내 먼저 확인해 보세요.\n신고·상담은 한국인터넷진흥원(KISA)에서\n24시간 받을 수 있어요.\n\n다 끝나면 문자를 지우고 번호를 차단하세요.",
+          "description": "문자를 이 채팅창에 보내 먼저 확인해 보세요.\n\n신고·상담은 한국인터넷진흥원(KISA)에서\n24시간 받을 수 있어요.\n\n다 끝나면 문자를 지우고 번호를 차단하세요.",
           "thumbnail": {
             "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2a-message-only.png",
             "altText": "링크가 담긴 휴대폰 옆에서 팔로 X자를 만들어 누르지 말라고 하는 기니피그",
