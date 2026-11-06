@@ -211,7 +211,7 @@ Content-Type: application/json
    sudo bash /opt/ktc-isolation/make-secrets.sh <격리 서버 공인 IP>
    ```
 5. 보안 그룹을 바꾼다. 인바운드 TCP 8443 은 Render CIDR 에서만, 아웃바운드 TCP 443 은 `egress-hosts` 의 IP 마다 `/32` 로만 연다.
-6. 빌드한다. `build.sh` 가 `egress-hosts` 를 검증해 파일을 만들고, 방화벽을 다시 적용하고, 컨테이너를 띄우고, `verify.py` 까지 실행한다.
+6. 빌드한다. `build.sh` 가 `egress-hosts` 를 검증해 파일을 만들고, 방화벽(`ktc-isolation-firewall`)을 다시 적용하고, `ktc-isolation-collector` 로 컨테이너를 띄우고, `verify.py` 까지 실행한다. 바깥이 막힌 호스트에서는 다른 곳에서 빌드한 이미지를 `IMAGE_TAR=/path/image.tar` 로 넘긴다. 컨테이너는 하루 한 번(`ktc-isolation-recreate.timer`), 그리고 healthcheck 가 unhealthy 일 때(`ktc-isolation-health.timer`) 다시 만든다.
    ```bash
    sudo bash /opt/ktc-isolation/build.sh
    ```
