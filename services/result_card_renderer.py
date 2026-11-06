@@ -150,7 +150,7 @@ _VOICE_QA_OPTION_LABELS = {
     "entered_info": "정보를 알려 줬어요",
     "installed_app": "앱을 설치했어요",
     "sent_money": "돈이나 상품권을 보냈어요",
-    "not_yet": "아직 안 했어요",
+    "not_yet": "아무것도 안 했어요",
 }
 
 # Q1 답변 전용 스킬 블록(이슈 #115, 2026-10-29 관리자센터에서 확정).
@@ -211,14 +211,20 @@ def _voice_verify_line(official_contact: dict | None, *, speaker_unknown: bool =
 def _voice_call_claims(claims: dict, caution: bool, *, speaker_unknown: bool = False) -> str:
     """"주의할 점"/"통화에서 들은 내용" 블록(이슈 #115 V1 call_claims 매핑).
 
-    기관 = identity[].quote, 상대가 한 말 = 첫 demands[].quote, 내세운
-    사정 = blockers(있으면) 또는 pretexts, 요구한 것 = demands[].kind
-    라벨(최대 3개). 전부 비어 있으면 통째로 빈 문자열("칸 제목 포함, 값
-    없으면 빈 문자열").
+    기관 = identity[].quote, 통화에 나온 말 = 첫 demands[].quote, 통화에
+    나온 사정 = blockers(있으면) 또는 pretexts, 통화에 나온 요구 =
+    demands[].kind 라벨(최대 3개). 전부 비어 있으면 통째로 빈 문자열
+    ("칸 제목 포함, 값 없으면 빈 문자열").
 
     "내세운 사정 = blockers → pretexts"는 이슈 원문 그대로 "blockers가
     있으면 그걸, 없으면 pretexts"로 읽어 구현했다 — 다르게 뜻했다면
     확인 필요(보고 사항).
+
+    말머리는 이슈 #139에 따라 "통화에 나온 ~"로 기본값을 바꿨다(ADR
+    0008로 화자 분리를 아예 없앴으니 "상대가"라고 단정할 근거가 없다).
+    `speaker_unknown` 분기는 바뀐 기본값과 같은 문구를 가리켜 아래
+    치환 루프가 이제 아무것도 바꾸지 못한다 — #116이 정리될 때까지
+    지우지 말라는 지시가 있어 구조만 남겨 둔다(점검 결과, 보고 사항).
     """
 
     identity = claims.get("identity") or []
@@ -231,17 +237,17 @@ def _voice_call_claims(claims: dict, caution: bool, *, speaker_unknown: bool = F
         quotes = [_voice_truncate(i.get("quote", "")) for i in identity if i.get("quote")]
         if quotes:
             quoted = [f"'{q}'" for q in quotes]
-            lines.append(f"- 상대가 내세운 기관: {', '.join(quoted)}")
+            lines.append(f"- 통화에 나온 기관: {', '.join(quoted)}")
     if demands and demands[0].get("quote"):
-        lines.append(f"- 상대가 한 말: '{_voice_truncate(demands[0]['quote'])}'")
+        lines.append(f"- 통화에 나온 말: '{_voice_truncate(demands[0]['quote'])}'")
     pretext_source = blockers or pretexts
     if pretext_source:
-        lines.append(f"- 내세운 사정: '{_voice_truncate(pretext_source[0])}'")
+        lines.append(f"- 통화에 나온 사정: '{_voice_truncate(pretext_source[0])}'")
     if demands:
         demand_labels = [
             _VOICE_DEMAND_LABELS.get(d.get("kind", ""), "기타 요구") for d in demands[:3]
         ]
-        lines.append(f"- 요구한 것: {', '.join(demand_labels)}")
+        lines.append(f"- 통화에 나온 요구: {', '.join(demand_labels)}")
 
     if not lines:
         return ""
@@ -515,7 +521,7 @@ def render_voice_detail_carousel(result: dict) -> dict:
         "claim_lines": claim_lines,
         "claim_note": (
             "누가 한 말인지 가리지 못해 통화에 나온 말을 옮겼어요."
-            if speaker_unknown else "통화 상대가 한 말만 근거로 썼어요."
+            if speaker_unknown else "상대가 한 말로 보이는 문장만 근거로 썼어요."
         ),
         "similar_type": "",
         "similar_line": "",
@@ -771,10 +777,11 @@ def render_result_card(
 def merge_kakao_responses(responses: list[dict]) -> dict:
     """링크가 여러 개여서 카드가 여러 장 나왔을 때 하나의 응답으로 합친다.
 
-    지금 범위는 "링크 1개"를 전제하므로(`r7-multiple-urls` 라우팅은 이번
-    담당 범위 밖이다) 평소에는 입력이 1개뿐이다. 그래도 run_analysis()의
-    for 루프가 여러 장을 만들 가능성을 남겨두므로, 응답 형식이 깨지지
-    않도록 outputs를 이어 붙인다.
+    `r7-multiple-urls` 전용 카드는 `feature/final-fe`에서 지워졌다(이슈
+    #139). 링크가 여럿이면 `render_result_card(..., allow_details=...)`가
+    "자세히 보기" 버튼만 제거할 뿐 카드 자체는 링크마다 그대로 나오므로,
+    `run_analysis()`의 for 루프가 만드는 여러 장을 여기서 하나의 응답으로
+    이어 붙인다(개수 제한은 호출부가 담당).
     """
 
     if not responses:
@@ -999,7 +1006,7 @@ _MESSAGE_Q1_LABELS = {
     "entered_info": "정보를 입력했어요",
     "installed_app": "앱을 설치했어요",
     "sent_money": "돈이나 상품권을 보냈어요",
-    "not_yet": "아직 안 했어요",
+    "not_yet": "아무것도 안 했어요",
 }
 _MESSAGE_Q2_LABELS = {
     "not_person": "본인이 아니래요",
