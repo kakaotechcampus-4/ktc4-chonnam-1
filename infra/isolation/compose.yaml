@@ -18,6 +18,9 @@ services:
     # extra_hosts 와 COLLECTOR_ALLOWED_HOSTS 는 render-egress.py 가 만든 compose.egress.yaml 이 채운다.
     # 그 파일 없이 띄우면 허용 호스트가 비어 수집기가 시작하지 않는다.
     dns: ["${COLLECTOR_DNS_SERVER:-127.0.0.1}"]
+    # 프록시와 httpx 의 getaddrinfo 는 기본 스레드 풀에서 돌아 wait_for 로 끊기지 않는다.
+    # 느린 네임서버가 스레드를 오래 붙잡지 못하게 한 번, 1초만 묻는다.
+    dns_opt: ["timeout:1", "attempts:1"]
     environment:
       COLLECTOR_NETWORK_MODE: "${COLLECTOR_NETWORK_MODE:-allowlist}"
       COLLECTOR_PROTECTED_HOSTS: "${COLLECTOR_PROTECTED_HOSTS:-}"
@@ -42,7 +45,7 @@ services:
     pids_limit: 256
     shm_size: 256m
     tmpfs:
-      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777
     logging:
       driver: local
       options:
