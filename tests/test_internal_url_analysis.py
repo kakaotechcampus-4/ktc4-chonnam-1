@@ -21,6 +21,7 @@ def collected(input_url=OFFICIAL, **changes):
 
 
 def browser(final_url, chain, failures=(), downloads=(), requests=None):
+    requests = chain if requests is None else requests
     return BrowserResult("script_redirect", final_url, chain, "<p>조회</p>", None, downloads, 0, 1, failures, requests)
 
 
@@ -70,12 +71,11 @@ def test_collected_addresses_drive_domain_comparison(result, final_url, domain, 
 
 @pytest.mark.parametrize("input_url, domain, official", [
     (SHORT, "bit.ly", "unresolved"),
-    # 이동 요청 기록이 없는 구버전 수집기의 한계(ADR 0009). 페이지 근거는 보존한다
-    (OFFICIAL, "www.cjlogistics.com", "official"),
+    (OFFICIAL, "www.cjlogistics.com", "unresolved"),
 ])
 def test_browser_commits_hide_js_target_http_redirect(input_url, domain, official):
     # JS visits EVIL, which returns HTTP 302 to OFFICIAL. framenavigated only
-    # records committed documents, so the collector never puts EVIL in this chain.
+    # records committed documents, so EVIL is only in navigation_requests (ADR 0009).
     risk_html = '<form><input type="password" name="password"></form>'
     result = parse_collect_response(input_url, {
         "input_url": input_url, "final_url": input_url, "redirect_chain": [],
@@ -87,6 +87,7 @@ def test_browser_commits_hide_js_target_http_redirect(input_url, domain, officia
             "navigation_chain": [input_url, OFFICIAL], "html": risk_html,
             "title": None, "downloads": [], "blocked_requests": 0,
             "elapsed_ms": 1, "failures": [],
+            "navigation_requests": [input_url, EVIL, OFFICIAL],
         },
     })
 

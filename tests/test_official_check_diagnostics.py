@@ -26,7 +26,7 @@ def collected(input_url=OFFICIAL, **changes):
 
 
 def browser(final_url, chain, failures=()):
-    return BrowserResult("script_redirect", final_url, chain, "<p>조회</p>", None, (), 0, 1, failures)
+    return BrowserResult("script_redirect", final_url, chain, "<p>조회</p>", None, (), 0, 1, failures, chain)
 
 
 def _run(caplog, result, brand="CJ대한통운"):
