@@ -6,7 +6,7 @@ import shlex
 import sys
 from pathlib import Path
 
-from collector.policy import NetworkPolicy, load_allowed_hosts
+from collector.policy import NetworkPolicy, parse_list
 
 # Deliberately includes special-purpose ranges even where Python versions differ.
 BLOCKED_CIDRS = (
@@ -20,8 +20,8 @@ BLOCKED_CIDRS = (
 def public_config(env):
     policy = NetworkPolicy(
         mode=env.get("COLLECTOR_NETWORK_MODE", "allowlist"),
-        protected_hosts=load_allowed_hosts(env.get("COLLECTOR_PROTECTED_HOSTS", "")),
-        protected_ips=load_allowed_hosts(env.get("COLLECTOR_PROTECTED_IPS", "")),
+        protected_hosts=parse_list(env.get("COLLECTOR_PROTECTED_HOSTS", "")),
+        protected_ips=parse_list(env.get("COLLECTOR_PROTECTED_IPS", "")),
     )
     dns = str(ipaddress.IPv4Address(env.get("COLLECTOR_DNS_SERVER", "")))
     address = ipaddress.ip_address(dns)

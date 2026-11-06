@@ -122,7 +122,7 @@ async def test_public_api_uses_proxy_and_disables_insecure_retry():
         return CollectResult(input_url=url, final_url=url, redirect_chain=(), status_code=200,
                              content_type="text/html", html="ok", title=None, elapsed_ms=1, failures=())
 
-    app = create_app(token=TOKEN, allowed_hosts=frozenset(), network_policy=policy(), collect=collect)
+    app = create_app(token=TOKEN, network_policy=policy(), collect=collect)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="https://collector") as c:
             response = await c.post("/collect", json={"url": "https://unregistered.example/"},

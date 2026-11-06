@@ -14,9 +14,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "infra" / "isolation"))
 
-from collector.app import MAX_RESPONSE_BYTES, create_app  # noqa: E402
+from collector.app import MAX_RESPONSE_BYTES, create_app, encode_result  # noqa: E402
 from scanner.fetch import HTML_LIMIT_BYTES  # noqa: E402
-from collector.policy import is_allowed_url, load_allowed_hosts  # noqa: E402
+from collector.policy import NetworkPolicy, is_allowed_url, parse_list  # noqa: E402
 from scanner.collect_response import parse_collect_response  # noqa: E402
 from scanner.fetch import collect_url  # noqa: E402
 from scanner.models import BrowserResult, CollectResult  # noqa: E402
@@ -43,7 +43,8 @@ def client_for(collect=None, **kwargs) -> httpx.AsyncClient:
         calls.append(url)
         return ok_result(url)
 
-    app = create_app(token=TOKEN, allowed_hosts=HOSTS, collect=collect or default_collect, **kwargs)
+    app = create_app(token=TOKEN, network_policy=NetworkPolicy(allowed_hosts=HOSTS),
+                     collect=collect or default_collect, **kwargs)
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://collector")
     client.calls = calls  # type: ignore[attr-defined]
     return client
@@ -66,11 +67,11 @@ class TestAuth:
 
     def test_short_token_refuses_to_start(self):
         with pytest.raises(RuntimeError):
-            create_app(token="short", allowed_hosts=HOSTS)
+            create_app(token="short", network_policy=NetworkPolicy(allowed_hosts=HOSTS))
 
     def test_empty_allowlist_refuses_to_start(self):
-        with pytest.raises(RuntimeError):
-            create_app(token=TOKEN, allowed_hosts=frozenset())
+        with pytest.raises(ValueError):
+            NetworkPolicy(allowed_hosts=frozenset())
 
 
 class TestRequestValidation:
@@ -255,7 +256,7 @@ class TestBrowserStage:
 
     def test_browser_mode_needs_renderer(self):
         with pytest.raises(RuntimeError):
-            create_app(token=TOKEN, allowed_hosts=HOSTS, browser_mode="auto")
+            create_app(token=TOKEN, network_policy=NetworkPolicy(allowed_hosts=HOSTS), browser_mode="auto")
 
 
 class TestParseBrowserField:
@@ -313,8 +314,8 @@ class TestPolicy:
     def test_blocked(self, url):
         assert not is_allowed_url(url, HOSTS)
 
-    def test_load_allowed_hosts(self):
-        assert load_allowed_hosts(" Fake.ktc-test.kr. , ,b.test") == frozenset({"fake.ktc-test.kr", "b.test"})
+    def test_parse_list(self):
+        assert parse_list(" Fake.ktc-test.kr. , ,b.test") == frozenset({"fake.ktc-test.kr", "b.test"})
 
 
 class TestFetchAllowlistHook:
@@ -426,3 +427,24 @@ class TestFetchRetry:
         assert DEFAULT_FETCH_RETRY_TIMEOUT_SECONDS == 5.0
         assert (DEFAULT_FETCH_TIMEOUT_SECONDS + DEFAULT_FETCH_RETRY_TIMEOUT_SECONDS
                 + DEFAULT_BROWSER_TIMEOUT_SECONDS + BACKSTOP_EXTRA_SECONDS) < ISOLATION_TIMEOUT_SECONDS
+
+
+class TestStageTwoEgress:
+    async def test_allowlist_mode_also_goes_through_proxy_without_tls_bypass(self):
+        captured = {}
+
+        async def collect(url, **kwargs):
+            captured.update(kwargs)
+            return ok_result(url)
+
+        async with client_for(collect=collect) as c:
+            assert (await post(c, {"url": OK_URL})).status_code == 200
+        assert captured["allow_insecure_retry"] is False
+        assert captured["client"]._mounts  # HTTPX installs the explicitly configured proxy transport.
+
+    def test_long_redirect_urls_cannot_push_response_over_limit(self):
+        long_url = "https://fake.ktc-test.kr/" + "a" * 200_000
+        body = encode_result(ok_result(OK_URL, final_url=long_url, redirect_chain=(long_url,) * 6, html=""))
+        assert len(body) <= MAX_RESPONSE_BYTES
+        parsed = json.loads(body)
+        assert all(len(hop) <= 2048 for hop in parsed["redirect_chain"])

@@ -5,7 +5,7 @@ import os
 import socket
 from pathlib import Path
 
-from collector.policy import NetworkPolicy, load_allowed_hosts
+from collector.policy import NetworkPolicy, parse_list
 
 
 def blocked_probe_addresses():
@@ -13,8 +13,8 @@ def blocked_probe_addresses():
     if os.getenv("COLLECTOR_NETWORK_MODE", "allowlist") == "public":
         policy = NetworkPolicy(
             mode="public",
-            protected_hosts=load_allowed_hosts(os.getenv("COLLECTOR_PROTECTED_HOSTS", "")),
-            protected_ips=load_allowed_hosts(os.getenv("COLLECTOR_PROTECTED_IPS", "")),
+            protected_hosts=parse_list(os.getenv("COLLECTOR_PROTECTED_HOSTS", "")),
+            protected_ips=parse_list(os.getenv("COLLECTOR_PROTECTED_IPS", "")),
         )
         return (*targets, *sorted(policy.protected_ips))
     return (*targets, "1.1.1.1")
