@@ -141,7 +141,7 @@ ANALYSIS_JOBS: dict[str, dict] = {}
 CALLBACK_DEADLINE_SECONDS = 45.0
 
 # 링크는 요구 분석 LLM 이 찾고(ADR 0007) 수집은 그 뒤에 시작한다. 추출 기본 상한 30초를
-# 다 쓰면 45초 안에 수집(15초)·페이지 분석·카드 여유가 남지 않는다 (docs/latency-budget.md)
+# 다 쓰면 45초 안에 수집(17초)·페이지 분석·카드 여유가 남지 않는다 (docs/latency-budget.md)
 READ_MESSAGE_TIMEOUT_SECONDS = 15.0
 
 # 카카오 SkillResponse 한 번에 담을 수 있는 outputs 수

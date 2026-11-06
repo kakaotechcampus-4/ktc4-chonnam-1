@@ -21,10 +21,12 @@
 | 페이지 HTML 검사(`inspect_html`, 별도 스레드) | 1초 | 그때까지 읽은 자료를 유지하고 시간 초과 표시, LLM 호출 안 함 |
 | 페이지 의미 분석 | 5초 | 확보한 HTML 관측과 실패 사유 유지 |
 | 콜백 HTTP 전송 | 10초 | 저장 결과의 조회 폴백 유지 |
+| 통화 녹음 다운로드(`download_voice_media`) | 15초 | 분석 불가 카드(R4). 서명된 녹음 주소는 남기지 않는다 |
 | 통화 STT | 30초(실측 2~11초) | STT 실패는 대본 없음 결과(`not_analyzable`). 화자는 나누지 않는다([ADR 0008](adr/0008-no-speaker-diarization.md)) |
 | 통화 주장 읽기 | 12초 | 어휘표 폴백, `failures`에 `timeout` |
 | 통화 사례 검색 | 2.5초 | 미확인(`similar_cases:timeout`), 읽기와 병렬 실행 |
-| 통화 분석 전체(`analyze_call`) | 40초 | 남은 단계를 건너뛰고 `unchecked`에 `timeout` |
+| 통화 분석 전체(`analyze_call`) | BE `40 - 경과 초`(AI 기본 40초). 남은 예산이 5초 미만이면 0초 | 남은 단계를 건너뛰고 `unchecked`에 `timeout` |
+| 콜백 없는 통화 동기 경로(개발용) | 90초 | 분석 불가 카드(R4) |
 | 링크 없는 문자 주장 읽기 | 12초 | 어휘표 폴백, `failures`에 `timeout` |
 | 링크 없는 문자 사례 검색 | 2.5초 | 미확인(`similar_cases:timeout`), 읽기와 병렬 실행 |
 | 링크 없는 문자 분석 전체(`analyze_message_case`) | BE `40 - 경과 초`(AI 기본 25초) | 예산이 없으면 LLM 없이 어휘표만 쓴다 |
@@ -38,8 +40,9 @@ BE 는 `READ_MESSAGE_TIMEOUT_SECONDS = 15.0` 으로 추출 상한을 줄인다. 
 
 페이지 분석 상한은 2026-11-03 Render 실측으로 정했다. 로젠 반품 페이지(본문 15,666자)는 6회 모두 완료했지만 LLM 은 평균 1.808초,
 최대 1.955초로 2초에 거의 닿았고, 같은 페이지의 HTML 검사도 0.027~0.093초로 흔들렸다. 한진 조회 페이지(HTML 111,386자)는 2회 모두
-0.1초 검사 상한에 걸려 LLM 까지 가지 못했다. 이 페이지의 전체 검사는 PC 에서 약 56ms 이고, 로젠에서 본 Render/PC 배율(최대 4.4배)을
-적용하면 약 250ms 로 어림했지만, 상향 뒤 Render 실측은 0.353초였다. 검사는 이벤트 루프를 잡으므로 상한을 크게 늘리지 않는다.
+당시의 0.1초 검사 상한에 걸려 LLM 까지 가지 못했다. 이 페이지의 전체 검사는 PC 에서 약 56ms 이고, 로젠에서 본 Render/PC 배율(최대 4.4배)을
+적용하면 약 250ms 로 어림했지만, 상향 뒤 Render 실측은 0.353초였다. 지금은 검사를 별도 스레드
+(`asyncio.to_thread`)에서 돌려 이벤트 루프를 잡지 않으므로 상한을 1초(`ai/src/ai/page.py` 의 `INSPECTION_TIMEOUT_SECONDS`)로 올렸다.
 여러 URL은 순서대로 수집·분석하므로 같은 45초 예산을 공유한다.
 
 통화 STT는 whisper-large-v3로 확정했다(`ai.case.transcript.transcribe_call`, `asyncio.wait_for`로 30초).
@@ -52,6 +55,10 @@ BE 는 `READ_MESSAGE_TIMEOUT_SECONDS = 15.0` 으로 추출 상한을 줄인다. 
 BE는 `analyze_call`에 `time_budget_s`를 넘길 때 기본값 40초를 그대로 쓰지 않고, 40초(전체 분석 45초에서
 카드 렌더링·저장 여유 5초를 뺀 값, v3 B3)에서 이미 쓴 다운로드·STT 시간을 뺀 값(`40 - 경과 초`)을 준다.
 기본값을 그대로 쓰면 STT에 쓴 시간(최대 30초)만큼 45초 제한을 넘을 수 있다.
+남은 값이 5초(`VOICE_MIN_ANALYZE_BUDGET_S`) 미만이면 0초를 넘겨 읽기·검색 LLM 호출을 사실상 건너뛰고,
+`analyze_call`이 바로 시간 초과로 처리한 미확인 결과를 받는다. 녹음 다운로드 상한은 `VOICE_DOWNLOAD_TIMEOUT_SECONDS = 15.0`이고,
+실패하면 R4 카드로 끝난다. 다운로드와 STT가 각 상한을 모두 쓰면 45초 전체 분석 제한에 먼저 걸린다. `callbackUrl`이 없는 동기 경로(개발·테스트용)는 콜백 상한 대신
+`VOICE_SYNC_TIMEOUT_SECONDS = 90.0`으로 전체를 감싼다. 운영(카카오 콜백) 경로에는 쓰이지 않는다.
 `45 - 경과 초`도 안 된다. 분석이 45초를 다 쓰면 카드를 만들기 전에 전체 분석 상한이 작업을 취소한다. 또 BE는 기동 때 반드시
 `warm_up_voice_case_search()`를 호출하고 끝난 뒤에 요청을 받는다. 호출하지 않으면 첫 통화 요청이
 색인 콜드 적재(약 1.4초)와 관문 모델 적재(약 30ms)를 떠안아 사례 검색 예산을 크게 쓴다.

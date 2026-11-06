@@ -8,7 +8,7 @@
 - `scheme.md` — AI → BE 분석 결과 스키마
 - `ai-be-python-integration.md` — BE에서 AI 패키지를 호출하는 방법
 - `isolation-security.md` — 격리 환경 위협 모델과 방어 원칙
-- `isolation-collector-api.md` — 격리 서버 수집 API 계약·대상 제한·배포 순서 (EC2 검증 전 초안)
+- `isolation-collector-api.md` — 격리 서버 수집 API 계약·대상 제한·배포 순서
 - `designs/`
   - `designs/chatbot-flow.md` — 카카오 챗봇 블록 흐름과 사용자 문구
   - `designs/chatbot-copy.md` — 챗봇 화면 문구

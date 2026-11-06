@@ -1,6 +1,6 @@
 # AI → BE 분석 응답 스키마 (`AnalysisResponse`)
 
-PR #24 멘토 피드백을 반영한 wire 포맷이다. 코드(`ai/src/ai/types.py`) 반영은 추후 작업이다.
+PR #24 멘토 피드백을 반영한 wire 포맷이다. 코드는 `ai/src/ai/types.py` 의 `AnalysisResponse` 가 이 형태를 검증한다.
 
 > 주석을 포함하므로 엄밀한 JSON 이 아니라 JSONC 다.
 
@@ -11,7 +11,8 @@ PR #24 멘토 피드백을 반영한 wire 포맷이다. 코드(`ai/src/ai/types.
 ```jsonc
 {
   "url": {
-    /* 리다이렉트 이후 최종 URL. 격리 환경이 확인한 값. 빈 문자열 불가 */
+    /* 리다이렉트 이후 최종 URL. 격리 환경이 확인한 값. 타입: string | null.
+     * 실제 방문 주소를 확인하지 못했으면 null. 빈 문자열 불가 */
     "final_url": "https://delivery-example.com/login",
 
     /* 화이트리스트 대조 대상 도메인. 빈 문자열 불가 */
@@ -44,7 +45,7 @@ PR #24 멘토 피드백을 반영한 wire 포맷이다. 코드(`ai/src/ai/types.
     "brand": "CJ대한통운",
 
     /* 문자 주제 (Topic). 확인하지 못했으면 null */
-    "category": "delivery",
+    "category": "택배",
 
     /*
      * 단계 상태와 결과 (AnswerState)
@@ -104,7 +105,7 @@ PR #24 멘토 피드백을 반영한 wire 포맷이다. 코드(`ai/src/ai/types.
     "brand": "CJ대한통운",
 
     /* 페이지 주제 (Topic). 확인하지 못했으면 null */
-    "category": "delivery",
+    "category": "택배",
 
     /* message.answer 와 같은 AnswerState */
     "answer": "partial",
@@ -163,8 +164,10 @@ PR #24 멘토 피드백을 반영한 wire 포맷이다. 코드(`ai/src/ai/types.
 | `FailureCode` | `details.reason.failures[]` | `empty_input`, `missing_result`, `collection_failed`, `timeout`, `input_too_large`, `partial_content`, `llm_error`, `refused`, `invalid_output` |
 
 - `Brand`, `Topic`, `MessageDoubt`, `EnvDoubt` 값은 `ai/src/ai/types.py` 의 기존 정의를 그대로 쓴다.
-- 단, `MessageDoubt.NONE` / `EnvDoubt.NONE` (`"없음"`) 은 삭제한다. 빈 배열 `[]` 이 대신한다.
-- `RiskSignalCode.EXPIRED_LINK` 는 신호가 아니므로 제외한다.
+- `MessageDoubt.NONE` / `EnvDoubt.NONE` (`"없음"`) 은 삭제했다. 빈 배열 `[]` 이 대신한다.
+- `RiskSignalCode.EXPIRED_LINK` 는 wire 의 `signals` 에 싣지 않는다. 값은 `decide()` 가 결정적 관측에서만 내는 내부 코드로 남아 있고,
+  `SignalItem` 이 이 값을 거부한다.
+- `DomainMatch` 에는 내부용 `no_url` 도 있지만 `url.official` 은 이 값을 거부한다(URL 이 있는 응답이므로).
 
 ---
 
