@@ -1,0 +1,25 @@
+id: V2
+scenario: voice_phishing
+# 우체국 배송기사 사칭 + 카드사 번호로 전화 유도. 실제 whisper 대본처럼 받는 사람 말이 섞여 있고,
+# 상대는 "-시라고요" 로 자기 지시를 되풀이한다 (ADR 0008, ADR 0010)
+input: {kind: audio}
+transcript:
+  - "네 여보세요 안녕하세요 우체국 배송기사입니다"
+  - "네 네 기사님 맞으시죠?"
+  - "제가 카드사 대표 번호 불러줄게요 지금 메모가 될까요?"
+  - "왜요?"
+  - "불러주면 어떻게 하라고?"
+  - "아 불러줘서 전화하시라고요."
+  - "왜 전화를 해요?"
+runtime:
+  search: kb_empty
+  reading:
+    identity: [{kind: institution, name: 우체국, quote: "우체국 배송기사입니다"}]
+    demands: [{kind: call_number, quote: "불러줘서 전화하시라고요"}]
+expect:
+  conclusion: inconclusive
+  caution: true
+  floors: []
+  stop_actions: [dont_call_number_in_message, hang_up]
+  questions: {already_acted: [entered_info, installed_app, sent_money, not_yet]}
+  rejected: []

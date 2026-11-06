@@ -28,6 +28,13 @@ MAX_REPEAT = 5
 # 마침표·물음표·느낌표·말줄임표 뒤에서 자른다. 물음표는 되묻기를 가리는 단서라 남긴다(forms)
 # 숫자 사이의 점("010.1234.5678")은 자르지 않는다. 잘리면 가리기 규칙이 못 잡은 채 LLM 에 간다
 SENTENCE_RE = re.compile(r"(?:[^.?!…]|(?<=\d)\.(?=\d))+[.?!…]*")
+# 받아쓰기가 문장 부호를 빠뜨리면 통화 전체가 한 문장이 된다. 그러면 그 안의 물음·옮긴 말 하나로
+# 모든 주장이 받는 사람 말로 버려진다. 말 끝 어미("입니다", "맞으시죠", "계신가요", "거든요") 뒤에서도 자른다.
+# "필요"·"중요" 같은 낱말과 홀로 쓴 "다"("거의 다 끝났어요")는 어미가 아니다
+_SPOKEN_END = re.compile(
+    r"(?:(?<=[가-힣]요)(?<!필요)(?<!중요)(?<!주요)(?<!수요)(?<!개요)(?<!강요)"
+    r"|(?<=[가-힣]다)(?<!바다)|(?<=[가-힣]죠)|(?<=[가-힣]까))\s+"
+)
 
 
 async def _default_transcribe(audio: bytes, filename: str) -> str:
@@ -43,7 +50,12 @@ class TranscribeRuntime:
 
 def split_sentences(text: str) -> list[str]:
     """문장으로 자르고, 같은 문장이 5번 넘게 연달아 나오면 한 번만 남긴다."""
-    rows = [s.strip() for s in SENTENCE_RE.findall(text) if s.strip()]
+    rows = [
+        piece.strip()
+        for s in SENTENCE_RE.findall(text)
+        for piece in _SPOKEN_END.split(s)
+        if piece.strip()
+    ]
     out: list[str] = []
     i = 0
     while i < len(rows):

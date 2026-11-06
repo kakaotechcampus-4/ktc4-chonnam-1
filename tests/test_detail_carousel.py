@@ -79,8 +79,30 @@ class TestHandleDetailCarousel:
         items = response["template"]["outputs"][0]["carousel"]["items"]
         assert len(items) == 2  # 신호 없음 → C2 + C3
 
+    def test_voice_detail_is_not_blocked_by_text_link_count(self):
+        payload = {"conclusion": "suspected", "claims": {}, "unchecked": []}
+        job = _job("voice-job", final_payload=payload)
+        job.update(analysis_kind="voice", link_count=3)
+
+        assert main.handle_detail_carousel("voice-job") == main.render_voice_detail_carousel(payload)
+
 
 class TestKakaoSkillRoutesClientExtraToDetailCarousel:
+    def test_replayed_multilink_detail_request_is_blocked(self, client):
+        job = _job("multi-job", final_payload=_ANALYSIS_RESULT)
+        job["link_count"] = 2
+
+        response = client.post("/kakao/skill", json={
+            "userRequest": {"utterance": "자세히 보기", "user": {"id": "kakao-user-1"}},
+            "action": {"clientExtra": {"job_id": "multi-job"}},
+        })
+
+        assert response.status_code == 200
+        outputs = response.json()["template"]["outputs"]
+        assert len(outputs) == 1
+        assert "주소를 하나씩 다시 보내" in outputs[0]["simpleText"]["text"]
+        assert job["final_payload"] == _ANALYSIS_RESULT
+
     def test_client_extra_job_id_skips_link_extraction(self, client):
         """버튼 클릭 바디에는 보통 링크가 없는 발화가 들어오는데,
         clientExtra가 있으면 그 발화를 분석 대상으로 보지 않아야 한다."""

@@ -28,12 +28,12 @@
 
 ## 컨벤션
 
-- 브랜치 `feat/…` `fix/…`, 커밋 `feat:` `fix:` `docs:` `refactor:`
+- 브랜치 `feature/…` `fix/…` `refactor/…`, 커밋 `feat:` `fix:` `docs:` `refactor:` `test:`
 - 상세: `docs/conventions.md`
 - 결정 기록: `docs/adr/`
 
 ## 참조
 
 - PRD: `docs/PRD.md`
-- 카카오 payload 스키마: `contracts/schemas/`
+- BE↔AI 결과 스키마: `contracts/schemas/` (절차: `docs/contracts.md`)
 - `docs/archive/` 는 구현 완료·대체된 문서 보관소다. 참고·검색하지 않는다.

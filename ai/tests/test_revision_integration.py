@@ -518,11 +518,37 @@ async def test_extraction_timeout_preserves_final_json_and_completed_environment
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("suffix", [
-    "<span></span>" * (page_module.MAX_ELEMENTS + 1),
-    "가" * (page_module.MAX_PAGE_TEXT_CHARS + 1),
-], ids=["element-limit", "text-limit"])
-async def test_partial_html_preserves_observed_form_without_claiming_completion(suffix, make_parse_client):
+async def test_text_capped_page_reports_risk_without_claiming_completion(make_parse_client):
+    padding = "<p>" + "가" * (page_module.MAX_PAGE_TEXT_CHARS + 1) + "</p>"
+    html = padding + '<form><label>계좌 비밀번호를 입력하세요<input type="password"></label></form>'
+    client, parse = make_parse_client(parsed=PageProposal(signals=[signal(
+        RiskSignalCode.CREDENTIAL_REQUEST, EvidenceSource.OBSERVATION,
+        inspect_html(html).elements[0].element_id)]))
+
+    env = await analyze_environment_part(page(html), client=client, model="test")
+
+    parse.assert_awaited_once()
+    assert env.answer is _Answer.PARTIAL
+    assert [item.code for item in env.details.signals] == [RiskSignalCode.CREDENTIAL_REQUEST]
+
+
+@pytest.mark.asyncio
+async def test_text_capped_page_without_signals_stays_incomplete(make_parse_client):
+    padding = "<p>" + "가" * (page_module.MAX_PAGE_TEXT_CHARS + 1) + "</p>"
+    client, parse = make_parse_client(parsed=PageProposal())
+
+    env = await analyze_environment_part(page(padding), client=client, model="test")
+
+    parse.assert_awaited_once()
+    assert env.answer is _Answer.PARTIAL
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix, llm_runs", [
+    ("<div>" * (page_module.MAX_DEPTH + 1), False),
+    ("가" * (page_module.MAX_PAGE_TEXT_CHARS + 1), True),
+], ids=["depth-limit", "text-limit"])
+async def test_partial_html_preserves_observed_form_without_claiming_completion(suffix, llm_runs, make_parse_client):
     client, parse = make_parse_client(parsed=PageProposal())
     message = await analyze_message_part(TEXT, client=message_client(make_parse_client), model="test")
     env = await analyze_environment_part(page(LOGIN_HTML + suffix), client=client, model="test")
@@ -534,7 +560,7 @@ async def test_partial_html_preserves_observed_form_without_claiming_completion(
     assert "일부 자료만 확보" in response.env.details.reason.text
     assert "<form>" not in response.env.details.reason.text
     assert response.result is False
-    parse.assert_not_awaited()
+    assert parse.await_count == (1 if llm_runs else 0)
 
 
 @pytest.mark.asyncio
@@ -676,7 +702,7 @@ async def test_real_sdk_stages_and_search_keep_existing_budgets(monkeypatch, mak
     env = await analyze_environment_part(page(), client=client, model="test")
     assert message.answer is _Answer.NO_RISK_FOUND
     assert env.answer is _Answer.NO_RISK_FOUND
-    assert sorted(deadlines) == [1.0, 2.0, 30.0, 30.0]
+    assert sorted(deadlines) == [2.5, 5.0, 30.0, 30.0]
 
 
 @pytest.mark.asyncio
@@ -693,3 +719,54 @@ async def test_parcel_status_wording_keeps_completion_and_mixed_topic_boundaries
     assert result.answer is _Answer.NO_RISK_FOUND
     assert first_doubt(result) is doubt
     assert result.category.value == category
+
+
+@pytest.mark.asyncio
+async def test_page_diagnostics_log_timings_without_page_content(make_parse_client, caplog):
+    html = "<p>SECRET-PAGE-TEXT</p>" + LOGIN_HTML
+    client, _ = make_parse_client(parsed=PageProposal())
+
+    with caplog.at_level("WARNING", logger="ai.pipeline.analysis"):
+        await analyze_environment_part(page(html), client=client, model="test")
+
+    assert "page inspection elapsed=" in caplog.text
+    assert f"html_chars={len(html)}" in caplog.text
+    assert "page llm elapsed=" in caplog.text
+    assert "status=completed" in caplog.text
+    assert "SECRET-PAGE-TEXT" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_page_diagnostics_show_llm_was_skipped(make_parse_client, caplog):
+    client, _ = make_parse_client(parsed=PageProposal())
+
+    with caplog.at_level("WARNING", logger="ai.pipeline.analysis"):
+        await analyze_environment_part(
+            page(LOGIN_HTML + "<div>" * (page_module.MAX_DEPTH + 1)),
+            client=client, model="test",
+        )
+
+    assert "page inspection elapsed=" in caplog.text
+    assert "page llm elapsed=" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_page_inspection_runs_off_the_event_loop_thread(make_parse_client, monkeypatch):
+    import threading
+
+    import ai.pipeline.analysis as analysis_module
+
+    client, _ = make_parse_client(parsed=PageProposal())
+    inspect = analysis_module.inspect_html
+    threads = []
+
+    def recording_inspect(html):
+        threads.append(threading.current_thread())
+        return inspect(html)
+
+    monkeypatch.setattr(analysis_module, "inspect_html", recording_inspect)
+
+    await analyze_environment_part(page(LOGIN_HTML), client=client, model="test")
+
+    assert len(threads) == 1
+    assert threads[0] is not threading.current_thread()

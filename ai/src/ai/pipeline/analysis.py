@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import AsyncExitStack
+import logging
+import time
+from dataclasses import replace
 
 from openai import APITimeoutError, AsyncOpenAI
 
@@ -22,11 +25,13 @@ from ai.types import (
     SignalAnalysis,
 )
 
+LOGGER = logging.getLogger(__name__)
 
-# Search is ~2ms warm, but the first call per process also loads the KB
-# (measured 170-290ms), which timed out the old 50ms budget. gather() waits for
+
+# TF-IDF search is ~2ms warm, but the query embedding waits on the network for up
+# to semantic.QUERY_TIMEOUT_S before falling back to TF-IDF. gather() waits for
 # both, so this adds time only when extraction finishes before the search.
-SEARCH_TIMEOUT_SECONDS = 1.0
+SEARCH_TIMEOUT_SECONDS = 2.5
 MAX_MESSAGE_CHARS = 8192
 # Any non-blank text: search_cases returns before touching the KB on blank input.
 _WARM_UP_TEXT = "warm-up"
@@ -34,7 +39,7 @@ _WARM_UP_TEXT = "warm-up"
 
 async def _search_with_budget(text: str) -> CaseSearchResult:
     # Cancellation stops the coroutine, not an already running worker thread.
-    # search_cases only reads the bounded local KB, cached after the first call.
+    # search_cases reads the bounded local KB and one bounded embedding request.
     return await asyncio.wait_for(
         asyncio.to_thread(search_cases, text), timeout=SEARCH_TIMEOUT_SECONDS
     )
@@ -67,6 +72,7 @@ async def read_message(
     """
     failure = (FailureCode.EMPTY_INPUT if not text.strip()
         else FailureCode.INPUT_TOO_LARGE if len(text) > MAX_MESSAGE_CHARS else None)
+    started = client_ready = llm_done = time.perf_counter()
     if failure is not None:
         extracted = fallback_analysis(failure)
     else:
@@ -76,11 +82,21 @@ async def read_message(
                 if llm is None:
                     llm = await stack.enter_async_context(
                         create_client(timeout_s))
+                client_ready = time.perf_counter()
                 extracted = await analyze_message(
                     text, client=llm, model=model, timeout_s=timeout_s, ground_urls=False)
+                llm_done = time.perf_counter()
         except Exception as error:
             extracted = fallback_analysis(_failure_code(error))
     found = message_links(text, extracted.urls)
+    if failure is None:
+        # 상한은 LLM 호출에만 걸리므로 클라이언트 준비·정리 시간을 나눠 남긴다. 문자 내용은 남기지 않는다
+        finished = time.perf_counter()
+        LOGGER.warning(
+            "message read elapsed=%.3fs client=%.3fs llm=%.3fs status=%s failure=%s links=%d",
+            finished - started, client_ready - started, max(llm_done, client_ready) - client_ready,
+            extracted.analysis_status.value, extracted.failure.value if extracted.failure else None, len(found),
+        )
     message = remove_spans(text, [span for span, _ in found])
     # A span the model changed or cut short stays out of `links`, and a link it
     # skipped leaves its mark in the body. Neither may read as "no link".
@@ -172,16 +188,34 @@ async def analyze_environment_part(
     client: AsyncOpenAI | None = None, model: str | None = None,
 ) -> EnvironmentPart:
     """Analyze only supplied page material or an explicit collection failure."""
-    inspection = (inspect_html(page.info) if page is not None else
+    started = time.perf_counter()
+    # 공격자가 만든 큰 HTML 검사가 다른 사용자의 요청을 막지 않도록 별도 스레드에서 돌린다
+    inspection = (await asyncio.to_thread(inspect_html, page.info) if page is not None else
         PageInspection(text="", elements=(), failure=FailureCode.MISSING_RESULT))
+    if page is not None:
+        # 소요 시간과 개수만 남긴다. 주소와 본문은 남기지 않는다
+        LOGGER.warning(
+            "page inspection elapsed=%.3fs html_chars=%d text_chars=%d elements=%d failure=%s text_capped=%s",
+            time.perf_counter() - started, len(page.info), len(inspection.text), len(inspection.elements),
+            inspection.failure.value if inspection.failure else None, inspection.text_capped,
+        )
     # Collector truncation leaves usable material; inspection limits still stop analysis.
-    stop = inspection.failure or (failure if failure is not FailureCode.PARTIAL_CONTENT else None)
+    # 글자 상한만 넘긴 페이지는 요소를 끝까지 봤으므로 위험 근거를 찾는다. inspection.failure 가
+    # 그대로 남아 결과는 partial 이고, 근거가 없어도 정상으로 확정되지 않는다.
+    inspection_stop = None if inspection.text_capped else inspection.failure
+    stop = inspection_stop or (failure if failure is not FailureCode.PARTIAL_CONTENT else None)
     if stop is not None:
         analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=stop)
         return build_environment_part(page, inspection, analysis, failure=failure)
 
+    started = time.perf_counter()
     try:
-        analysis = await analyze_page(inspection, client=client, model=model)
+        analysis = await analyze_page(replace(inspection, failure=None), client=client, model=model)
     except Exception as error:
         analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=_failure_code(error))
+    LOGGER.warning(
+        "page llm elapsed=%.3fs status=%s failure=%s",
+        time.perf_counter() - started, analysis.status.value,
+        analysis.failure.value if analysis.failure else None,
+    )
     return build_environment_part(page, inspection, analysis, failure=failure)

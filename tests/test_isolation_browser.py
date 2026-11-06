@@ -14,6 +14,7 @@ import ssl
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -22,7 +23,7 @@ import pytest
 pytest.importorskip("playwright")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "infra" / "isolation"))
 
-from collector.browser import BrowserRenderer, browser_trigger  # noqa: E402
+from collector.browser import MAX_NAVIGATION_REQUESTS, BrowserRenderer, browser_trigger  # noqa: E402
 from collector.egress_proxy import EgressProxy, parse_connect  # noqa: E402
 from scanner.models import CollectResult  # noqa: E402
 
@@ -56,6 +57,8 @@ def make_public_handler(internal_port: int):
     pages = {
         "/form": '<title>배송 조회</title><form><input type="tel" name="p"></form>',
         "/js-redirect": '<title>이동</title><script>location.href="/form"</script>',
+        "/js-via-302": '<title>경유</title><script>location.href="/hop"</script>',
+        "/many-hops": '<title>많이</title><script>location.href="/loop/0"</script>',
         "/js-out": f'<title>밖으로</title><script>location.href="http://{inside}/js-out"</script>',
         "/sub": (
             "<title>하위 자원</title>"
@@ -72,10 +75,17 @@ def make_public_handler(internal_port: int):
         "/download": '<title>앱 설치</title><a id="d" href="/app.apk">설치</a>'
                      '<script>document.getElementById("d").click()</script>',
         "/busy": "<title>멈춤</title><script>while (true) {}</script>",
+        "/lone-surrogate": "<title>깨진 글자</title>"
+                           "<script>document.body.append(String.fromCharCode(0xD800))</script>",
     }
 
     class Public(BaseHTTPRequestHandler):
         def do_GET(self):
+            if self.path == "/hop":
+                return self._redirect("/form")
+            if self.path.startswith("/loop/"):
+                step = int(self.path.rsplit("/", 1)[1])
+                return self._redirect(f"/loop/{step + 1}")
             if self.path == "/chain":
                 return self._redirect("/chain2")
             if self.path == "/chain2":
@@ -168,6 +178,26 @@ async def test_follows_js_redirect_inside_allowlist(renderer, sites):
     assert result.navigation_chain[-1] == url(sites, "/form")
 
 
+async def test_navigation_requests_record_http_hop_hidden_from_chain(renderer, sites):
+    result = await renderer.render(url(sites, "/js-via-302"), trigger="script_redirect", timeout=6)
+    assert result.final_url == url(sites, "/form")
+    assert url(sites, "/hop") not in result.navigation_chain  # 문서가 확정되지 않아 이동 기록에는 없다
+    assert result.navigation_requests == (
+        url(sites, "/js-via-302"), url(sites, "/hop"), url(sites, "/form"),
+    )
+
+
+async def test_navigation_requests_ignore_subresources_and_popups(renderer, sites):
+    result = await renderer.render(url(sites, "/sub"), trigger="always", timeout=6)
+    assert result.navigation_requests == (url(sites, "/sub"),)
+
+
+async def test_navigation_requests_over_limit_is_a_failure(renderer, sites):
+    result = await renderer.render(url(sites, "/many-hops"), trigger="script_redirect", timeout=6)
+    assert len(result.navigation_requests) == MAX_NAVIGATION_REQUESTS
+    assert "browser_navigation_limit" in result.failures
+
+
 async def test_js_redirect_outside_is_blocked(renderer, sites):
     before = sites[1].connections
     result = await renderer.render(url(sites, "/js-out"), trigger="script_redirect", timeout=6)
@@ -213,6 +243,12 @@ async def test_busy_page_times_out_and_next_page_works(renderer, sites):
     assert after.title == "배송 조회"
 
 
+async def test_lone_surrogate_in_page_keeps_the_result(renderer, sites):
+    result = await renderer.render(url(sites, "/lone-surrogate"), trigger="always", timeout=6)
+    assert result.title == "깨진 글자"
+    result.html.encode("utf-8")
+
+
 def test_parse_connect():
     assert parse_connect(b"CONNECT Fake.Test.:443 HTTP/1.1\r\n\r\n") == ("fake.test", 443)
     assert parse_connect(b"CONNECT [::1]:443 HTTP/1.1\r\n\r\n") == ("::1", 443)
@@ -237,6 +273,19 @@ def stage2(html, status=200, failures=()):
     ('<script src="/a.js"></script>', 200, ("html_truncated",), "script_only_page"),
     ("", 200, (), None),
     ("<p>" + "안내 " * 100 + "</p><script>var geolocation = 1; if (a == location) {}</script>", 200, (), None),
+    ("<p>" + "안내 " * 100 + "</p><SCRIPT type=x>location.replace('/x')</SCRIPT >", 200, (), "script_redirect"),
+    ('<META content="0" HTTP-EQUIV=Refresh><p>' + "안내 " * 100, 200, (), "script_redirect"),
+    ("<p>" + "안내 " * 100 + "</p><scripts>location.href='/x'</scripts>", 200, (), None),
+    ("<style>" + "a" * 300 + "</style><noscript>" + "b" * 300 + "</noscript>", 200, (), None),
+    ("<style>" + "a" * 300 + "</style><script></script>", 200, (), "script_only_page"),
 ])
 def test_browser_trigger(html, status, failures, expected):
     assert browser_trigger(stage2(html, status, failures)) == expected
+
+
+@pytest.mark.parametrize("unit", ["<script>", "<script ", "<meta ", "<style>", "<noscript>", "<"])
+def test_browser_trigger_does_not_stall_on_unclosed_tags(unit):
+    html = unit * (256 * 1024 // len(unit))
+    start = time.perf_counter()
+    browser_trigger(stage2(html))
+    assert time.perf_counter() - start < 1.0

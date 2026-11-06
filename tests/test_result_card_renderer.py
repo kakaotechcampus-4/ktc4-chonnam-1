@@ -122,6 +122,16 @@ class TestRenderResultCard:
 
         assert card["version"] == "2.0"
 
+    def test_disabling_details_preserves_all_official_card_buttons(self):
+        analysis = _analysis(
+            "official", _part("no_risk_found", brand="CJ대한통운"),
+            _part("no_risk_found"), domain="cjlogistics.com",
+        )
+
+        assert render_result_card(analysis, job_id="job-123", allow_details=False) == render_result_card(
+            analysis, job_id="job-123",
+        )
+
 
 def _r9_description(analysis: dict) -> str:
     card = render_result_card(analysis)
@@ -145,7 +155,7 @@ class TestR9BlankValues:
 
         description = _r9_description(analysis)
 
-        assert "문자 속 링크 대신 CJ대한통운 공식 앱이나 홈페이지" in description
+        assert "문자 속 링크 대신 CJ대한통운\n공식 앱이나 홈페이지" in description
 
     def test_org_label_falls_back_when_brand_unknown(self):
         analysis = _analysis(
@@ -154,7 +164,7 @@ class TestR9BlankValues:
 
         description = _r9_description(analysis)
 
-        assert "문자 속 링크 대신 보낸 기관의 공식 앱이나 홈페이지" in description
+        assert "문자 속 링크 대신 보낸 기관의\n공식 앱이나 홈페이지" in description
 
     def test_sender_always_goes_to_unchecked_even_when_brand_known(self):
         analysis = _analysis(
@@ -542,7 +552,7 @@ class TestR9MessageReason:
         description = _r9_description(analysis)
 
         assert len(description) <= 400
-        assert description.endswith("기한이 적혀 있다면 그 전에 공식 경로로 확인하세요.")
+        assert description.endswith("기한이 있다면 미리 공식 경로로 확인하세요.")
         # 잘렸으면 원문 전체가 다 들어갈 리 없다.
         assert long_reason not in description
 
@@ -557,7 +567,7 @@ class TestR9MessageReason:
 
         description = _r9_description(analysis)
 
-        assert "문자 속 링크 대신 CJ대한통운 공식 앱이나" in description
+        assert "문자 속 링크 대신 CJ대한통운\n공식 앱이나" in description
         assert "- 문자에서 위험 신호를 찾지 못했어요" in description
         assert "{{ message_reason }}" not in description
 

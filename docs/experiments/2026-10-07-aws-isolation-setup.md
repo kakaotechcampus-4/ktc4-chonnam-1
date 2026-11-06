@@ -4,6 +4,7 @@
 - 기준: [격리 환경 보안 설계](../isolation-security.md) §5.1·5.2·5.11·5.14·5.15
 - 적용 범위: 현재 노트북의 SSH 접속과 기존 EC2의 오프라인 격리 실행환경
 - 메인 서버: Render. Render 설정, 테스트 링크 목록, 수집 HTTP API는 이번 작업에서 보류했다.
+- 이후 상태: 공개 모드 전환은 [공개 수집 적용 기록](2026-10-17-public-collector-rollout.md), 현재 배포 절차는 [격리 서버 수집 API](../isolation-collector-api.md) §7 을 따른다. 아래는 2026-10-07 당시 기록이다.
 
 ## 접속 방법
 

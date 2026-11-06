@@ -8,6 +8,7 @@ import logging
 import math
 import re
 import threading
+import time
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -289,10 +290,17 @@ def _embedded_scores(
     index = semantic.load_index(cases_dir, kind, cases)
     if index is None:
         return None
+    started = time.perf_counter()
     try:
-        return semantic.scores(index, embed(text))
+        query = embed(text)
+        # 운영 지연을 보려는 기록이다. 기본 로그 수준에서 보이도록 warning 으로 남긴다. 문자 내용은 남기지 않는다
+        LOGGER.warning("query embedding elapsed=%.3fs kind=%s", time.perf_counter() - started, kind)
+        return semantic.scores(index, query)
     except Exception as exc:
-        LOGGER.warning("query embedding failed: %s", type(exc).__name__)
+        LOGGER.warning(
+            "query embedding failed: %s elapsed=%.3fs kind=%s",
+            type(exc).__name__, time.perf_counter() - started, kind,
+        )
         return None
 
 

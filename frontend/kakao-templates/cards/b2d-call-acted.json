@@ -14,12 +14,12 @@
           "buttonLayout": "vertical",
           "buttons": [
             {
-              "label": "112 신고",
+              "label": "112 신고하기",
               "action": "phone",
               "phoneNumber": "112"
             },
             {
-              "label": "1394 상담",
+              "label": "1394 상담하기",
               "action": "phone",
               "phoneNumber": "1394"
             }

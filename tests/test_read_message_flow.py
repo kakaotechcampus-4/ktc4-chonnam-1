@@ -5,6 +5,7 @@
 """
 
 import asyncio
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -134,15 +135,151 @@ async def test_partly_read_links_say_some_were_not_checked(stub_read_message, co
     assert collected["collect"] == ["https://a-cj.top/x"]
 
 
-async def test_partly_read_note_never_exceeds_kakao_outputs(stub_read_message, collected):
-    links = [f"https://a{i}.top/" for i in range(main.KAKAO_MAX_OUTPUTS)]
+@pytest.mark.parametrize("with_job", [False, True], ids=["direct", "job"])
+@pytest.mark.parametrize("link_count,unverified,failure", [
+    (3, True, None),
+    (3, False, None),
+    (2, True, None),
+    (0, True, None),
+    (0, False, FailureCode.LLM_ERROR),
+], ids=["four_links_three_read", "three_all_read", "three_links_two_read",
+        "no_links_read", "extraction_failed"])
+async def test_link_notice_and_result_cards_respect_output_limit(
+    stub_read_message, collected, monkeypatch, with_job, link_count, unverified, failure,
+):
+    links = [f"https://a{index}.top/" for index in range(link_count)]
+    stub_read_message(links, unverified=unverified, failure=failure)
+    rendered = []
+
+    def result_card(payload, job_id=None, *, allow_details=True):
+        assert allow_details == (link_count == 1)
+        # Distinct outputs prove which analyzed links survive the display limit;
+        # real card rendering and callback delivery are covered in the service test.
+        card = {"textCard": {"title": payload["url"]["domain"], "description": "분석 결과"}}
+        rendered.append((payload, job_id, card))
+        return {"version": "2.0", "template": {"outputs": [card]}}
+
+    monkeypatch.setattr(main, "render_result_card", result_card)
+    job_id = main.create_analysis_job(USER) if with_job else None
+    utterance = " ".join(links + (["https://unread.top/"] if unverified else []))
+    response = await main.run_analysis(utterance, job_id=job_id)
+    outputs = response["template"]["outputs"]
+
+    assert 1 <= len(outputs) <= main.KAKAO_MAX_OUTPUTS
+    assert collected["collect"] == ([] if failure else links)
+    if failure:
+        assert response == main.render_card("r4-unavailable")
+        assert rendered == []
+    elif not links:
+        assert _texts(response) == [main._UNREAD_LINKS_TEXT]
+        assert rendered == []
+    else:
+        assert len(rendered) == link_count  # analysis is not shortened to fit the UI
+        assert all(passed_job_id == job_id for _, passed_job_id, _ in rendered)
+        card_count = min(link_count, main.KAKAO_MAX_OUTPUTS - int(unverified))
+        assert outputs[int(unverified):] == [card for _, _, card in rendered[:card_count]]
+        if unverified:
+            texts = _texts(response)
+            assert len(texts) == 1
+            assert main._PARTLY_READ_LINKS_TEXT in texts[0]
+            if card_count < link_count:
+                assert "검사 결과" in texts[0] and "생략" in texts[0]
+                assert "하나씩 다시 보내" in texts[0]
+            else:
+                assert texts == [main._PARTLY_READ_LINKS_TEXT]
+        else:
+            assert _texts(response) == []
+        if job_id:
+            assert main.ANALYSIS_JOBS[job_id]["final_payload"] == rendered[-1][0]
+
+
+def _detail_payload(domain, kind):
+    return {
+        "url": {"domain": domain, "final_url": f"https://{domain}/", "official": "not_registered"},
+        "message": {
+            "brand": "unknown", "answer": "risk_found" if kind == "r1" else "no_risk_found",
+            "details": {"signals": [{"code": "credential_request", "evidence": "비밀번호 입력"}] if kind == "r1" else [],
+                        "reason": {"text": "문자 분석 결과", "failures": []}},
+        },
+        "env": {"answer": "not_run", "details": {"reason": {"failures": []}}},
+        "result": False,
+    }
+
+
+@pytest.mark.parametrize("kind", ["r1", "r9"])
+@pytest.mark.parametrize("link_count,unverified", [(1, False), (2, False), (3, True)])
+@pytest.mark.parametrize("with_job", [False, True], ids=["direct", "job"])
+async def test_real_result_cards_disable_only_ambiguous_detail_buttons(
+    stub_read_message, collected, monkeypatch, kind, link_count, unverified, with_job,
+):
+    links = [f"https://link{index}.top/" for index in range(link_count)]
+    stub_read_message(links, unverified=unverified)
+    payloads = []
+
+    async def finalize(*, url, **_):
+        payload = _detail_payload(url.domain, kind)
+        payloads.append(payload)
+        return SimpleNamespace(model_dump=lambda **_: payload)
+
+    monkeypatch.setattr(main, "finalize_analysis", finalize)
+    job_id = main.create_analysis_job(USER) if with_job else None
+    response = await main.run_analysis(" ".join(links), job_id=job_id)
+    outputs = response["template"]["outputs"]
+    assert len(outputs) <= main.KAKAO_MAX_OUTPUTS
+    assert collected["collect"] == links
+    assert len(payloads) == link_count
+    if job_id:
+        assert main.ANALYSIS_JOBS[job_id]["final_payload"] == payloads[-1]
+        assert main.ANALYSIS_JOBS[job_id]["link_count"] == link_count
+    if unverified:
+        assert main._PARTLY_READ_LINKS_TEXT in outputs[0]["simpleText"]["text"]
+        assert "생략" in outputs[0]["simpleText"]["text"]
+
+    visible = outputs[int(unverified):]
+    for output, payload in zip(visible, payloads):
+        # Compare the whole real R1/R9 output: only the detail button may change.
+        expected = main.render_result_card(payload, job_id=job_id)["template"]["outputs"][0]
+        key = "basicCard" if kind == "r1" else "textCard"
+        assert any(b["label"] == "자세히 보기" for b in expected[key]["buttons"])
+        if link_count > 1:
+            expected[key]["buttons"] = [
+                b for b in expected[key]["buttons"] if b["label"] != "자세히 보기"
+            ]
+        else:
+            button = next(b for b in output[key]["buttons"] if b["label"] == "자세히 보기")
+            if job_id:
+                assert button["extra"] == {"job_id": job_id}
+                assert main.handle_detail_carousel(job_id) == main.render_detail_carousel(payload)
+            else:
+                assert "extra" not in button
+        assert output == expected
+
+
+async def test_multilink_detail_request_never_uses_the_hidden_last_payload(
+    stub_read_message, collected, monkeypatch,
+):
+    links = [f"https://link{index}.top/" for index in range(3)]
     stub_read_message(links, unverified=True)
 
-    response = await main.run_analysis(" ".join(links))
+    async def finalize(*, url, **_):
+        payload = _detail_payload(url.domain, "r9")
+        return SimpleNamespace(model_dump=lambda **_: payload)
 
-    outputs = response["template"]["outputs"]
-    assert len(outputs) == main.KAKAO_MAX_OUTPUTS
-    assert main._PARTLY_READ_LINKS_TEXT not in _texts(response)
+    monkeypatch.setattr(main, "finalize_analysis", finalize)
+    rendered_details = []
+
+    def detail(payload):
+        rendered_details.append(payload["url"]["domain"])
+        return main.kakao_response("wrong link detail")
+
+    monkeypatch.setattr(main, "render_detail_carousel", detail)
+    job_id = main.create_analysis_job(USER)
+    await main.run_analysis(" ".join(links), job_id=job_id)
+    assert main.ANALYSIS_JOBS[job_id]["final_payload"]["url"]["domain"] == "link2.top"
+    # Replay/manual requests must also be blocked, not just newly rendered buttons.
+    response = main.handle_detail_carousel(job_id)
+    assert rendered_details == [], "상세 요청이 화면에서 생략된 마지막 링크를 열었음"
+    assert "주소를 하나씩 다시 보내" in _texts(response)[0]
 
 
 async def _skill(utterance, callback_url="https://bot-api.kakao.com/cb"):

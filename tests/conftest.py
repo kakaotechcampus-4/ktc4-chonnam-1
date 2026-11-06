@@ -5,8 +5,11 @@ from urllib.parse import urlsplit
 import pytest
 
 import main
+from ai.case import MessageRuntime, analyze_message_case
+from ai.case.lexicon import read_with_lexicon
 from ai.types import (
-    AnalysisStatus, FailureCode, LinkCandidate, LinkOrigin, MessageAnalysis, MessageReading,
+    AnalysisStatus, CaseSearchResult, FailureCode, LinkCandidate, LinkOrigin, MessageAnalysis,
+    MessageReading,
 )
 
 
@@ -43,3 +46,29 @@ def stub_read_message(monkeypatch):
         return calls
 
     return install
+
+
+async def _lexicon_read(source):
+    # 실제 LLM 대신 어휘표로 읽는다. 시간 초과 폴백과 같은 모양이다
+    return read_with_lexicon(source, FailureCode.TIMEOUT)
+
+
+def _no_cases(text):
+    return CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=[])
+
+
+OFFLINE_MESSAGE_RUNTIME = MessageRuntime(read_claims=_lexicon_read, search_cases=_no_cases)
+
+
+@pytest.fixture(autouse=True)
+def offline_message_case(monkeypatch):
+    """링크 없는 문자 분석이 실제 LLM·임베딩을 부르지 않게 한다.
+
+    읽기는 어휘표, 사례 검색은 빈 결과다. 테스트가 직접 바꾸려면 main.analyze_message_case 를 다시 덮는다.
+    """
+
+    async def offline(text, **kwargs):
+        kwargs.setdefault("runtime", OFFLINE_MESSAGE_RUNTIME)
+        return await analyze_message_case(text, **kwargs)
+
+    monkeypatch.setattr(main, "analyze_message_case", offline)

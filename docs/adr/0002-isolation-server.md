@@ -27,3 +27,14 @@
 - `ai/` 는 공급자를 모르므로 urlscan 을 자체 시스템으로 교체해도 수정되지 않는다.
 - 격리 서버가 자체 LLM 판정을 내지만 `decide()` 입력에서 제외한다. 판정이 두
   곳에서 나면 서로 어긋난다.
+
+## 이후 변경 (2026-11-07 확인)
+
+결정 가운데 "격리 환경을 별도 서버로 둔다"는 그대로다. 나머지는 구현하면서 바뀌었다.
+
+- 격리 서버(`infra/isolation/`)는 수집한 사실만 돌려준다. 페이지 해석과 판정을 하지 않고 LLM 도 쓰지 않는다.
+  페이지 해석은 메인 서버의 `ai/` 가 한다(`scanner/isolation_page.py` → `finalize_analysis`).
+- `ai/` 는 격리 결과를 `Observations` 가 아니라 `IsolatedPage`(`ai/src/ai/types.py`)로 받는다.
+- gVisor 는 쓰지 않는다. Docker 컨테이너에 seccomp, 읽기 전용 파일 시스템, 권한 제거, 호스트 방화벽을 건다
+  (`infra/isolation/compose.yaml`, `lockdown.sh`). 근거는 `docs/isolation-security.md`.
+- urlscan 은 2026-10-17 에 없앴다. 모든 링크를 자체 격리 수집기로 모은다.

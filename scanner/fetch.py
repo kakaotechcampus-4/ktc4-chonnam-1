@@ -5,14 +5,13 @@ urlscan 이 대신 해주던 "URL 방문·수집"을 우리 코드로 옮기는 
 만들지 않고, 이후 별도 scorer 단계에서 `CollectResult` 를 입력으로 받아
 계산한다. 이 모듈은 수집만 한다.
 
-지금 구현하지 않은 것 (TODO 로 남김, 추후 Task 로 분리):
-- Playwright 기반 3단계 수집 (JS 렌더링 후 리다이렉트·폼 관찰)
-- meta refresh 태그를 통한 리다이렉트 추적 (HTTP 3xx 만 따라간다)
-- DNS 재바인딩(검사 시점과 요청 시점 사이에 주소가 바뀌는 공격) 방어 —
-  수집기를 별도 격리 환경·egress 방화벽으로 배치하는 것이 최종 방어선이고,
-  이번 1차 작업 범위가 아니다.
-- redirect 체인 각 홉의 콘텐츠 타입/다운로드 여부 분류 (앱 설치 파일 등) —
-  scorer 와 결합할 다음 단계에서 다룬다.
+메인 서버와 격리 서버(infra/isolation, prepare.sh 가 이 파일을 복사한다)가 함께 쓴다.
+격리 서버에서는 모든 연결이 collector/egress_proxy.py 를 지나가고, 그 프록시가 검사한
+IPv4 로만 연결해 DNS 재바인딩을 막는다. Playwright 3단계는 collector/browser.py 가 맡는다.
+
+지금 하지 않는 것:
+- meta refresh 태그를 통한 리다이렉트 추적 (HTTP 3xx 만 따라간다. 3단계 브라우저가 본다)
+- redirect 체인 각 홉의 콘텐츠 타입/다운로드 여부 분류
 """
 
 import asyncio
@@ -34,7 +33,7 @@ from scanner.models import CollectResult
 # 값, 위 값들과 성격이 다르다).
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT_SECONDS = 10.0
-HTML_LIMIT_BYTES = 131_072  # 128 KiB. 초과분은 버리고 failures 에 html_truncated 를 남긴다.
+HTML_LIMIT_BYTES = 262_144  # 256 KiB. 초과분은 버리고 failures 에 html_truncated 를 남긴다.
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 TEXT_CONTENT_TYPES = ("text/", "application/xhtml+xml", "application/xml", "application/json")
 DEFAULT_HEADERS = {
@@ -51,7 +50,8 @@ DEFAULT_HEADERS = {
 
 Resolver = Callable[[str], Awaitable[list[str]]]
 
-_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+# 태그 이름만 소문자로 바꾼다. str.lower() 는 일부 글자의 길이를 바꿔 위치가 어긋난다.
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 
 async def default_resolve(host: str) -> list[str]:
@@ -101,10 +101,18 @@ async def address_blocked(host: str, resolve: Resolver) -> bool:
 
 
 def extract_title(html: str) -> str | None:
-    match = _TITLE_RE.search(html)
-    if not match:
+    # 정규식으로 찾으면 닫히지 않은 <title 이 반복된 페이지에서 시간이 길이의 제곱으로 는다.
+    lower = html.translate(_ASCII_LOWER)
+    opening = lower.find("<title")
+    if opening < 0:
         return None
-    title = re.sub(r"\s+", " ", match.group(1)).strip()
+    body_start = lower.find(">", opening) + 1
+    if body_start == 0:
+        return None
+    body_end = lower.find("</title>", body_start)
+    if body_end < 0:
+        return None
+    title = re.sub(r"\s+", " ", html[body_start:body_end]).strip()
     return title or None
 
 
@@ -303,7 +311,13 @@ async def _collect(
             try:
                 location = response.headers.get("location")
                 if response.status_code in REDIRECT_STATUSES and location:
-                    current = urljoin(current, location)
+                    try:
+                        current = urljoin(current, location)
+                    except ValueError:
+                        return _result(
+                            url, chain, final_url=current, elapsed_start=start,
+                            failures=("invalid_url",),
+                        )
                     chain.append(current)
                     continue
 

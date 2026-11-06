@@ -19,7 +19,10 @@ from ai.case.types import (
     Segment,
     Side,
 )
+from ai.case import forms
+from ai.case.lexicon import read_with_lexicon
 from ai.case.verify import verify_call
+from ai.types import FailureCode
 
 
 def _source(*lines: str) -> ReadingSource:
@@ -95,6 +98,54 @@ def test_n3_bank_is_not_institution_claim():
     )
     assert EvidenceCode.INSTITUTION_CLAIM not in _codes(r)
     assert r.claims.identity[0].listed_institution is False
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["국세청", "서초세무서", "관세청", "국민건강보험공단", "건강보험공단", "국민연금공단", "고용노동부", "우체국", "출입국관리사무소"],
+)
+def test_public_institution_cautions_but_never_counts_for_floor(name):
+    """자주 사칭되는 공공기관은 주의까지만 쓴다. 자기소개 + 부탁 꼴이어도 L-3 근거가 아니다 (ADR 0010)."""
+    quote = f"{name} 담당자입니다"
+    info = "계좌번호를 불러 주세요"
+    r = _verify(
+        _source(quote, info),
+        _reading(
+            identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name=name, quote=quote)],
+            demands=[DemandClaim(kind=DemandKind.PERSONAL_INFO, quote=info)],
+        ),
+    )
+    assert _floor(r) == {EvidenceCode.INSTITUTION_CLAIM: False, EvidenceCode.INFO_REQUEST: True}
+    assert r.claims.identity[0].listed_institution is True
+
+
+def test_public_institution_found_in_quote_replaces_model_name():
+    quote = "[국세청] 고객님 앞으로"
+    r = _verify(
+        _source(quote + " 미납된 세금이 있습니다"),
+        _reading(identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name="세금 담당", quote=quote)]),
+    )
+    assert _codes(r) == [EvidenceCode.INSTITUTION_CLAIM]
+    assert r.claims.identity[0].name == "국세청"
+
+
+def test_public_institution_name_not_in_source_is_not_trusted():
+    quote = "고객님 앞으로 미납된 세금이"
+    r = _verify(
+        _source(quote + " 있습니다"),
+        _reading(identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name="국세청", quote=quote)]),
+    )
+    assert EvidenceCode.INSTITUTION_CLAIM not in _codes(r)
+    assert r.claims.identity[0].listed_institution is False
+
+
+def test_investigative_institution_still_wins_over_public_one():
+    quote = "서울중앙지검 수사관입니다"
+    r = _verify(
+        _source("국세청 자료를 확인했습니다", quote),
+        _reading(identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name="서울중앙지검", quote=quote)]),
+    )
+    assert _floor(r) == {EvidenceCode.INSTITUTION_CLAIM: True}
 
 
 def test_n4_second_sentence_money_transfer_dropped_by_notice_rule():
@@ -487,3 +538,144 @@ def test_v4_negated_condition_is_still_a_demand():
     q = "지금 보내지 않으면 계좌가 정지됩니다"
     r = _verify(_source(q), _reading(demands=[DemandClaim(kind=DemandKind.MONEY_TRANSFER, quote=q)]))
     assert "negated" not in _reasons(r)
+
+
+def test_julraeyo_demand_is_kept_for_floor():
+    quote = "50만원만 보내줄래요"
+    r = _verify(
+        _source(f"엄마 나야. {quote}?"),
+        _reading(demands=[DemandClaim(kind=DemandKind.MONEY_TRANSFER, quote=quote)]),
+    )
+    assert _floor(r) == {EvidenceCode.MONEY_REQUEST: True}
+    assert _reasons(r) == []
+
+
+@pytest.mark.parametrize("sentence", ["50만원만 보내라고요?", "50만원만 보내래요?"])
+def test_echoed_demand_is_still_rejected(sentence):
+    r = _verify(
+        _source(f"엄마 나야. {sentence}"),
+        _reading(demands=[DemandClaim(kind=DemandKind.MONEY_TRANSFER, quote="50만원만 보내")]),
+    )
+    assert _codes(r) == []
+    assert _reasons(r) == ["self_side"]
+
+
+@pytest.mark.parametrize(
+    "name, quote",
+    [
+        ("국세청", "저는 국세청 직원입니다"),
+        ("건강보험공단", "저는 건강보험공단 직원입니다"),
+        ("서초세무서", "저는 서초세무서 담당자입니다"),
+    ],
+)
+def test_public_institution_self_intro_with_first_person_is_kept(name, quote):
+    """"저는" 이 붙어도 공공기관 자기소개는 받는 사람 말이 아니다. 주의까지만 쓴다 (ADR 0010)."""
+    r = _verify(
+        _source(quote),
+        _reading(identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name=name, quote=quote)]),
+    )
+    assert _floor(r) == {EvidenceCode.INSTITUTION_CLAIM: False}
+    assert r.claims.identity[0].listed_institution is True
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "저는 국세청 직원이 아닙니다",
+        "저는 국세청 직원 아니에요",
+        "저는 국세청에 전화했어요",
+        "국세청 직원이라고요?",
+    ],
+)
+def test_public_institution_not_claimed_by_sender_is_rejected(sentence):
+    r = _verify(
+        _source(sentence),
+        _reading(identity=[IdentityClaim(kind=IdentityKind.INSTITUTION, name="국세청", quote=sentence)]),
+    )
+    assert _codes(r) == []
+    assert _reasons(r) == ["self_side"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "제가 경찰에 신고한 사람입니다. 계좌번호 불러 주세요.",
+        "저는 서울중앙지검 수사관이 아니라 피해자입니다. 계좌번호 불러 주세요.",
+    ],
+)
+def test_mentioning_institution_with_request_has_no_l3_floor(text):
+    source = ReadingSource(
+        kind=InputKind.AUDIO,
+        segments=[Segment(side=Side.UNKNOWN, text=s) for s in forms.sentences(text)],
+    )
+    reading = read_with_lexicon(source, FailureCode.TIMEOUT).reading
+    verify = verify_call(source, reading, derived_by="lexicon")
+    assert not any(e.code == EvidenceCode.INSTITUTION_CLAIM and e.counts_for_floor for e in verify.accepted)
+
+
+def _fallback_verify(text: str):
+    source = ReadingSource(
+        kind=InputKind.AUDIO,
+        segments=[Segment(side=Side.UNKNOWN, text=s) for s in forms.sentences(text)],
+    )
+    return verify_call(source, read_with_lexicon(source, FailureCode.TIMEOUT).reading, derived_by="lexicon")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "금융감독원 김대리입니다 고객님 명의로 계좌가 개설됐습니다. 계좌번호 불러 주세요.",
+        "서울중앙지검 수사관입니다 아니 제 말 좀 들어보세요. 계좌번호 불러 주세요.",
+        "금감원에서 연락드렸습니다 고객님. 계좌번호 불러 주세요.",
+    ],
+)
+def test_words_after_self_intro_keep_l3_floor(text):
+    assert any(e.code == EvidenceCode.INSTITUTION_CLAIM and e.counts_for_floor for e in _fallback_verify(text).accepted)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "저는 내일 건강 검사입니다. 계좌번호 불러 주세요.",
+        "나는 경찰서 앞이야. 계좌번호 불러 주세요.",
+        "저는 경찰서 가는 길입니다. 계좌번호 불러 주세요.",
+        "저는 경찰 아들입니다. 계좌번호 불러 주세요.",
+        "저는 경찰청에서 일하는 친구입니다. 계좌번호 불러 주세요.",
+        "제가 경찰이에요? 계좌번호 불러 주세요.",
+    ],
+)
+def test_first_person_without_title_has_no_l3_floor(text):
+    assert not any(e.code == EvidenceCode.INSTITUTION_CLAIM and e.counts_for_floor for e in _fallback_verify(text).accepted)
+
+
+def _floors(text: str) -> dict[EvidenceCode, bool]:
+    source = ReadingSource(
+        kind=InputKind.AUDIO,
+        segments=[Segment(side=Side.UNKNOWN, text=s) for s in forms.sentences(text)],
+    )
+    verify = verify_call(source, read_with_lexicon(source, FailureCode.TIMEOUT).reading, derived_by="lexicon")
+    return {e.code: e.counts_for_floor for e in verify.accepted}
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["신분증 가지고 민원실로 오세요", "오실 때 신분증 챙겨 오세요", "민원실에 방문하셔서 신분증 보여 주세요"],
+)
+def test_visit_guide_is_not_info_floor(sentence):
+    """직접 오라는 안내는 신분증을 넘기라는 요구와 다르다. 주의 근거로는 남긴다."""
+    assert _floors(f"서초경찰서 민원실입니다. {sentence}.")[EvidenceCode.INFO_REQUEST] is False
+
+
+@pytest.mark.parametrize("sentence", ["신분증 사진 찍어서 보내 주세요", "주민번호 불러 주세요", "방문 전에 신분증 찍어서 보내 주세요"])
+def test_handing_over_info_keeps_floor(sentence):
+    assert _floors(f"서초경찰서 수사관입니다. {sentence}.")[EvidenceCode.INFO_REQUEST] is True
+
+
+@pytest.mark.parametrize("sentence", ["계약서 사진 보내 줘", "문자로 보내 주세요", "메일 보내 주세요"])
+def test_sending_non_money_is_not_money_floor(sentence):
+    assert _floors(f"엄마 나야. {sentence}.")[EvidenceCode.MONEY_REQUEST] is False
+
+
+@pytest.mark.parametrize("sentence", ["50만원 보내 줘", "이 계좌로 사진값 보내 줘", "돈 좀 보내 주세요", "입금해 주세요", "입금하시고 영수증을 팩스로 보내십시오"])
+def test_sending_money_keeps_floor(sentence):
+    assert _floors(f"엄마 나야. {sentence}.")[EvidenceCode.MONEY_REQUEST] is True

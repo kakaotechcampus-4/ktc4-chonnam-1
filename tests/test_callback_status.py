@@ -306,3 +306,30 @@ async def test_callback_request_exception(
     assert job["callback_error"] == "RuntimeError"
 
     assert "test-user" not in main.RUNNING_USERS
+
+
+@pytest.mark.parametrize("body, expected", [
+    ({"status": "FAIL", "code": 4001, "message": "invalid callback"},
+     ["keys=['code', 'message', 'status']", "status=FAIL", "code=4001", "message='invalid callback'"]),
+    ({"status": "FAIL", "message": "bad https://bot-api.kakao.com/cb?token=abc"}, ["status=FAIL"]),
+    ({"message": "expired abcdefghijklmnopqrstuvwxyz012345"}, ["keys=['message']"]),
+    ({"code": "https://bot-api.kakao.com/cb?token=abc"}, ["keys=['code']"]),
+    (["not", "an", "object"], ["body=not_object"]),
+])
+def test_callback_error_detail_keeps_only_safe_values(body, expected):
+    response = MagicMock()
+    response.json.return_value = body
+
+    detail = main._callback_error_detail(response)
+
+    for part in expected:
+        assert part in detail
+    assert "token" not in detail
+    assert "abcdefghijklmnopqrstuvwxyz" not in detail
+
+
+def test_callback_error_detail_handles_non_json():
+    response = MagicMock()
+    response.json.side_effect = ValueError("no json")
+
+    assert main._callback_error_detail(response) == "body=not_json"
