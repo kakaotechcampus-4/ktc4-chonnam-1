@@ -1,9 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 cd /opt/ktc-isolation
-docker pull --platform linux/amd64 python:3.12-slim-bookworm
-base_image=$(docker image inspect python:3.12-slim-bookworm --format '{{index .RepoDigests 0}}')
-docker build --platform linux/amd64 --build-arg "BASE_IMAGE=$base_image" -t ktc-isolation:approved .
+# 기반 이미지는 Dockerfile 의 digest 로 고정한다. 잠긴 호스트는 바깥으로 못 나가므로
+# 다른 곳에서 빌드한 이미지를 IMAGE_TAR=/path/image.tar 로 넘기면 빌드 대신 docker load 한다.
+base_image=$(sed -n 's/^ARG BASE_IMAGE=//p' Dockerfile)
+if [ -n "${IMAGE_TAR:-}" ]; then
+    loaded=$(docker load -i "$IMAGE_TAR" | awk -F': ' '/^Loaded image/ {ref=$2} END {print ref}')
+    docker tag "$loaded" ktc-isolation:approved
+else
+    docker build --platform linux/amd64 -t ktc-isolation:approved .
+fi
 image_id=$(docker image inspect ktc-isolation:approved --format '{{.Id}}')
 printf 'ISOLATION_IMAGE=%s\n' "$image_id" > .env
 printf 'base=%s\nimage_id=%s\nplatform=linux/amd64\n' "$base_image" "$image_id" > image-record.txt
