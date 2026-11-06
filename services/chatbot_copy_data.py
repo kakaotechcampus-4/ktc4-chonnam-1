@@ -40,7 +40,7 @@ def get_signal_copy(code: str) -> tuple[str, str]:
 
 
 # env.answer -> C2 "unverified" 문장.
-# result-meaning-cases.md 4절 "페이지 확인 범위 문장" 표.
+# docs/archive/designs/result-meaning-cases.md 4절 "페이지 확인 범위 문장" 표.
 # risk_found는 그 표에 명시된 문장이 없어, 같은 절의 취지(확인했다는
 # 사실 자체를 말한다)를 따른 잠정 문구다 — FE 확정 전까지 임시값.
 UNVERIFIED_COPY: dict[str, str] = {

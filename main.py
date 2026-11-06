@@ -375,7 +375,7 @@ _VOICE_ATTACHMENT_EXTENSIONS = (".m4a", ".mp3", ".wav", ".webm")
 def _utterance_voice_attachment(utterance: str) -> dict | None:
     """`params.media` 없이 녹음 파일(M4A 등)을 파일로 첨부했을 때를 인식한다.
 
-    실기기 확인 결과(`voice-phishing-flow.md` 0절): 카톡 **파일 첨부**로 보낸
+    실기기 확인 결과(`docs/archive/designs/voice-phishing-flow.md` 0절): 카톡 **파일 첨부**로 보낸
     녹음은 `params.media`가 오지 않고, `utterance`에 카카오 CDN의 서명된
     주소만 그대로 온다. 음성 **메시지**(마이크 버튼)의 `media.type=="audio"`
     경로와는 별개 경로라 여기서 추가로 인식한다. 허용 호스트(`is_allowed_media_url`)와
@@ -409,7 +409,7 @@ async def kakao_skill(
     user_id = user_request.get("user", {}).get("id")
     callback_url = user_request.get("callbackUrl")
 
-    # 카카오톡 음성 메시지는 두 모양으로 온다 (voice-phishing-flow.md 0절):
+    # 카카오톡 음성 메시지는 두 모양으로 온다 (docs/archive/designs/voice-phishing-flow.md 0절):
     # (1) 마이크 버튼 메시지 — params.media.type == "audio"
     # (2) 파일로 첨부한 녹음(m4a 등) — params.media 없이 utterance에 카카오
     #     CDN 서명 주소만 옴. 호스트+확장자로 판별한다.

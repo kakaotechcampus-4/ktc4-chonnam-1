@@ -57,7 +57,7 @@ def _truncate_evidence(evidence: str, max_length: int = _EVIDENCE_MAX_LENGTH) ->
 # ============================================================
 # 통화 녹음(보이스피싱) 결과 — VoiceCaseResult 기준
 # (docs/designs/chatbot-copy.md 3절 "V1 보이스피싱 결과",
-#  docs/designs/voice-phishing-flow.md D17, 이슈 #115)
+#  docs/archive/designs/voice-phishing-flow.md D17, 이슈 #115)
 # ============================================================
 
 _VOICE_STOP_ACTION_JOIN = {
@@ -955,7 +955,7 @@ def render_detail_carousel(analysis_result: dict) -> dict:
 # ============================================================
 # 링크 없는 문자(가족·지인·기관 사칭) 결과 — MessageCaseResult 기준
 # (docs/designs/chatbot-copy.md 3절 "R6b 링크 없는 문자 결과"·"Q2"·"K6"·"A2",
-#  docs/designs/agent-loop-plan-v3.md §10 B5)
+#  docs/archive/designs/agent-loop-plan-v3.md §10 B5)
 # ============================================================
 
 # 문자는 통화가 아니라서 번호 줄은 "문자 속 번호" 로 쓴다(멈출 행동 표)

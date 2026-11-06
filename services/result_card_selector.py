@@ -1,14 +1,14 @@
 """`AnalysisResponse`(dict, `model_dump(mode="json")` 결과)를 보고
 어떤 결과 카드를 보여줄지 고른다.
 
-FE·AI가 "정상이라고 말할 조건"(docs/designs/result-meaning-cases.md
+FE·AI가 "정상이라고 말할 조건"(docs/archive/designs/result-meaning-cases.md
 6절 항목 9)을 아직 확정하지 않았으므로, 여기 규칙은 **임시 규칙**이다.
 조건을 Renderer와 섞지 않고 이 함수 하나로 모아둔 이유도 그래서다 —
 합의가 끝나면 이 함수만 고치면 된다.
 
 근거 문서:
 - be_teammate_card_integration_tasks.md 4절
-- docs/designs/result-meaning-cases.md 4절 "안내 상태 정의", 6절 항목 9
+- docs/archive/designs/result-meaning-cases.md 4절 "안내 상태 정의", 6절 항목 9
 - docs/scheme.md (DomainMatch, AnswerState 값)
 """
 
@@ -28,7 +28,7 @@ def _has_signals(part: dict | None) -> bool:
 def select_result_card(analysis_result: dict) -> str:
     """analysis_result(dict)를 보고 결과 카드 이름을 고른다.
 
-    우선순위 (result-meaning-cases.md 4절 "검증된 위험 근거는 상태보다
+    우선순위 (docs/archive/designs/result-meaning-cases.md 4절 "검증된 위험 근거는 상태보다
     먼저 본다" / PR #39 멘토 피드백 "일부 단계가 안 끝났어도 확실한
     위험 근거가 있으면 위험하다고 안내해야 한다"):
 
@@ -39,7 +39,7 @@ def select_result_card(analysis_result: dict) -> str:
        → 정상 카드 (= AnalysisResponse.result와 같은 조건).
     3. official == "official"인데 2번 조건을 못 채우면(대부분 페이지
        수집기 미연결로 env가 not_run인 현재 상황) → "판단하기 어려워요".
-       result-meaning-cases.md 6절 항목 9가 미해결 상태로 남긴 질문의
+       docs/archive/designs/result-meaning-cases.md 6절 항목 9가 미해결 상태로 남긴 질문의
        잠정 답이다 ("후보는 S4 결론 줄").
     4. official == "brand_mismatch" → 위험 카드 (사칭 패턴 자체가 근거).
     5. official == "not_registered"이고 브랜드를 특정하지 못했으면

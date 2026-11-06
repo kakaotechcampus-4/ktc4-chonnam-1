@@ -199,7 +199,7 @@ class TestVoiceMessageIsRoutedBeforeReadMessage:
 
     def test_m4a_file_attachment_without_params_media_is_recognized(self, client, monkeypatch):
         """파일로 첨부한 m4a는 params.media 없이 utterance에 CDN 주소만 온다
-        (voice-phishing-flow.md 0절 실기기 확인)."""
+        (docs/archive/designs/voice-phishing-flow.md 0절 실기기 확인)."""
 
         captured_urls = []
 
