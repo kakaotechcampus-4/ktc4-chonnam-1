@@ -1,11 +1,8 @@
 """egress-hosts 파일 읽기·검증. render-egress.py 와 check-egress-ips.py 가 함께 쓴다."""
 
 import ipaddress
-import re
 
-_HOST_RE = re.compile(
-    r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(?:\.(?!-)[a-z0-9-]{1,63}(?<!-))+$"
-)
+from collector.policy import HOST_PATTERN
 
 
 class EgressHostsError(ValueError):
@@ -24,7 +21,7 @@ def parse_egress_hosts(text: str, *, require_public: bool = True) -> list[tuple[
         if len(parts) != 2:
             raise EgressHostsError(f"{number}행: '호스트 IP' 형식이 아닙니다")
         host = parts[0].lower().rstrip(".")
-        if not _HOST_RE.match(host):
+        if not HOST_PATTERN.fullmatch(host):
             raise EgressHostsError(f"{number}행: 호스트 이름이 올바르지 않습니다: {parts[0]}")
         if host in seen:
             raise EgressHostsError(f"{number}행: 호스트가 중복됩니다: {host}")

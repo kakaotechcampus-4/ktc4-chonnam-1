@@ -12,6 +12,7 @@ from services.link_resolution import first_real_host, is_shortener
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "infra" / "isolation"))
 from collector.app import create_app  # noqa: E402
+from collector.policy import NetworkPolicy  # noqa: E402
 
 
 class TestFirstRealHost:
@@ -55,11 +56,12 @@ class TestEndToEndWithCollector:
         async def public_resolve(host):
             return ["93.184.216.34"]
 
-        async def collect_with_mock(url, *, timeout, url_allowed):
+        async def collect_with_mock(url, *, timeout, url_allowed, **_):
             async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
                 return await collect_url(url, client=client, resolve=public_resolve, timeout=timeout, url_allowed=url_allowed)
 
-        app = create_app(token="t" * 40, allowed_hosts=hosts, collect=collect_with_mock)
+        app = create_app(token="t" * 40, network_policy=NetworkPolicy(allowed_hosts=hosts),
+                         collect=collect_with_mock)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://c") as c:
             async def collect(link):
                 r = await c.post("/collect", content=json.dumps({"url": link}),

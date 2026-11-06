@@ -317,9 +317,10 @@ class TestVoiceMessageSyncPath:
 
 
 class TestV1CallClaimsFieldMapping:
-    """V1 `call_claims` 매핑(이슈 #115): 기관=identity[].quote, 상대가 한
-    말=첫 demands[].quote, 내세운 사정=blockers(있으면) 또는 pretexts,
-    요구한 것=demands[].kind 라벨(최대 3개)."""
+    """V1 `call_claims` 매핑(이슈 #115, 말머리는 #139로 중립화): 기관=
+    identity[].quote, 통화에 나온 말=첫 demands[].quote, 통화에 나온
+    사정=blockers(있으면) 또는 pretexts, 통화에 나온 요구=demands[].kind
+    라벨(최대 3개)."""
 
     def test_institution_line_uses_identity_quotes(self):
         result = _voice_result(
@@ -334,7 +335,7 @@ class TestV1CallClaimsFieldMapping:
         card = main.render_voice_result_card(result)
         description = _card_body(card)["description"]
 
-        assert "상대가 내세운 기관: '금융감독원 조사국입니다'" in description
+        assert "통화에 나온 기관: '금융감독원 조사국입니다'" in description
 
     def test_what_they_said_line_uses_first_demand_quote_not_pretext(self):
         """이슈 원문: "상대가 한 말 = 첫 demands[].quote" — pretexts가
@@ -349,7 +350,7 @@ class TestV1CallClaimsFieldMapping:
         card = main.render_voice_result_card(result)
         description = _card_body(card)["description"]
 
-        assert "상대가 한 말: '지금 바로 입금하세요'" in description
+        assert "통화에 나온 말: '지금 바로 입금하세요'" in description
 
     def test_pretext_line_is_used_when_no_blockers(self):
         result = _voice_result(
@@ -359,7 +360,7 @@ class TestV1CallClaimsFieldMapping:
         card = main.render_voice_result_card(result)
         description = _card_body(card)["description"]
 
-        assert "내세운 사정: '계좌가 범죄에 연루됐습니다'" in description
+        assert "통화에 나온 사정: '계좌가 범죄에 연루됐습니다'" in description
 
     def test_blocker_line_takes_priority_over_pretext(self):
         result = _voice_result(
@@ -369,7 +370,7 @@ class TestV1CallClaimsFieldMapping:
         card = main.render_voice_result_card(result)
         description = _card_body(card)["description"]
 
-        assert "내세운 사정: '다른 사람에게 말하지 마세요'" in description
+        assert "통화에 나온 사정: '다른 사람에게 말하지 마세요'" in description
         assert "계좌가 범죄에 연루됐습니다" not in description
 
     def test_demand_labels_are_joined_up_to_three(self):
@@ -385,7 +386,7 @@ class TestV1CallClaimsFieldMapping:
         card = main.render_voice_result_card(result)
         description = _card_body(card)["description"]
 
-        assert "요구한 것: 송금·입금, 앱 설치, 인증번호 전달" in description
+        assert "통화에 나온 요구: 송금·입금, 앱 설치, 인증번호 전달" in description
         assert "개인정보 제공" not in description
 
     def test_empty_claims_omit_the_whole_block(self):
@@ -465,8 +466,8 @@ class TestVoiceDetailCarouselTemplate:
         card = main.render_voice_detail_carousel(result)
 
         items = card["template"]["outputs"][0]["carousel"]["items"]
-        assert "- 상대가 내세운 기관: '금융감독원입니다'" in items[0]["description"]
-        assert "통화 상대가 한 말만 근거로 썼어요." in items[0]["description"]
+        assert "- 통화에 나온 기관: '금융감독원입니다'" in items[0]["description"]
+        assert "상대가 한 말로 보이는 문장만 근거로 썼어요." in items[0]["description"]
         assert len(items) == 4  # no matches: omit only the similarity card
         assert items[1]["title"] == "❔ 확인 범위"
         assert "비교할 사례를 찾지 못했어요" in items[1]["description"]
@@ -1156,7 +1157,7 @@ class TestVoiceAnswerFlow:
         assert "신고·상담:" not in text_card["description"]
 
     def test_answers_accumulate_across_multiple_clicks(self, client):
-        """먼저 '아직 안 했어요'를 눌러도, 그 뒤 '돈을 보냈어요'를 누르면
+        """먼저 '아무것도 안 했어요'를 눌러도, 그 뒤 '돈을 보냈어요'를 누르면
         쌓인 답 전부로 K6가 다시 나간다(D16). 버튼도 쌓인 답(D17) 기준으로
         다시 고른다."""
 
@@ -1220,7 +1221,7 @@ class TestVoiceAnswerFlow:
         assert len(outputs) == 2
         list_card = outputs[1]["listCard"]
         assert list_card["header"]["title"] == "🙋 이미 하신 게 있나요?"
-        assert [item["title"] for item in list_card["items"]] == ["돈이나 상품권을 보냈어요", "아직 안 했어요"]
+        assert [item["title"] for item in list_card["items"]] == ["돈이나 상품권을 보냈어요", "아무것도 안 했어요"]
         item = list_card["items"][0]
         assert item["extra"] == {"case_id": job_id, "question_id": "already_acted", "option_id": "sent_money"}
         # Q1 전용 블록이어야 한다 — "자세히 보기" 블록을 재사용하면 안 된다(이슈 #115).
@@ -1373,12 +1374,15 @@ class TestLatestVoice115Contract:
     def test_caution_does_not_imply_unknown_speaker(self, caution):
         result = _voice_result(caution=caution).model_dump(mode="json")
         items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
-        assert "통화 상대가 한 말만 근거로 썼어요." in items[0]["description"]
+        assert "상대가 한 말로 보이는 문장만 근거로 썼어요." in items[0]["description"]
         assert "누가 한 말인지 가리지 못해" not in str(items)
 
     def test_explicit_future_speaker_marker_changes_only_display(self):
         # #116's AI schema/propagation is pending. Exercise the documented display
         # boundary with a dict; do not infer the marker or change the AI model.
+        # Issue #139 made the neutral "통화에 나온 ~" headers the default for every
+        # call, so the marker no longer changes the call_claims labels themselves
+        # (they already read neutral) -- only claim_note still differs when present.
         result = _voice_result(claims=ClaimView(
             identity=[ClaimViewIdentity(kind=IdentityKind.INSTITUTION, name="검찰", quote="검찰입니다", listed_institution=True)],
             demands=[ClaimViewDemand(kind=DemandKind.MONEY_TRANSFER, quote="돈을 보내세요")],

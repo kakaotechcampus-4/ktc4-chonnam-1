@@ -31,9 +31,15 @@ sshd -t
 systemctl reload ssh
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl
+apt-get install -y ca-certificates curl gnupg
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+docker_key=$(gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc | awk -F: '$1 == "fpr" {print $10; exit}')
+if [ "$docker_key" != 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 ]; then
+    rm -f /etc/apt/keyrings/docker.asc
+    echo "unexpected Docker apt key fingerprint: $docker_key" >&2
+    exit 1
+fi
 chmod a+r /etc/apt/keyrings/docker.asc
 cat > /etc/apt/sources.list.d/docker.sources <<EOF
 Types: deb
@@ -55,21 +61,5 @@ node_name=$(hostname)
 grep -Fq "$node_name" /etc/hosts || printf '127.0.1.1 %s\n' "$node_name" >> /etc/hosts
 # First boot and its persisted network configuration must be complete before IMDS is disabled.
 touch /etc/cloud/cloud-init.disabled
-cat > /etc/systemd/system/ktc-isolation-firewall.service <<'EOF'
-[Unit]
-Description=KTC isolation host firewall
-After=network.target docker.service
-Requires=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=/bin/bash /opt/ktc-isolation/lockdown.sh
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl daemon-reload
-# Start only after image installation and direct SSH verification.
-systemctl enable ktc-isolation-firewall
+bash "$(dirname "$0")/install-units.sh"
 docker version --format '{{.Server.Version}}'

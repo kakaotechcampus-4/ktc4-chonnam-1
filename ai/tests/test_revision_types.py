@@ -255,8 +255,10 @@ def test_analysis_states_require_matching_failure(model):
 def test_page_proposal_and_isolated_page_contracts_are_strict():
     assert PageProposal().model_dump(mode="json") == {"brand": {"value": None, "evidence": None}, "category": {"value": None, "evidence": None}, "signals": []}
     assert IsolatedPage(brand="", category="", info="").collected_at is None
+    # LLM 답 타입은 지어낸 최상위 칸만 버린다(#145). 선언한 칸 안의 모르는 칸은 거부한다
+    assert "answer" not in PageProposal.model_validate({"answer": False}).model_dump()
     with pytest.raises(ValidationError):
-        PageProposal.model_validate({"answer": False})
+        PageProposal.model_validate({"brand": {"value": None, "evidence": None, "answer": False}})
 
 
 def test_analysis_response_round_trips_as_json():

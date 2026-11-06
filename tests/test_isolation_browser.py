@@ -14,6 +14,7 @@ import ssl
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -74,6 +75,8 @@ def make_public_handler(internal_port: int):
         "/download": '<title>앱 설치</title><a id="d" href="/app.apk">설치</a>'
                      '<script>document.getElementById("d").click()</script>',
         "/busy": "<title>멈춤</title><script>while (true) {}</script>",
+        "/lone-surrogate": "<title>깨진 글자</title>"
+                           "<script>document.body.append(String.fromCharCode(0xD800))</script>",
     }
 
     class Public(BaseHTTPRequestHandler):
@@ -240,6 +243,12 @@ async def test_busy_page_times_out_and_next_page_works(renderer, sites):
     assert after.title == "배송 조회"
 
 
+async def test_lone_surrogate_in_page_keeps_the_result(renderer, sites):
+    result = await renderer.render(url(sites, "/lone-surrogate"), trigger="always", timeout=6)
+    assert result.title == "깨진 글자"
+    result.html.encode("utf-8")
+
+
 def test_parse_connect():
     assert parse_connect(b"CONNECT Fake.Test.:443 HTTP/1.1\r\n\r\n") == ("fake.test", 443)
     assert parse_connect(b"CONNECT [::1]:443 HTTP/1.1\r\n\r\n") == ("::1", 443)
@@ -264,6 +273,19 @@ def stage2(html, status=200, failures=()):
     ('<script src="/a.js"></script>', 200, ("html_truncated",), "script_only_page"),
     ("", 200, (), None),
     ("<p>" + "안내 " * 100 + "</p><script>var geolocation = 1; if (a == location) {}</script>", 200, (), None),
+    ("<p>" + "안내 " * 100 + "</p><SCRIPT type=x>location.replace('/x')</SCRIPT >", 200, (), "script_redirect"),
+    ('<META content="0" HTTP-EQUIV=Refresh><p>' + "안내 " * 100, 200, (), "script_redirect"),
+    ("<p>" + "안내 " * 100 + "</p><scripts>location.href='/x'</scripts>", 200, (), None),
+    ("<style>" + "a" * 300 + "</style><noscript>" + "b" * 300 + "</noscript>", 200, (), None),
+    ("<style>" + "a" * 300 + "</style><script></script>", 200, (), "script_only_page"),
 ])
 def test_browser_trigger(html, status, failures, expected):
     assert browser_trigger(stage2(html, status, failures)) == expected
+
+
+@pytest.mark.parametrize("unit", ["<script>", "<script ", "<meta ", "<style>", "<noscript>", "<"])
+def test_browser_trigger_does_not_stall_on_unclosed_tags(unit):
+    html = unit * (256 * 1024 // len(unit))
+    start = time.perf_counter()
+    browser_trigger(stage2(html))
+    assert time.perf_counter() - start < 1.0

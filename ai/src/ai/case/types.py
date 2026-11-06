@@ -8,9 +8,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, ValidationInfo, field_validator
 
-from ai.types import CaseSearchResult, FailureCode, LinkCandidate, StrictModel
+from ai.types import CaseSearchResult, FailureCode, LinkCandidate, LLMAnswer, StrictModel
 
 
 # ── enum ────────────────────────────────────────────────────
@@ -227,13 +227,24 @@ class BlockerClaim(StrictModel):
     quote: str
 
 
-class ClaimReading(StrictModel):
+class ClaimReading(LLMAnswer):
     # 개수 제한은 프롬프트가 아니라 검증으로 건다 (v3 §5.1)
     identity: list[IdentityClaim] = Field(default_factory=list, max_length=3)
     pretexts: list[PretextClaim] = Field(default_factory=list, max_length=3)
     demands: list[DemandClaim] = Field(default_factory=list, max_length=6)
     blockers: list[BlockerClaim] = Field(default_factory=list, max_length=3)
     spoken_hosts: list[str] = Field(default_factory=list, max_length=3)
+
+    @field_validator("identity", "pretexts", "demands", "blockers", "spoken_hosts", mode="before")
+    @classmethod
+    def _keep_first(cls, value: object, info: ValidationInfo) -> object:
+        # 상한을 넘으면 읽기 전체를 버리지 않고 앞에서부터 상한까지만 남긴다.
+        # 긴 통화에서 명분을 4개 이상 뽑아 읽기가 통째로 어휘표로 떨어지던 문제.
+        # max_length 는 모델에 주는 스키마 안내로 남긴다
+        if isinstance(value, list):
+            limit = cls.model_fields[info.field_name].metadata[0].max_length
+            return value[:limit]
+        return value
 
 
 class ClaimReadingResult(StrictModel):

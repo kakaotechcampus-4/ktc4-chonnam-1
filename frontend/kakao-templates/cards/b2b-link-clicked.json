@@ -14,14 +14,14 @@
           "buttonLayout": "vertical",
           "buttons": [
             {
-              "label": "전화 상담하기",
+              "label": "KISA 전화 상담하기",
               "action": "phone",
               "phoneNumber": "118"
             },
             {
-              "label": "KISA 상담하기",
+              "label": "KISA 채팅 상담하기",
               "action": "webLink",
-              "webLinkUrl": "https://www.kisa.or.kr/118"
+              "webLinkUrl": "https://design.happytalkio.com/chatting?siteId=5000101293&siteName=%ED%95%9C%EA%B5%AD%EC%9D%B8%ED%84%B0%EB%84%B7%EC%A7%84%ED%9D%A5%EC%9B%90KISA%20118%EC%83%81%EB%8B%B4%ED%8C%80&categoryId=200478&divisionId=200479&partnerId=&shopId=&params="
             }
           ]
         }

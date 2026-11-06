@@ -1,9 +1,11 @@
 """Public collection fails closed and connects only to the checked IPv4."""
 
 import asyncio
+import contextlib
 import sys
 import ssl
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 
@@ -120,7 +122,7 @@ async def test_public_api_uses_proxy_and_disables_insecure_retry():
         return CollectResult(input_url=url, final_url=url, redirect_chain=(), status_code=200,
                              content_type="text/html", html="ok", title=None, elapsed_ms=1, failures=())
 
-    app = create_app(token=TOKEN, allowed_hosts=frozenset(), network_policy=policy(), collect=collect)
+    app = create_app(token=TOKEN, network_policy=policy(), collect=collect)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="https://collector") as c:
             response = await c.post("/collect", json={"url": "https://unregistered.example/"},
@@ -168,9 +170,36 @@ async def test_proxy_close_cancels_open_tunnels():
     await asyncio.sleep(0)
     await proxy.close()
     assert not proxy._handlers
-    assert await asyncio.wait_for(reader.read(), 0.2) == b""
+    # 읽지 않은 헤더가 남은 채 닫히면 EOF 대신 RST 가 온다. 둘 다 닫힌 것이다
+    try:
+        assert await asyncio.wait_for(reader.read(), 0.2) == b""
+    except ConnectionResetError:
+        pass
     writer.close()
-    await writer.wait_closed()
+    with contextlib.suppress(ConnectionResetError):
+        await writer.wait_closed()
+
+
+async def test_connection_handled_after_close_opens_no_tunnel():
+    dials = []
+
+    async def connect_ip(host, port):
+        dials.append(host)
+        return "127.0.0.1"
+
+    proxy = EgressProxy(lambda *_: True, connect_ip=connect_ip)
+    await proxy.start()
+    await proxy.close()
+    client, server = socket.socketpair()
+    reader, writer = await asyncio.open_connection(sock=server)
+    c_reader, c_writer = await asyncio.open_connection(sock=client)
+    c_writer.write(b"CONNECT allowed.example:443 HTTP/1.1\r\n\r\n")
+    await c_writer.drain()
+    await asyncio.wait_for(proxy._handle(reader, writer), 0.2)
+    assert not proxy._handlers
+    assert dials == []
+    assert await asyncio.wait_for(c_reader.read(), 0.2) == b""
+    c_writer.close()
 
 
 async def test_httpx_real_tls_tunnel_and_redirect_keep_pinned_ip(tmp_path, monkeypatch):

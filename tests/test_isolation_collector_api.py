@@ -14,9 +14,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "infra" / "isolation"))
 
-from collector.app import MAX_RESPONSE_BYTES, create_app  # noqa: E402
+from collector.app import MAX_RESPONSE_BYTES, create_app, encode_result  # noqa: E402
 from scanner.fetch import HTML_LIMIT_BYTES  # noqa: E402
-from collector.policy import is_allowed_url, load_allowed_hosts  # noqa: E402
+from collector.policy import NetworkPolicy, is_allowed_url, parse_list  # noqa: E402
 from scanner.collect_response import parse_collect_response  # noqa: E402
 from scanner.fetch import collect_url  # noqa: E402
 from scanner.models import BrowserResult, CollectResult  # noqa: E402
@@ -43,7 +43,8 @@ def client_for(collect=None, **kwargs) -> httpx.AsyncClient:
         calls.append(url)
         return ok_result(url)
 
-    app = create_app(token=TOKEN, allowed_hosts=HOSTS, collect=collect or default_collect, **kwargs)
+    app = create_app(token=TOKEN, network_policy=NetworkPolicy(allowed_hosts=HOSTS),
+                     collect=collect or default_collect, **kwargs)
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://collector")
     client.calls = calls  # type: ignore[attr-defined]
     return client
@@ -66,11 +67,11 @@ class TestAuth:
 
     def test_short_token_refuses_to_start(self):
         with pytest.raises(RuntimeError):
-            create_app(token="short", allowed_hosts=HOSTS)
+            create_app(token="short", network_policy=NetworkPolicy(allowed_hosts=HOSTS))
 
     def test_empty_allowlist_refuses_to_start(self):
-        with pytest.raises(RuntimeError):
-            create_app(token=TOKEN, allowed_hosts=frozenset())
+        with pytest.raises(ValueError):
+            NetworkPolicy(allowed_hosts=frozenset())
 
 
 class TestRequestValidation:
@@ -133,7 +134,7 @@ class TestCollect:
                 await asyncio.sleep(60)
             return ok_result(url)
 
-        async with client_for(collect=hang_once, fetch_timeout=0.05) as c:
+        async with client_for(collect=hang_once, fetch_timeout=0.05, fetch_retry_timeout=0.05) as c:
             first = await post(c, {"url": OK_URL})
             second = await post(c, {"url": OK_URL})
         assert first.json()["failures"] == ["timeout"]
@@ -235,7 +236,7 @@ class TestBrowserStage:
         renderer = FakeRenderer(hang=True)
         async with client_for(
             browser_mode="always", renderer=renderer, trigger=lambda _: "x",
-            fetch_timeout=0.01, browser_timeout=0.01,
+            fetch_timeout=0.01, fetch_retry_timeout=0.01, browser_timeout=0.01,
         ) as c:
             r = await post(c, {"url": OK_URL})
         assert r.json()["failures"] == ["timeout"]
@@ -255,7 +256,7 @@ class TestBrowserStage:
 
     def test_browser_mode_needs_renderer(self):
         with pytest.raises(RuntimeError):
-            create_app(token=TOKEN, allowed_hosts=HOSTS, browser_mode="auto")
+            create_app(token=TOKEN, network_policy=NetworkPolicy(allowed_hosts=HOSTS), browser_mode="auto")
 
 
 class TestParseBrowserField:
@@ -270,7 +271,7 @@ class TestParseBrowserField:
         parsed = parse_collect_response(OK_URL, data)
         assert len(parsed.browser.navigation_chain) == 10
         assert len(parsed.browser.downloads) == 5
-        assert parsed.browser.navigation_requests is None  # 구버전 수집기: "없음"과 "빈 기록"을 구분한다
+        assert "invalid_response" in parsed.browser.failures  # 이동 요청 기록이 없으면 대조할 수 없다
 
     def test_navigation_requests_are_read_and_capped(self):
         data = {"input_url": OK_URL, "browser": {"navigation_requests": ["a"] * 50}}
@@ -313,8 +314,8 @@ class TestPolicy:
     def test_blocked(self, url):
         assert not is_allowed_url(url, HOSTS)
 
-    def test_load_allowed_hosts(self):
-        assert load_allowed_hosts(" Fake.ktc-test.kr. , ,b.test") == frozenset({"fake.ktc-test.kr", "b.test"})
+    def test_parse_list(self):
+        assert parse_list(" Fake.ktc-test.kr. , ,b.test") == frozenset({"fake.ktc-test.kr", "b.test"})
 
 
 class TestFetchAllowlistHook:
@@ -351,3 +352,106 @@ class TestMainClientCertPin:
         monkeypatch.setenv("ISOLATION_API_CA_CERT", "-----BEGIN CERTIFICATE-----\nnope\n-----END CERTIFICATE-----")
         with pytest.raises(IsolationClientError):
             _tls_verify()
+
+
+class TestFetchRetry:
+    """1차 수집이 시간 초과면 더 넉넉한 시간으로 한 번만 다시 받는다."""
+
+    @staticmethod
+    def collect_with(*results):
+        timeouts: list[float] = []
+        remaining = list(results)
+
+        async def collect(url, *, timeout, **_):
+            timeouts.append(timeout)
+            return remaining.pop(0)(url)
+
+        return collect, timeouts
+
+    @staticmethod
+    def timed_out(url):
+        return ok_result(url, status_code=None, html="", failures=("timeout",))
+
+    async def test_first_success_does_not_retry(self):
+        collect, timeouts = self.collect_with(ok_result)
+        async with client_for(collect=collect, fetch_timeout=2.0, fetch_retry_timeout=5.0) as c:
+            r = await post(c, {"url": OK_URL})
+        assert r.json()["failures"] == []
+        assert timeouts == [2.0]
+
+    async def test_timeout_retries_once_with_longer_limit(self, caplog):
+        collect, timeouts = self.collect_with(self.timed_out, ok_result)
+        with caplog.at_level("INFO", logger="collector"):
+            async with client_for(collect=collect, fetch_timeout=2.0, fetch_retry_timeout=5.0) as c:
+                r = await post(c, {"url": OK_URL})
+        assert r.json()["failures"] == []
+        assert r.json()["status_code"] == 200
+        assert timeouts == [2.0, 5.0]
+        assert "event=fetch_retry host=fake.ktc-test.kr" in caplog.text
+
+    async def test_second_timeout_stays_a_failure(self):
+        collect, timeouts = self.collect_with(self.timed_out, self.timed_out)
+        async with client_for(collect=collect, fetch_timeout=2.0, fetch_retry_timeout=5.0) as c:
+            r = await post(c, {"url": OK_URL})
+        assert r.json()["failures"] == ["timeout"]
+        assert timeouts == [2.0, 5.0]
+
+    @pytest.mark.parametrize("failures", [("connection_failed",), ("blocked_address",), ("tls_cert_verify_failed",)])
+    async def test_other_failures_do_not_retry(self, failures):
+        collect, timeouts = self.collect_with(
+            lambda url: ok_result(url, status_code=None, html="", failures=failures),
+        )
+        async with client_for(collect=collect, fetch_timeout=2.0, fetch_retry_timeout=5.0) as c:
+            r = await post(c, {"url": OK_URL})
+        assert r.json()["failures"] == list(failures)
+        assert timeouts == [2.0]
+
+    async def test_retry_success_still_reaches_browser(self):
+        collect, _ = self.collect_with(self.timed_out, ok_result)
+        renderer = FakeRenderer(browser_result())
+        async with client_for(
+            collect=collect, fetch_timeout=2.0, fetch_retry_timeout=5.0,
+            browser_mode="auto", renderer=renderer, trigger=lambda _: "script_redirect",
+        ) as c:
+            r = await post(c, {"url": OK_URL})
+        assert r.json()["browser"] is not None
+
+    def test_default_budget_fits_main_server_timeout(self):
+        from collector.app import (
+            BACKSTOP_EXTRA_SECONDS, DEFAULT_BROWSER_TIMEOUT_SECONDS,
+            DEFAULT_FETCH_RETRY_TIMEOUT_SECONDS, DEFAULT_FETCH_TIMEOUT_SECONDS,
+        )
+        from scanner.isolation_client import ISOLATION_TIMEOUT_SECONDS
+
+        assert DEFAULT_FETCH_TIMEOUT_SECONDS == 2.0
+        assert DEFAULT_FETCH_RETRY_TIMEOUT_SECONDS == 5.0
+        assert (DEFAULT_FETCH_TIMEOUT_SECONDS + DEFAULT_FETCH_RETRY_TIMEOUT_SECONDS
+                + DEFAULT_BROWSER_TIMEOUT_SECONDS + BACKSTOP_EXTRA_SECONDS) < ISOLATION_TIMEOUT_SECONDS
+
+
+class TestStageTwoEgress:
+    async def test_allowlist_mode_also_goes_through_proxy_without_tls_bypass(self):
+        captured = {}
+
+        async def collect(url, **kwargs):
+            captured.update(kwargs)
+            return ok_result(url)
+
+        async with client_for(collect=collect) as c:
+            assert (await post(c, {"url": OK_URL})).status_code == 200
+        assert captured["allow_insecure_retry"] is False
+        assert captured["client"]._mounts  # HTTPX installs the explicitly configured proxy transport.
+
+    def test_long_redirect_urls_cannot_push_response_over_limit(self):
+        long_url = "https://fake.ktc-test.kr/" + "a" * 200_000
+        body = encode_result(ok_result(OK_URL, final_url=long_url, redirect_chain=(long_url,) * 6, html=""))
+        assert len(body) <= MAX_RESPONSE_BYTES
+        parsed = json.loads(body)
+        assert all(len(hop) <= 2048 for hop in parsed["redirect_chain"])
+
+
+async def test_non_ascii_content_length_is_rejected_not_crashed():
+    async with client_for() as c:
+        r = await c.post("/collect", content=json.dumps({"url": OK_URL}),
+                         headers={**AUTH, "Content-Length": "²".encode("latin-1")})
+        assert r.status_code == 413

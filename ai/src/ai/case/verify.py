@@ -13,7 +13,12 @@ import re
 from typing import Literal
 
 from ai.case import forms
-from ai.case.lexicon import DEMAND_LEXICON, INSTITUTION_PATTERN, PUBLIC_INSTITUTION_PATTERN
+from ai.case.lexicon import (
+    DEMAND_LEXICON,
+    INSTITUTION_PATTERN,
+    PUBLIC_INSTITUTION_PATTERN,
+    introduces_institution,
+)
 from ai.case.types import (
     ClaimReading,
     ClaimView,
@@ -82,6 +87,14 @@ _NEGATED_PREDICATE = re.compile(
     r")$"
 )
 _TRAILING_PUNCT = re.compile(r"[.!\s]+$")
+# 신분증을 들고 직접 오라는 안내. 넘기라는 요구가 아니라서 하한에 쓰지 않는다
+_ID_CARD = re.compile(r"신분증|면허증")
+_VISIT_GUIDE = re.compile(r"방문|오셔서|오세요|오시면|오실\s*때|오셔도|지참|수령")
+# 돈이 아닌 것을 보내라는 말: "계약서 사진 보내 줘", "문자로 보내 주세요"
+_NON_MONEY_OBJECT = re.compile(r"문자|사진|계약서|메일|서류|파일|영상|캡처|자료|영수증|주소")
+_MONEY_WORD = re.compile(rf"{forms.MONEY_WORD}|입금|이체|송금")
+# 찍어 보내라는 말은 방문 안내가 아니라 신분증을 넘기라는 요구다
+_HAND_OVER = re.compile(r"보내|전송|찍어|올려|불러")
 
 _CLAUSE_BREAK = re.compile(r"(?:고(?=\s+(?!있|계시|싶))|며|지만|는데|,)\s+")
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://")
@@ -92,6 +105,9 @@ class VerifyResult(StrictModel):
     rejected: list[RejectedClaim]
     spoken_hosts: list[str]
     claims: ClaimView
+    # 원문에서 찾았지만 근거 코드로 바꿀 수 없어 쓰지 않은 주장("종류:사유"). 진단 로그용.
+    # rejected 는 계약에 실리므로 사유를 늘리지 않고 여기 따로 센다
+    unused: list[str] = []
 
 
 def _norm(text: str) -> str:
@@ -109,6 +125,22 @@ def _is_notice_sentence(quote: str) -> bool:
     m = _NOTICE_DOEMNIDA.search(sentence)
     # "발송됩니다" 같은 상태 알림만 거른다. 의무·조건 꼴은 요구라서 통과한다
     return bool(m) and not _DOEMNIDA_REQUEST.search(sentence[: m.start()].rstrip())
+
+
+def _demand_shaped(kind: DemandKind, sentence: str) -> bool:
+    """하한에 쓸 수 있는 요구인가. 부탁 꼴이어도 돈·정보를 넘기라는 말이 아니면 주의로만 남긴다."""
+    if not forms.is_request(sentence):
+        return False
+    if (
+        kind == DemandKind.PERSONAL_INFO
+        and _ID_CARD.search(sentence)
+        and _VISIT_GUIDE.search(sentence)
+        and not _HAND_OVER.search(sentence)
+    ):
+        return False
+    if kind == DemandKind.MONEY_TRANSFER and _NON_MONEY_OBJECT.search(sentence):
+        return bool(_MONEY_WORD.search(sentence))
+    return True
 
 
 def _last_clause_start(quote: str) -> int:
@@ -165,7 +197,7 @@ def _identity_self_side(kind: IdentityKind, sentence: str) -> bool:
     """신원 문장이 받는 사람 쪽 말 꼴인가. 자기소개 꼴이면 물음표가 붙어도 상대 말로 본다."""
     if forms.is_quotation(sentence):
         return True
-    if kind == IdentityKind.INSTITUTION and forms.asserts_institution(sentence, INSTITUTION_PATTERN):
+    if kind == IdentityKind.INSTITUTION and introduces_institution(sentence):
         return False
     if kind == IdentityKind.ACQUAINTANCE and forms.asserts_acquaintance(sentence):
         return False
@@ -192,6 +224,7 @@ def verify_call(
     texts = [_norm(seg.text) for seg in source.segments]
     accepted: list[Evidence] = []
     rejected: list[RejectedClaim] = []
+    unused: list[str] = []
 
     def locate(kind: str, quote: str, self_side):
         """V-1·V-2. 통과하면 (인용, 세그먼트 텍스트, 인용 끝 위치, 인용을 품은 문장), 아니면 None.
@@ -262,9 +295,13 @@ def verify_call(
                 listed = True
                 name = found[0]
                 add(EvidenceCode.INSTITUTION_CLAIM, q, shaped=False)
+            else:
+                unused.append("identity:unlisted_institution")
         elif ident.kind == IdentityKind.ACQUAINTANCE:
             # "엄마 나야", "엄마, 폰 고장 났어" 같은 꼴만 하한에 쓴다. "우리 아들이" 는 남 이야기다
             add(EvidenceCode.ACQUAINTANCE_CLAIM, q, shaped=_asserts(ident.kind, sentence))
+        else:
+            unused.append(f"identity:{ident.kind.value}")
         claims.identity.append(
             ClaimViewIdentity(
                 kind=ident.kind, name=name, quote=q, listed_institution=listed
@@ -295,7 +332,10 @@ def verify_call(
         code = _DEMAND_CODE.get(demand.kind)
         if code is not None:
             # 하한에는 부탁 꼴("옮기셔야 합니다", "불러 주세요")만 쓴다. 혼잣말·이야기 속 "보내" 는 주의로 남는다
-            add(code, q, shaped=forms.is_request(sentence))
+            add(code, q, shaped=_demand_shaped(demand.kind, sentence))
+        elif demand.kind != DemandKind.VISIT_LINK:
+            # 링크 요구는 근거 코드 대신 말로 부른 링크(R16)로 쓴다
+            unused.append(f"demand:{demand.kind.value}")
         claims.demands.append(ClaimViewDemand(kind=demand.kind, quote=q))
 
     for blocker in reading.blockers:
@@ -317,4 +357,5 @@ def verify_call(
         rejected=rejected,
         spoken_hosts=hosts,
         claims=claims,
+        unused=unused,
     )

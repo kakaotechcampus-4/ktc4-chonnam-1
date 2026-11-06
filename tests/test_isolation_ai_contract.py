@@ -76,6 +76,7 @@ def browser_payload(html):
         "blocked_requests": 0,
         "elapsed_ms": 200,
         "failures": [],
+        "navigation_requests": [],
     }
 
 
