@@ -266,18 +266,15 @@ EC2 호스트는 바깥으로 나갈 수 없다(`network_config.py` 의 `KTC-OUT
    ```bash
    sudo docker inspect ktc-isolation-browser --format '{{.Image}}' | sudo tee /opt/ktc-isolation/previous-image.txt
    ```
-4. 유닛을 설치하고(위 6번), 옮긴 이미지로 띄운다. `build.sh` 가 방화벽과 컨테이너를 켜고 `verify.py` 를 돌린 뒤 타이머를 켠다.
+4. 유닛을 설치하고(위 6번), 옮긴 이미지로 띄운다. `build.sh` 가 수집기를 멈추고 방화벽을 다시 적용한 뒤 컨테이너를 한 번 새로 만들고, `verify.py` 를 돌린 다음 타이머를 켠다.
    ```bash
    sudo bash /opt/ktc-isolation/install-units.sh
    sudo IMAGE_TAR=/tmp/ktc-isolation.tar bash /opt/ktc-isolation/build.sh
    ```
-   `build.sh` 는 컨테이너 ID 가 바뀐 새 컨테이너가 뜬 뒤에 `verify.py` 를 돌리고, 그다음에 타이머를 켠다. 60초 안에 새 컨테이너가 뜨지 않으면 `verify.py` 를 건너뛰고 실패한다. 이때는 `sudo journalctl -u ktc-isolation-collector` 로 원인을 고친 뒤, `build.sh` 를 다시 돌리지 않고 검사만 다시 한다.
-   ```bash
-   sudo docker exec ktc-isolation-browser python /app/verify.py
-   ```
+   `verify.py` 는 컨테이너 ID 가 바뀐 새 컨테이너에서만 돌린다. 60초 안에 새 컨테이너가 뜨지 않으면 이전 컨테이너 ID 와 마지막으로 본 상태를 찍고 `verify.py` 를 건너뛰어 실패한다. 이때는 `sudo journalctl -u ktc-isolation-collector` 로 원인을 고친 뒤 `build.sh` 를 다시 돌린다. `docker exec` 로 검사만 다시 하면 옛 컨테이너를 검사하고 통과할 수 있다.
 5. 아래 8절 확인 목록과 챗봇으로 공식 링크(✅), 가짜 주소(🔎)를 확인한다.
 
-2026-11-06 재배포(커밋 `d3fad6c`)를 이 순서로 했다.
+2026-11-06 재배포(커밋 `d3fad6c`)를 이 순서로 했다. 그때의 `build.sh` 는 교체되는 옛 컨테이너에서 `verify.py` 를 돌려 종료 코드 137 로 끝났고, 새 컨테이너가 뜬 뒤 `docker exec` 로 직접 검사해 통과했다.
 
 되돌리기: `.env` 의 `ISOLATION_IMAGE` 를 `previous-image.txt` 의 값으로 바꾸고 `sudo systemctl restart ktc-isolation-collector` 를 실행한다. 새 유닛이 뜨지 않으면 `sudo systemctl disable --now ktc-isolation-collector` 뒤에 예전처럼 `docker compose -f compose.yaml -f compose.egress.yaml --env-file .env --env-file collector.env up -d` 로 띄운다.
 
