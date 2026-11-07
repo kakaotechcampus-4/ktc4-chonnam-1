@@ -20,12 +20,12 @@ set -a
 set +a
 python3 render-egress.py /opt/ktc-isolation
 sha256sum compose.egress.yaml egress-ips.txt >> image-record.txt
-# systemctl restart 는 compose 를 시작만 하고 돌아온다. 이름이 같은 옛 컨테이너에서 verify.py 를
-# 돌리면 교체될 때 함께 죽어 137 로 끝나므로, ID 가 바뀐 새 컨테이너가 뜰 때까지 기다린다.
+# 수집기 유닛은 Requires= 로 방화벽에 묶여, 돌고 있으면 방화벽 재시작 때 함께 다시 만들어진다.
+# 꺼져 있을 때만 start 가 띄운다. 어느 쪽이든 compose 는 systemctl 이 돌아온 뒤에 컨테이너를 만들므로,
+# 이름이 같은 옛 컨테이너에서 verify.py 를 돌리지 않게 ID 가 바뀐 컨테이너를 기다린다.
 old_id=$(docker inspect --format '{{.Id}}' ktc-isolation-browser 2>/dev/null || true)
 systemctl restart ktc-isolation-firewall
-systemctl restart ktc-isolation-collector
-systemctl start ktc-isolation-recreate.timer ktc-isolation-health.timer
+systemctl start ktc-isolation-collector
 started=
 for _ in $(seq 60); do
     state=$(docker inspect --format '{{.Id}} {{.State.Running}}' ktc-isolation-browser 2>/dev/null || true)
@@ -36,7 +36,9 @@ for _ in $(seq 60); do
     sleep 1
 done
 if [ -z "$started" ]; then
-    echo "새 컨테이너가 60초 안에 뜨지 않았다: sudo journalctl -u ktc-isolation-collector" >&2
+    echo "새 컨테이너가 60초 안에 뜨지 않아 verify.py 를 건너뛰었다: sudo journalctl -u ktc-isolation-collector" >&2
     exit 1
 fi
 timeout 30 docker exec ktc-isolation-browser python /app/verify.py
+# 상태 확인 타이머가 검사 중인 컨테이너를 다시 만들지 않게 검사 뒤에 켠다.
+systemctl start ktc-isolation-recreate.timer ktc-isolation-health.timer
