@@ -271,10 +271,7 @@ EC2 호스트는 바깥으로 나갈 수 없다(`network_config.py` 의 `KTC-OUT
    sudo bash /opt/ktc-isolation/install-units.sh
    sudo IMAGE_TAR=/tmp/ktc-isolation.tar bash /opt/ktc-isolation/build.sh
    ```
-   **알려진 문제 (코드 미수정).** 컨테이너가 이미 있는 서버에서는 `build.sh` 의 대기 반복문이 교체 전의 옛 컨테이너를 보고 바로 넘어간다. 그 컨테이너가 교체되는 중에 `verify.py` 를 돌려 `build.sh` 가 종료 코드 137 로 끝난다. 이때는 새 컨테이너가 뜬 뒤 직접 확인한다.
-   ```bash
-   sudo docker exec ktc-isolation-browser python /app/verify.py
-   ```
+   `build.sh` 는 컨테이너 ID 가 바뀐 새 컨테이너가 뜬 뒤에 `verify.py` 를 돌린다. 예전에는 이름만 보고 기다려, 컨테이너가 이미 있는 서버에서 교체되는 옛 컨테이너에서 `verify.py` 를 돌리다 종료 코드 137 로 끝났다. 60초 안에 새 컨테이너가 뜨지 않으면 `sudo journalctl -u ktc-isolation-collector` 를 보라는 문구와 함께 실패한다.
 5. 아래 8절 확인 목록과 챗봇으로 공식 링크(✅), 가짜 주소(🔎)를 확인한다.
 
 2026-11-06 재배포(커밋 `d3fad6c`)를 이 순서로 했다.
