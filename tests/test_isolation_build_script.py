@@ -3,6 +3,7 @@
 docker 와 systemctl 을 가짜 명령으로 바꿔 EC2 의 systemd 동작을 흉내 낸다.
 - 수집기 유닛은 Requires= 로 방화벽 유닛에 묶여, 돌고 있을 때 방화벽을 다시 시작하면
   함께 다시 시작한다. ExecStop 의 compose down 이 옛 컨테이너를 먼저 지운다.
+  이 전파가 없다고 가정한 경우도 함께 본다.
 - 꺼진 유닛을 시작하면 compose up --force-recreate 가 손으로 띄운 옛 컨테이너를
   systemctl 이 돌아온 뒤에 지운다.
 """
@@ -64,8 +65,11 @@ start_inactive() {
 }
 [ -f "$root/broken" ] && exit 0
 case "$1 $2" in
+    "stop ktc-isolation-collector")
+        rm -f "$root/active"
+        [ -f "$root/was-active" ] && rm -f "$root/container" ;;
     "restart ktc-isolation-firewall")
-        if [ -f "$root/active" ]; then rm -f "$root/container"; create_later; fi ;;
+        if [ -f "$root/active" ] && [ -f "$root/propagates" ]; then rm -f "$root/container"; create_later; fi ;;
     "restart ktc-isolation-collector")
         if [ -f "$root/active" ]; then rm -f "$root/container"; create_later; else start_inactive; fi ;;
     "start ktc-isolation-collector")
@@ -85,7 +89,7 @@ def executable(path, text):
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def run_build(tmp_path, *, old_container, unit_active, broken=False):
+def run_build(tmp_path, *, old_container, unit_active, propagates=True, broken=False):
     work = tmp_path / "opt"
     for sub in ("scanner", "collector"):
         (work / sub).mkdir(parents=True)
@@ -113,6 +117,9 @@ def run_build(tmp_path, *, old_container, unit_active, broken=False):
         (tmp_path / "container").write_text(old_container)
     if unit_active:
         (tmp_path / "active").touch()
+        (tmp_path / "was-active").touch()
+    if propagates:
+        (tmp_path / "propagates").touch()
 
     env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path)}
     result = subprocess.run(["bash", str(work / "build.sh")], env=env,
@@ -121,13 +128,15 @@ def run_build(tmp_path, *, old_container, unit_active, broken=False):
     return result, events.read_text().splitlines() if events.exists() else []
 
 
-@pytest.mark.parametrize(("old_container", "unit_active"), [
-    pytest.param("old-container", False, id="manual-container"),
-    pytest.param("old-container", True, id="unit-managed"),
-    pytest.param(None, False, id="fresh-host"),
+@pytest.mark.parametrize(("old_container", "unit_active", "propagates"), [
+    pytest.param("old-container", False, True, id="manual-container"),
+    pytest.param("old-container", True, True, id="unit-managed"),
+    pytest.param("old-container", True, False, id="unit-managed-without-restart-propagation"),
+    pytest.param(None, False, True, id="fresh-host"),
 ])
-def test_one_new_container_is_verified_before_timers_start(tmp_path, old_container, unit_active):
-    result, events = run_build(tmp_path, old_container=old_container, unit_active=unit_active)
+def test_one_new_container_is_verified_before_timers_start(tmp_path, old_container, unit_active, propagates):
+    result, events = run_build(tmp_path, old_container=old_container, unit_active=unit_active,
+                               propagates=propagates)
     assert result.returncode == 0, result.stderr
     assert events == ["create new-1", "exec new-1", "timers"]
 
@@ -135,5 +144,7 @@ def test_one_new_container_is_verified_before_timers_start(tmp_path, old_contain
 def test_no_new_container_fails_without_verifying_the_old_one(tmp_path):
     result, events = run_build(tmp_path, old_container="old-container", unit_active=True, broken=True)
     assert result.returncode == 1
-    assert "journalctl" in result.stderr
+    assert "old-container" in result.stderr
+    assert "build.sh" in result.stderr
     assert not any(event.startswith("exec") for event in events)
+    assert "timers" not in events
