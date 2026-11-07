@@ -1,7 +1,10 @@
-"""build.sh 는 systemd 가 새로 만든 컨테이너에서 verify.py 를 돌린다.
+"""build.sh 는 배포마다 컨테이너를 한 번만 새로 만들고, 그 컨테이너에서 verify.py 를 돌린다.
 
-docker 와 systemctl 을 가짜 명령으로 바꿔, `systemctl restart` 가 돌아온 뒤에야
-compose 가 옛 컨테이너를 지우고 새 컨테이너를 띄우는 EC2 의 순서를 흉내 낸다.
+docker 와 systemctl 을 가짜 명령으로 바꿔 EC2 의 systemd 동작을 흉내 낸다.
+- 수집기 유닛은 Requires= 로 방화벽 유닛에 묶여, 돌고 있을 때 방화벽을 다시 시작하면
+  함께 다시 시작한다. ExecStop 의 compose down 이 옛 컨테이너를 먼저 지운다.
+- 꺼진 유닛을 시작하면 compose up --force-recreate 가 손으로 띄운 옛 컨테이너를
+  systemctl 이 돌아온 뒤에 지운다.
 """
 
 import os
@@ -17,8 +20,8 @@ FAKE_DOCKER = r'''#!/usr/bin/env python3
 import sys, time
 from pathlib import Path
 
-state = Path(__file__).resolve().parent.parent / "container"
-log = state.parent / "exec.log"
+root = Path(__file__).resolve().parent.parent
+state = root / "container"
 args = sys.argv[1:]
 
 def current():
@@ -36,8 +39,8 @@ elif args[0] == "exec":
     container = current()
     if not container:
         sys.exit(1)
-    with log.open("a") as f:
-        f.write(container + "\n")
+    with (root / "events.log").open("a") as f:
+        f.write(f"exec {container}\n")
     deadline = time.monotonic() + 1.0
     while time.monotonic() < deadline:
         if current() != container:
@@ -48,11 +51,33 @@ elif args[0] == "exec":
 
 FAKE_SYSTEMCTL = r'''#!/bin/bash
 root=$(cd "$(dirname "$0")/.." && pwd)
-if [ "$1" = restart ] && [ "$2" = ktc-isolation-collector ]; then
-    ( sleep 0.5; rm -f "$root/container"; sleep 0.5; echo new-container > "$root/container" ) >/dev/null 2>&1 &
-fi
+log() { echo "$1" >> "$root/events.log"; }
+create_later() {
+    n=$(( $(cat "$root/count" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" > "$root/count"
+    ( sleep 1; echo "new-$n" > "$root/container"; log "create new-$n" ) >/dev/null 2>&1 &
+}
+start_inactive() {
+    touch "$root/active"
+    ( sleep 0.5; rm -f "$root/container" ) >/dev/null 2>&1 &
+    create_later
+}
+[ -f "$root/broken" ] && exit 0
+case "$1 $2" in
+    "restart ktc-isolation-firewall")
+        if [ -f "$root/active" ]; then rm -f "$root/container"; create_later; fi ;;
+    "restart ktc-isolation-collector")
+        if [ -f "$root/active" ]; then rm -f "$root/container"; create_later; else start_inactive; fi ;;
+    "start ktc-isolation-collector")
+        [ -f "$root/active" ] || start_inactive ;;
+    "start ktc-isolation-recreate.timer")
+        log timers ;;
+esac
 exit 0
 '''
+
+FAKE_TIMEOUT = '#!/bin/bash\nshift\nexec "$@"\n'
+FAKE_SLEEP = "#!/bin/bash\nexit 0\n"
 
 
 def executable(path, text):
@@ -60,7 +85,7 @@ def executable(path, text):
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def run_build(tmp_path, old_container):
+def run_build(tmp_path, *, old_container, unit_active, broken=False):
     work = tmp_path / "opt"
     for sub in ("scanner", "collector"):
         (work / sub).mkdir(parents=True)
@@ -80,18 +105,35 @@ def run_build(tmp_path, old_container):
     bin_dir.mkdir()
     executable(bin_dir / "docker", FAKE_DOCKER)
     executable(bin_dir / "systemctl", FAKE_SYSTEMCTL)
+    executable(bin_dir / "timeout", FAKE_TIMEOUT)
+    if broken:
+        executable(bin_dir / "sleep", FAKE_SLEEP)
+        (tmp_path / "broken").touch()
     if old_container:
         (tmp_path / "container").write_text(old_container)
+    if unit_active:
+        (tmp_path / "active").touch()
 
-    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path)}
     result = subprocess.run(["bash", str(work / "build.sh")], env=env,
                             capture_output=True, text=True, timeout=90)
-    log = tmp_path / "exec.log"
-    return result, log.read_text().split() if log.exists() else []
+    events = tmp_path / "events.log"
+    return result, events.read_text().splitlines() if events.exists() else []
 
 
-@pytest.mark.parametrize("old_container", ["old-container", None])
-def test_verify_runs_in_the_container_systemd_just_created(tmp_path, old_container):
-    result, exec_targets = run_build(tmp_path, old_container)
+@pytest.mark.parametrize(("old_container", "unit_active"), [
+    pytest.param("old-container", False, id="manual-container"),
+    pytest.param("old-container", True, id="unit-managed"),
+    pytest.param(None, False, id="fresh-host"),
+])
+def test_one_new_container_is_verified_before_timers_start(tmp_path, old_container, unit_active):
+    result, events = run_build(tmp_path, old_container=old_container, unit_active=unit_active)
     assert result.returncode == 0, result.stderr
-    assert exec_targets == ["new-container"]
+    assert events == ["create new-1", "exec new-1", "timers"]
+
+
+def test_no_new_container_fails_without_verifying_the_old_one(tmp_path):
+    result, events = run_build(tmp_path, old_container="old-container", unit_active=True, broken=True)
+    assert result.returncode == 1
+    assert "journalctl" in result.stderr
+    assert not any(event.startswith("exec") for event in events)
