@@ -262,7 +262,7 @@ async def test_q1_sent_money_gets_k6_with_112(monkeypatch, stub_read_message):
     k6 = _text_card(card)
     assert k6["title"] == "🚨 지금 먼저 하세요"
     assert k6["description"].startswith(
-        "1. 송금한 은행 고객센터에 지급정지를 요청하세요.\n2. 112에 신고하세요.\n\n"
+        "1. 송금한 은행에 지급정지를 요청하세요.\n2. 112에 신고하세요.\n\n"
     )
     assert [b["label"] for b in k6["buttons"]] == ["112 신고"]
     # Q1 답은 결론을 바꾸지 않는다
@@ -290,7 +290,7 @@ async def test_q1_installed_app_only_has_no_buttons(monkeypatch, stub_read_messa
     card = await _answer(job["job_id"], "already_acted", "installed_app")
     k6 = _text_card(card)
     assert k6["buttons"] == []
-    assert "1. 휴대폰 전원을 끄거나 비행기 모드로 바꾸세요." in k6["description"]
+    assert "1. 휴대폰을 끄거나 비행기 모드로 바꾸세요." in k6["description"]
 
 
 async def test_q1_not_yet_gets_a2_and_later_answers_accumulate(monkeypatch, stub_read_message):

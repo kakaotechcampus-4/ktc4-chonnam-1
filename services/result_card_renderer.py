@@ -132,15 +132,32 @@ _NUMBER_CHECK_UNCHECKED_LINE = "상대가 말한 번호가 {org} 번호인지 (�
 _VOICE_RESPONSE_ACTION_LINES = {
     "contact_gift_card_issuer": "상품권 발행사 고객센터에 사용 정지를 요청하세요.",
     "report_112": "112에 신고하세요.",
-    "request_payment_stop": "송금한 은행 고객센터에 지급정지를 요청하세요.",
+    "request_payment_stop": "송금한 은행에 지급정지를 요청하세요.",
     "contact_card_issuer": "카드사에 분실·정지 신고를 하세요.",
     "change_password": "입력한 비밀번호를 바꾸세요.",
     "register_info_exposure": "금융감독원 개인정보 노출자 사고예방시스템(pd.fss.or.kr)에 노출 사실을 등록하세요.",
-    "isolate_phone": "휴대폰 전원을 끄거나 비행기 모드로 바꾸세요.",
-    "use_other_device": "지급정지 신청과 개인정보 노출 등록은 다른 휴대폰이나 PC로 하세요.",
-    "remove_app_and_check_device": "설치한 앱을 지우거나 휴대폰을 초기화하세요.",
+    "isolate_phone": "휴대폰을 끄거나 비행기 모드로 바꾸세요.",
+    "use_other_device": "지급정지 신청과 개인정보 노출 등록은\n다른 휴대폰이나 PC로 하세요.",
+    "remove_app_and_check_device": "앱을 지우거나 휴대폰을 초기화하세요.",
     "delete_downloaded_file": "받은 파일을 열지 말고 지우세요.",
 }
+
+# 돈을 보내지 않았는데 지급정지가 붙는 경우(앱 설치 — 원격 조종 앱이 돈을 빼 갈 수 있다).
+# "송금한 은행"은 송금을 전제해서 답과 맞지 않으니 내 계좌를 막으라는 문장으로 바꾼다.
+_PAYMENT_STOP_WITHOUT_SENDING_LINE = "거래 은행에 계좌 지급정지를 요청하세요."
+
+
+def _response_action_lines(response_actions: list[str], answers: list[str]) -> list[str]:
+    """K6 대응 줄. 번호는 실제로 쓴 줄 기준으로 매긴다."""
+
+    sent_money = "sent_money" in answers
+    texts = []
+    for action in response_actions:
+        if action == "request_payment_stop" and not sent_money:
+            texts.append(_PAYMENT_STOP_WITHOUT_SENDING_LINE)
+        elif action in _VOICE_RESPONSE_ACTION_LINES:
+            texts.append(_VOICE_RESPONSE_ACTION_LINES[action])
+    return [f"{i}. {text}" for i, text in enumerate(texts, start=1)]
 
 # K6: chatbot-copy.md D17. 누적 답에서 송금 > 정보 제공 > 앱 설치 순서.
 _VOICE_CONSULT_BUTTON = [{"label": "1394 상담", "action": "phone", "phoneNumber": "1394"}]
@@ -466,11 +483,7 @@ def render_voice_answer_card(result: dict, answers: list[str]) -> dict:
             "stop_line": _voice_stop_line_excluding_hang_up(result.get("stop_actions") or []),
         })
 
-    lines = [
-        f"{i}. {_VOICE_RESPONSE_ACTION_LINES[action]}"
-        for i, action in enumerate(response_actions, start=1)
-        if action in _VOICE_RESPONSE_ACTION_LINES
-    ]
+    lines = _response_action_lines(response_actions, answers)
     buttons = _voice_d17_buttons(answers)
     # 1394 버튼이 있을 때만 PC 사용자에게도 상담 번호를 보여 준다.
     contact_line = (
@@ -1242,11 +1255,7 @@ def render_message_case_card(result: dict, job_id: str | None = None) -> dict:
 
 
 def _message_k6_card(response_actions: list[str], answers: list[str]) -> dict:
-    lines = [
-        f"{i}. {_VOICE_RESPONSE_ACTION_LINES[action]}"
-        for i, action in enumerate(response_actions, start=1)
-        if action in _VOICE_RESPONSE_ACTION_LINES
-    ]
+    lines = _response_action_lines(response_actions, answers)
     buttons = [
         _MESSAGE_K6_PHONE_BUTTONS[action]
         for action in response_actions

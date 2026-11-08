@@ -841,3 +841,28 @@ class TestRenderDetailCarouselGuidance:
         assert len(items) == 1 + 1 + 1  # 신호 1장 + C2 + C3
         c2 = _c2_text(analysis)
         assert "문자: 분석 시간이 초과되어 끝까지 확인하지 못했어요" in c2
+
+
+class TestK6PaymentStopLine:
+    """앱 설치만 답했으면 송금을 전제한 '송금한 은행' 문장을 쓰지 않는다."""
+
+    _APP_ACTIONS = [
+        "request_payment_stop", "isolate_phone", "use_other_device", "remove_app_and_check_device",
+    ]
+
+    def _description(self, response_actions, answers):
+        card = result_card_renderer.render_voice_answer_card(
+            {"response_actions": response_actions}, answers,
+        )
+        return card["template"]["outputs"][0]["textCard"]["description"]
+
+    def test_installed_app_only_asks_to_stop_own_account(self):
+        description = self._description(self._APP_ACTIONS, ["installed_app"])
+
+        assert description.startswith("1. 거래 은행에 계좌 지급정지를 요청하세요.")
+        assert "송금한 은행" not in description
+
+    def test_sent_money_keeps_sending_bank_line(self):
+        description = self._description(["request_payment_stop", "report_112"], ["sent_money"])
+
+        assert description.startswith("1. 송금한 은행에 지급정지를 요청하세요.")
