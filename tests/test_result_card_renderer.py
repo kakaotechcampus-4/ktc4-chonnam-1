@@ -866,3 +866,40 @@ class TestK6PaymentStopLine:
         description = self._description(["request_payment_stop", "report_112"], ["sent_money"])
 
         assert description.startswith("1. 송금한 은행에 지급정지를 요청하세요.")
+
+
+class TestQ1Thumbnails:
+    """Q1 리스트 카드 항목에는 답마다 썸네일을 단다. Q2 에는 달지 않는다."""
+
+    _OPTIONS = ["entered_info", "installed_app", "sent_money", "not_yet"]
+
+    @staticmethod
+    def _items(card):
+        return card["template"]["outputs"][0]["listCard"]["items"]
+
+    def test_voice_q1_items_have_images(self):
+        card = result_card_renderer.render_voice_qa_prompt_card(
+            "job-1", {"id": "already_acted", "option_ids": self._OPTIONS},
+        )
+
+        images = [item.get("imageUrl", "") for item in self._items(card)]
+        assert images[0].endswith("q1-list-1-entered-info.png")
+        assert images[1].endswith("q1-list-2-installed-app.png")
+        assert images[2].endswith("q1-list-3-sent-money.png")
+        assert images[3].endswith("q1-list-4-not-yet.png")
+
+    def test_message_q1_items_have_images_except_clicked_link(self):
+        card = result_card_renderer.render_message_question_card(
+            "job-1", {"question_id": "already_acted", "option_ids": ["clicked_link", *self._OPTIONS]},
+        )
+
+        items = self._items(card)
+        assert "imageUrl" not in items[0]
+        assert all(item["imageUrl"] for item in items[1:])
+
+    def test_message_q2_items_have_no_images(self):
+        card = result_card_renderer.render_message_question_card(
+            "job-1", {"question_id": "called_known_number", "option_ids": ["not_person", "not_yet"]},
+        )
+
+        assert all("imageUrl" not in item for item in self._items(card))

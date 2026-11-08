@@ -1022,16 +1022,18 @@ R2(공식 주소 일치)와 링크 없는 `판단하기 어려워요`(R6b·V1)�
 | | |
 | --- | --- |
 | 머리글 | `📌 이미 하신 게 있나요?` (11자. 2026-11-09 `🙋`가 실기기에서 손 든 사람으로 보여 분위기와 맞지 않아 바꿈. 흰 바탕에서 잘 보이도록 색이 진한 `📌`를 씀) |
-| 항목 | 아래 표. 설명(`description`)과 그림은 넣지 않는다 |
+| 항목 | 아래 표. 설명(`description`)은 넣지 않는다. 그림(`imageUrl`)은 답마다 넣는다(2026-11-09, `링크만 눌렀어요`는 그림 없음) |
 | 버튼 | 없음 |
 
-| `option_id` | 항목 (문자 결과) | 항목 (V1 녹음 결과) | 누르면 |
-| --- | --- | --- | --- |
-| `clicked_link` | `링크만 눌렀어요` | (넣지 않음) | K6, 대응이 없으면 A3 |
-| `entered_info` | `정보를 입력했어요` | `정보를 알려 줬어요` | K6 |
-| `installed_app` | `앱을 설치했어요` | `앱을 설치했어요` | K6 |
-| `sent_money` | `돈이나 상품권을 보냈어요` | `돈이나 상품권을 보냈어요` | K6 |
-| `not_yet` | `아직 안 했어요` | `아직 안 했어요` | A2 |
+| `option_id` | 항목 (문자 결과) | 항목 (V1 녹음 결과) | 그림 | 누르면 |
+| --- | --- | --- | --- | --- |
+| `clicked_link` | `링크만 눌렀어요` | (넣지 않음) | 없음 | K6, 대응이 없으면 A3 |
+| `entered_info` | `정보를 입력했어요` | `정보를 알려 줬어요` | `q1-list-1-entered-info.png` | K6 |
+| `installed_app` | `앱을 설치했어요` | `앱을 설치했어요` | `q1-list-2-installed-app.png` | K6 |
+| `sent_money` | `돈이나 상품권을 보냈어요` | `돈이나 상품권을 보냈어요` | `q1-list-3-sent-money.png` | K6 |
+| `not_yet` | `아직 안 했어요` | `아직 안 했어요` | `q1-list-4-not-yet.png` | A2 |
+
+그림은 `frontend/kakao-templates/assets/cards/`에 있고, BE가 항목을 만들 때 `develop` 브랜치 주소로 붙인다(`services/result_card_renderer.py` `_Q1_OPTION_IMAGES`).
 
 - 항목은 `action: "block"`, `blockId`: Q1 답변 스킬 블록 `6ae336cd25d4bc48e2bb8f2a`(2026-10-29), `extra: {case_id, question_id: "already_acted", option_id}`이다.
   답변 블록은 관리자센터에 새로 만들고 `/kakao/skill` 스킬을 연결한다(§10 FE1).

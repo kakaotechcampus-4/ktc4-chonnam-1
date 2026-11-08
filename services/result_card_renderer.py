@@ -170,6 +170,23 @@ _VOICE_QA_OPTION_LABELS = {
     "not_yet": "아직 안 했어요",
 }
 
+# Q1 option_id -> 리스트 카드 항목 썸네일(문자·녹음 공용). 없는 답(clicked_link)은 이미지를 달지 않는다.
+_Q1_IMAGE_BASE = (
+    "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/"
+    "frontend/kakao-templates/assets/cards/"
+)
+_Q1_OPTION_IMAGES = {
+    "entered_info": _Q1_IMAGE_BASE + "q1-list-1-entered-info.png",
+    "installed_app": _Q1_IMAGE_BASE + "q1-list-2-installed-app.png",
+    "sent_money": _Q1_IMAGE_BASE + "q1-list-3-sent-money.png",
+    "not_yet": _Q1_IMAGE_BASE + "q1-list-4-not-yet.png",
+}
+
+
+def _with_q1_image(item: dict, option_id: str) -> dict:
+    image_url = _Q1_OPTION_IMAGES.get(option_id)
+    return {**item, "imageUrl": image_url} if image_url else item
+
 # Q1 답변 전용 스킬 블록(이슈 #115, 2026-10-29 관리자센터에서 확정).
 # "자세히 보기"가 쓰는 블록과는 다른 블록이다 — 그 블록을 재사용하지 않는다.
 _VOICE_ANSWER_BLOCK_ID = "6ae336cd25d4bc48e2bb8f2a"
@@ -438,7 +455,7 @@ def render_voice_qa_prompt_card(job_id: str | None, question: dict) -> dict | No
 
     option_ids = question.get("option_ids") or []
     items = [
-        {
+        _with_q1_image({
             "title": _VOICE_QA_OPTION_LABELS.get(option_id, option_id),
             "action": "block",
             "blockId": _VOICE_ANSWER_BLOCK_ID,
@@ -447,7 +464,7 @@ def render_voice_qa_prompt_card(job_id: str | None, question: dict) -> dict | No
                 "question_id": "already_acted",
                 "option_id": option_id,
             },
-        }
+        }, option_id)
         for option_id in option_ids
     ]
 
@@ -1176,9 +1193,12 @@ def render_message_question_card(job_id: str | None, question: dict) -> dict | N
     if card_name is None:
         return None
 
-    items = [
-        {
-            "title": labels.get(option_id, option_id),
+    items = []
+    for option_id in question.get("option_ids") or []:
+        if option_id not in labels:
+            continue
+        item = {
+            "title": labels[option_id],
             "action": "block",
             "blockId": _VOICE_ANSWER_BLOCK_ID,
             "extra": {
@@ -1189,9 +1209,8 @@ def render_message_question_card(job_id: str | None, question: dict) -> dict | N
                 "kind": "message",
             },
         }
-        for option_id in question.get("option_ids") or []
-        if option_id in labels
-    ]
+        # 썸네일은 Q1 에만 단다. Q2 는 같은 option_id(not_yet)를 써도 뜻이 다르다
+        items.append(_with_q1_image(item, option_id) if question_id == "already_acted" else item)
     if not items:
         return None
     return render_card(card_name, {"items": items})
