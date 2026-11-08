@@ -105,7 +105,7 @@ _VOICE_UNCHECKED_LABELS = {
     "page_rendered": "페이지 화면 (직접 열어 본 화면)",
 }
 
-_TRANSCRIPT_ACCURACY_LINE = "- 받아 적은 글이 정확한지 (말을 글로 옮겨 틀릴 수 있어요)"
+_TRANSCRIPT_ACCURACY_LINE = "- 받아 적은 글이 정확한지 (틀릴 수 있어요)"
 
 _VOICE_UNCHECKED_REASON_LABELS = {
     "skipped_enough_evidence": "근거가 충분해 더 보지 않았어요",
@@ -202,10 +202,11 @@ def _voice_verify_line(official_contact: dict | None, *, speaker_unknown: bool =
     if official_contact:
         org = official_contact.get("org", "")
         number = official_contact.get("number", "")
-        return f"{org} 대표번호({number})로 직접 전화해 확인하세요."
+        # 실기기 폭에 맞춰 기관 이름·번호 뒤에서 줄을 바꾼다(2026-11-09)
+        return f"{org} 대표번호({number})로\n직접 전화해 확인하세요."
     if speaker_unknown:
-        return "통화에 나온 기관의 대표번호를 직접 찾아 전화해 확인하세요."
-    return "상대가 말한 기관의 대표번호를 직접 찾아 전화해 확인하세요."
+        return "통화에 나온 기관의 대표번호를\n직접 찾아 전화해 확인하세요."
+    return "상대가 말한 기관의 대표번호를\n직접 찾아 전화해 확인하세요."
 
 
 def _voice_call_claims(claims: dict, caution: bool, *, speaker_unknown: bool = False) -> str:
@@ -258,7 +259,7 @@ def _voice_call_claims(claims: dict, caution: bool, *, speaker_unknown: bool = F
                     lines[index] = line.replace(original, replacement, 1)
                     break
 
-    title = "주의할 점" if caution else "통화에서 들은 내용"
+    title = "⚠️ 주의할 점" if caution else "📞 통화에서 들은 내용"
     return f"{title}\n" + "\n".join(lines) + "\n\n"
 
 

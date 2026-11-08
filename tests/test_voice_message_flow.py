@@ -284,7 +284,7 @@ class TestVoiceMessageSyncPath:
         assert response.status_code == 200
         text_card = _card_body(response.json())
         assert text_card["title"] == "⚠️ 보이스피싱이 의심돼요"
-        assert "금융감독원 대표번호(1332)로 직접 전화해 확인하세요." in text_card["description"]
+        assert "금융감독원 대표번호(1332)로\n직접 전화해 확인하세요." in text_card["description"]
         assert "통화를 끊고" in text_card["description"]
         assert len(removed) == 1
 
