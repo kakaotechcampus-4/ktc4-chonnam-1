@@ -129,7 +129,7 @@ async def test_family_message_gets_r6b_with_q1_and_q2(monkeypatch, stub_read_mes
     assert len(description) <= 400
     _assert_no_placeholders(card)
 
-    assert outputs[1]["listCard"]["header"]["title"] == "🙋 이미 하신 게 있나요?"
+    assert outputs[1]["listCard"]["header"]["title"] == "📌 이미 하신 게 있나요?"
     q1 = _list_items(card, 1)
     assert [i["title"] for i in q1] == [
         "정보를 입력했어요", "앱을 설치했어요", "돈이나 상품권을 보냈어요", "아직 안 했어요",
@@ -213,7 +213,7 @@ async def test_q2_not_person_turns_into_warning_and_updates_check_result(monkeyp
     assert "- 원래 번호로 통화한 결과 (본인이 아니라고 답해 주셨어요)" in result["description"]
     # Q2 는 떨어지고 Q1 만 남는다
     assert len(_outputs(card)) == 2
-    assert _outputs(card)[1]["listCard"]["header"]["title"] == "🙋 이미 하신 게 있나요?"
+    assert _outputs(card)[1]["listCard"]["header"]["title"] == "📌 이미 하신 게 있나요?"
     assert job["final_payload"]["conclusion"] == "suspected"
     # "결과 확인" 도 새 결과를 보여 준다
     assert job["result"] == card

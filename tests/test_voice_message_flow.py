@@ -1219,7 +1219,7 @@ class TestVoiceAnswerFlow:
         outputs = card["template"]["outputs"]
         assert len(outputs) == 2
         list_card = outputs[1]["listCard"]
-        assert list_card["header"]["title"] == "🙋 이미 하신 게 있나요?"
+        assert list_card["header"]["title"] == "📌 이미 하신 게 있나요?"
         assert [item["title"] for item in list_card["items"]] == ["돈이나 상품권을 보냈어요", "아직 안 했어요"]
         item = list_card["items"][0]
         assert item["extra"] == {"case_id": job_id, "question_id": "already_acted", "option_id": "sent_money"}
