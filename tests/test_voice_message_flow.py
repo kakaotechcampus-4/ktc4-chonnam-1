@@ -468,7 +468,7 @@ class TestVoiceDetailCarouselTemplate:
         assert "- 상대가 내세운 기관: '금융감독원입니다'" in items[0]["description"]
         assert "통화 상대가 한 말만 근거로 썼어요." in items[0]["description"]
         assert len(items) == 4  # no matches: omit only the similarity card
-        assert items[1]["title"] == "❔ 확인 범위"
+        assert items[1]["title"] == "📋 확인 범위"
         assert "비교할 사례를 찾지 못했어요" in items[1]["description"]
         assert "{{" not in str(card)
         # "통화에서 들은 내용"/"주의할 점" 칸 제목이 claim_lines에 남으면 안 된다.
