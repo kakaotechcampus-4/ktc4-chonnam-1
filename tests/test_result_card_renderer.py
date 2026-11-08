@@ -90,8 +90,8 @@ class TestRenderResultCard:
 
         card = render_result_card(analysis)
 
-        text_card = card["template"]["outputs"][0]["textCard"]
-        assert "누리몰" in text_card["description"]
+        basic_card = card["template"]["outputs"][0]["basicCard"]
+        assert "누리몰" in basic_card["description"]
 
     def test_no_job_id_means_no_extra_injected(self):
         analysis = _analysis(
