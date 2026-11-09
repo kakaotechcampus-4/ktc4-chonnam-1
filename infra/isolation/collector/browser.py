@@ -30,15 +30,19 @@ from playwright.async_api import async_playwright
 
 from collector.egress_proxy import EgressProxy
 from scanner.fetch import DEFAULT_HEADERS, HTML_LIMIT_BYTES, extract_title
-from scanner.models import BrowserResult, CollectResult
+from scanner.models import (
+    MAX_DOWNLOADS,
+    MAX_NAVIGATION_REQUESTS,
+    MAX_NAVIGATIONS,
+    MAX_URL_CHARS,
+    BrowserResult,
+    CollectResult,
+)
 
 log = logging.getLogger("collector.browser")
 
 BLOCKED_RESOURCE_TYPES = frozenset({"image", "font", "media"})  # 속도·메모리 (설계 §t3.medium)
 FORM_SELECTOR = "form, input[type=password], input[type=tel]"
-MAX_NAVIGATIONS = 10
-MAX_DOWNLOADS = 5
-MAX_URL_CHARS = 2048
 SNAPSHOT_RESERVE_SECONDS = 1.0  # 마감 뒤에도 그때까지 본 화면을 가져올 몫
 CLOSE_TIMEOUT_SECONDS = 1.5
 BROWSER_ENV_KEYS = ("PATH", "HOME", "LANG", "PLAYWRIGHT_BROWSERS_PATH")
@@ -48,16 +52,108 @@ MOBILE_VIEWPORT = {"width": 412, "height": 915}
 
 MIN_VISIBLE_TEXT_CHARS = 200
 STAGE2_OK_FAILURES = frozenset({"html_truncated"})
-_SCRIPT_BODY_RE = re.compile(r"<script\b[^>]*>(.*?)</script\s*>", re.IGNORECASE | re.DOTALL)
-_NON_TEXT_RE = re.compile(r"<(script|style|noscript)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
-_TAG_RE = re.compile(r"<[^>]+>")
 _REDIRECT_HINT_RE = re.compile(r"\blocation(?:\.href)?\s*=(?!=)|\blocation\.(?:replace|assign)\s*\(")
-_META_REFRESH_RE = re.compile(r"<meta[^>]+http-equiv\s*=\s*[\"']?refresh", re.IGNORECASE)
+_HTTP_EQUIV_REFRESH_RE = re.compile(r"http-equiv\s*=\s*[\"']?refresh")
+_NON_TEXT_TAGS = ("script", "style", "noscript")
+# 태그 이름만 소문자로 바꾼다. str.lower() 는 일부 글자의 길이를 바꿔 위치가 어긋난다.
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+# 아래 함수들은 정규식 대신 앞에서부터 한 번만 훑는다. 닫히지 않은 태그를 반복한 페이지에서
+# `.*?` 정규식은 시간이 길이의 제곱으로 늘어 이벤트 루프(프록시 포함)를 수십 초 멈췄다.
+
+
+def _visible_chars(text: str) -> int:
+    return len("".join(text.split()))
+
+
+def _starts_tag(lower: str, at: int, name: str) -> bool:
+    end = at + 1 + len(name)
+    return lower.startswith(name, at + 1) and not (
+        end < len(lower) and (lower[end].isalnum() or lower[end] == "_")
+    )
+
+
+def _closing_tag(lower: str, name: str, start: int) -> tuple[int, int] | None:
+    marker = "</" + name
+    while (found := lower.find(marker, start)) >= 0:
+        end = found + len(marker)
+        while end < len(lower) and lower[end].isspace():
+            end += 1
+        if end < len(lower) and lower[end] == ">":
+            return found, end + 1
+        start = found + 1
+    return None
+
+
+def _script_bodies(html: str, lower: str) -> list[str]:
+    bodies = []
+    pos = 0
+    while (opening := lower.find("<script", pos)) >= 0:
+        if not _starts_tag(lower, opening, "script"):
+            pos = opening + 1
+            continue
+        body_start = lower.find(">", opening) + 1
+        if body_start == 0:
+            break
+        closing = _closing_tag(lower, "script", body_start)
+        if closing is None:
+            break
+        bodies.append(html[body_start:closing[0]])
+        pos = closing[1]
+    return bodies
+
+
+def _has_meta_refresh(lower: str) -> bool:
+    pos = 0
+    while (opening := lower.find("<meta", pos)) >= 0:
+        tag_end = lower.find(">", opening)
+        if tag_end < 0:
+            tag_end = len(lower)
+        if _HTTP_EQUIV_REFRESH_RE.search(lower, opening + len("<meta") + 1, tag_end):
+            return True
+        pos = tag_end + 1
+    return False
+
+
+def _without_non_text(html: str) -> str:
+    lower = html.translate(_ASCII_LOWER)
+    parts = []
+    pos = search = 0
+    unclosed: set[str] = set()
+    while (opening := lower.find("<", search)) >= 0:
+        name = next((n for n in _NON_TEXT_TAGS
+                     if n not in unclosed and _starts_tag(lower, opening, n)), None)
+        if name is None:
+            search = opening + 1
+            continue
+        tag_end = lower.find(">", opening)
+        if tag_end < 0:
+            break
+        closing = _closing_tag(lower, name, tag_end + 1)
+        if closing is None:
+            unclosed.add(name)
+            search = opening + 1
+            continue
+        parts += [html[pos:opening], " "]
+        pos = search = closing[1]
+    parts.append(html[pos:])
+    return "".join(parts)
 
 
 def visible_text_length(html: str) -> int:
-    text = _TAG_RE.sub(" ", _NON_TEXT_RE.sub(" ", html))
-    return len(re.sub(r"\s+", "", text))
+    text = _without_non_text(html)
+    count = pos = 0
+    while (opening := text.find("<", pos)) >= 0:
+        tag_end = text.find(">", opening + 1)
+        if tag_end < 0:
+            break
+        count += _visible_chars(text[pos:opening])
+        if tag_end == opening + 1:
+            count += 1
+            pos = opening + 1
+        else:
+            pos = tag_end + 1
+    return count + _visible_chars(text[pos:])
 
 
 def browser_trigger(result: CollectResult) -> str | None:
@@ -69,11 +165,12 @@ def browser_trigger(result: CollectResult) -> str | None:
         return None
     if result.status_code in (403, 404):
         return "status_403_404"
-    if _META_REFRESH_RE.search(result.html) or any(
-        _REDIRECT_HINT_RE.search(body) for body in _SCRIPT_BODY_RE.findall(result.html)
+    lower = result.html.translate(_ASCII_LOWER)
+    if _has_meta_refresh(lower) or any(
+        _REDIRECT_HINT_RE.search(body) for body in _script_bodies(result.html, lower)
     ):
         return "script_redirect"
-    if "<script" in result.html.lower() and visible_text_length(result.html) < MIN_VISIBLE_TEXT_CHARS:
+    if "<script" in lower and visible_text_length(result.html) < MIN_VISIBLE_TEXT_CHARS:
         return "script_only_page"
     return None
 
@@ -91,6 +188,7 @@ def _truncate(html: str, limit: int = HTML_LIMIT_BYTES) -> tuple[str, bool]:
 @dataclass
 class _Seen:
     navigations: list[str] = field(default_factory=list)
+    navigation_requests: list[str] = field(default_factory=list)
     downloads: list[str] = field(default_factory=list)
     blocked: int = 0
     blocked_navigation: bool = False
@@ -114,12 +212,11 @@ def _is_main_navigation(request, main_page) -> bool:
         return False
 
 
-def _classify(exc: BaseException, proxy_blocked: int) -> str:
+def _classify(exc: BaseException) -> str:
     message = str(exc)
     if isinstance(exc, (TimeoutError, PlaywrightTimeoutError)):
         return "browser_timeout"
-    # route 가 막으면 ERR_BLOCKED_BY_CLIENT, 리다이렉트 끝을 프록시가 막으면 다른 오류로 끝난다.
-    if "ERR_BLOCKED_BY_CLIENT" in message or proxy_blocked:
+    if "ERR_BLOCKED_BY_CLIENT" in message:
         return "browser_blocked_navigation"
     if "crash" in message.lower():
         return "browser_crashed"
@@ -129,8 +226,10 @@ def _classify(exc: BaseException, proxy_blocked: int) -> str:
 class BrowserRenderer:
     """브라우저 하나를 띄워 두고 요청마다 새 컨텍스트로 연다 (웜 풀 1개).
 
-    한 번에 한 작업만 한다. `restart_every` 페이지마다, 또는 크래시·정리 실패 뒤에는
-    브라우저를 다시 띄운다. 쿠키·캐시는 컨텍스트를 닫을 때 함께 사라진다.
+    한 번에 한 작업만 한다. `restart_every` 페이지마다, 또는 크래시·정리 실패·시간 초과나
+    막힌 요청이 있던 작업 뒤에는 브라우저를 다시 띄운다. 그런 페이지가 브라우저 프로세스에
+    남긴 것이 다음 사람의 주소(수신자 토큰이 들어 있을 수 있다)를 보지 못하게 하기 위해서다.
+    쿠키·캐시는 컨텍스트를 닫을 때 함께 사라진다.
     """
 
     def __init__(
@@ -152,6 +251,7 @@ class BrowserRenderer:
         self._browser = None
         self._served = 0
         self._broken = False
+        self._closed = False
         self._tasks: set[asyncio.Task] = set()
 
     # -- 수명 관리
@@ -165,6 +265,8 @@ class BrowserRenderer:
         )
 
     async def _ensure(self):
+        if self._closed:
+            raise RuntimeError("renderer is closed")
         if self._healthy():
             return self._browser
         await self._shutdown()
@@ -177,6 +279,8 @@ class BrowserRenderer:
         self._browser = await self._pw.chromium.launch(
             chromium_sandbox=self._sandbox,
             proxy={"server": self._proxy.url},
+            # 사이트마다 렌더러 프로세스가 생겨 PID·메모리 한도를 API 와 함께 다 쓰지 않게 한다.
+            args=["--renderer-process-limit=2"],
             env=env,
             handle_sigint=False,
             handle_sigterm=False,
@@ -207,6 +311,9 @@ class BrowserRenderer:
                 log.exception("event=browser_start_failed")
 
     async def close(self) -> None:
+        self._closed = True
+        for task in tuple(self._tasks):
+            task.cancel()
         async with self._lock:
             await self._shutdown()
             await self._proxy.close()
@@ -281,7 +388,13 @@ class BrowserRenderer:
             try:
                 await self._bounded(self._visit(page, url, budget, seen), budget + 0.5)
             except (TimeoutError, PlaywrightError) as exc:
-                seen.fail(_classify(exc, self._proxy.blocked - proxy_blocked_before))
+                # 서버 리다이렉트 끝을 프록시가 막으면 오류 문구가 대상마다 다르다. 하위 자원이
+                # 막힌 것과 섞지 않도록, 메인 프레임이 마지막으로 요청한 주소가 금지인지로 가린다.
+                last = seen.navigation_requests[-1] if seen.navigation_requests else None
+                if last is not None and not self._url_allowed(last):
+                    seen.blocked_navigation = True
+                else:
+                    seen.fail(_classify(exc))
             if seen.blocked_navigation:
                 seen.fail("browser_blocked_navigation")
             final_url, html = await self._snapshot(page, seen)
@@ -299,7 +412,7 @@ class BrowserRenderer:
                     await self._bounded(context.close(), CLOSE_TIMEOUT_SECONDS)
                 except Exception:  # noqa: BLE001
                     self._broken = True
-            if seen.crashed:
+            if seen.crashed or seen.blocked or "browser_timeout" in seen.failures:
                 self._broken = True
             needs_restart = not self._healthy()
             self._lock.release()
@@ -352,6 +465,15 @@ class BrowserRenderer:
             if len(seen.navigations) < MAX_NAVIGATIONS:
                 seen.navigations.append(frame.url[:MAX_URL_CHARS])
 
+        def on_request(request) -> None:
+            # framenavigated 는 확정된 문서만 본다. HTTP 302 로 지나간 경유는 요청에만 남는다.
+            if not _is_main_navigation(request, page) or not request.url.startswith(("http://", "https://")):
+                return
+            if len(seen.navigation_requests) < MAX_NAVIGATION_REQUESTS:
+                seen.navigation_requests.append(request.url[:MAX_URL_CHARS])
+            else:
+                seen.fail("browser_navigation_limit")
+
         def on_download(download) -> None:
             if len(seen.downloads) < MAX_DOWNLOADS:
                 seen.downloads.append(download.url[:MAX_URL_CHARS])
@@ -370,6 +492,7 @@ class BrowserRenderer:
             task.add_done_callback(self._tasks.discard)
 
         page.on("framenavigated", on_navigated)
+        page.on("request", on_request)
         page.on("download", on_download)
         page.on("crash", on_crash)
         context.on("page", on_new_page)
@@ -444,4 +567,5 @@ class BrowserRenderer:
             blocked_requests=seen.blocked,
             elapsed_ms=int((time.monotonic() - start) * 1000),
             failures=tuple(seen.failures),
+            navigation_requests=tuple(seen.navigation_requests),
         )

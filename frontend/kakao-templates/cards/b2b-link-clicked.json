@@ -5,7 +5,7 @@
       {
         "basicCard": {
           "title": "🚨 지금 바로 상담받으세요",
-          "description": "전화 상담\n- 해킹·바이러스 긴급상담 : 365일 24시간\n- 개인정보 등 일반상담 : 평일 09:00~18:00\n※ 긴급상담이 아닌 경우에는 평일 근무시간을\n이용해 주시기 바랍니다.\n\n챗봇 상담\n- 365일 24시간\n\n채팅 상담\n- 평일 09:00~17:30\n(11:30~13:00은 전화상담 이용)",
+          "description": "전화 상담\n- 해킹·바이러스 긴급상담 : 365일 24시간\n- 개인정보 등 일반상담 : 평일 09:00~18:00\n※ 긴급상담이 아닌 경우에는 평일 근무시간을\n이용해 주시기 바랍니다.\n\nKISA 챗봇 상담\n- 365일 24시간\n\nKISA 채팅 상담\n- 평일 09:00~17:30\n(11:30~13:00은 전화상담 이용)",
           "thumbnail": {
             "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/b2b-link-clicked.png",
             "altText": "경고 표시가 뜬 화면 옆에서 걱정스러운 얼굴로 전화 상담을 받는 기니피그",
@@ -14,14 +14,14 @@
           "buttonLayout": "vertical",
           "buttons": [
             {
-              "label": "118 상담",
+              "label": "KISA 전화 상담하기",
               "action": "phone",
               "phoneNumber": "118"
             },
             {
-              "label": "KISA 상담하기",
+              "label": "KISA 채팅 상담하기",
               "action": "webLink",
-              "webLinkUrl": "https://www.kisa.or.kr/118"
+              "webLinkUrl": "https://design.happytalkio.com/chatting?siteId=5000101293&siteName=%ED%95%9C%EA%B5%AD%EC%9D%B8%ED%84%B0%EB%84%B7%EC%A7%84%ED%9D%A5%EC%9B%90KISA%20118%EC%83%81%EB%8B%B4%ED%8C%80&categoryId=200478&divisionId=200479&partnerId=&shopId=&params="
             }
           ]
         }

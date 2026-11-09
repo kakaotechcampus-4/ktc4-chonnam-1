@@ -132,8 +132,18 @@ async def analyze_message(
     except (TimeoutError, APITimeoutError) as exc:
         LOGGER.warning("message analysis failed: %s", type(exc).__name__)
         return fallback_analysis(FailureCode.TIMEOUT)
-    except (ValidationError, APIResponseValidationError,
-            LengthFinishReasonError, json.JSONDecodeError) as exc:
+    except ValidationError as exc:
+        # 어느 칸이 어떤 규칙에 걸렸는지만 남긴다. 값에는 문자 내용이 들어 있어 남기지 않는다
+        LOGGER.warning(
+            "message analysis failed: %s fields=%s",
+            type(exc).__name__,
+            ",".join(
+                ".".join(str(part) for part in error["loc"]) + ":" + error["type"]
+                for error in exc.errors(include_input=False, include_context=False, include_url=False)
+            ),
+        )
+        return fallback_analysis(FailureCode.INVALID_OUTPUT)
+    except (APIResponseValidationError, LengthFinishReasonError, json.JSONDecodeError) as exc:
         LOGGER.warning("message analysis failed: %s", type(exc).__name__)
         return fallback_analysis(FailureCode.INVALID_OUTPUT)
     except APIStatusError as exc:

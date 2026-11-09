@@ -74,6 +74,7 @@ async def _run(monkeypatch, utterance, llm_urls, *, html="<p>배송 조회 안�
             })
         assert request.url.host == "bot-api.kakao.com"
         calls["callback"] += 1
+        calls["callback_result"] = json.loads(request.content)
         return httpx.Response(200, json={"status": "SUCCESS"})
 
     transport = httpx.MockTransport(upstream)
@@ -197,3 +198,63 @@ async def test_too_long_message_skips_llm(monkeypatch):
     assert _texts(job["result"]) == [main._TOO_LONG_TEXT]
     assert calls["llm"] == 0
     assert collected == []
+
+
+@pytest.mark.parametrize("read_count,unverified,failure", [
+    (3, True, None),
+    (3, False, None),
+    (2, True, None),
+    (0, True, None),
+    (0, False, LLM_ERROR),
+    (0, False, LLM_TIMEOUT),
+], ids=["four_links_three_read", "three_all_read", "three_links_two_read",
+        "no_links_read", "extraction_error", "extraction_timeout"])
+async def test_multi_link_notice_reaches_callback_within_output_limit(
+    monkeypatch, read_count, unverified, failure,
+):
+    # The omitted fourth address is not official. The three read URLs are official,
+    # reproducing the mentor's case where every visible card appeared reassuring.
+    official = [f"https://www.cjlogistics.com/track/{index}" for index in range(3)]
+    links = official[:read_count]
+    input_links = links + (["https://unread.top/track"] if unverified else [])
+    job, calls, collected = await _run(
+        monkeypatch, SENDER + " ".join(input_links), failure or links,
+    )
+
+    response = job["result"]
+    outputs = response["template"]["outputs"]
+    assert 1 <= len(outputs) <= main.KAKAO_MAX_OUTPUTS
+    assert calls["callback_result"] == response
+    retrieved = main.handle_check_result(USER)
+    retrieved_outputs = retrieved["template"]["outputs"]
+    assert len(retrieved_outputs) <= main.KAKAO_MAX_OUTPUTS
+    if len(outputs) == main.KAKAO_MAX_OUTPUTS:
+        assert retrieved == response  # do not let the timestamp displace any result/notice
+    else:
+        assert retrieved_outputs[1:] == outputs
+    assert calls["extract"] == 1
+    assert collected == ([] if failure else links)
+    if failure:
+        assert response == main.render_card("r4-unavailable")
+        assert job["final_payload"] is None
+    elif not links:
+        assert _texts(response) == [main._UNREAD_LINKS_TEXT]
+        assert job["final_payload"] is None
+    else:
+        texts = _texts(response)
+        if unverified:
+            assert len(texts) == 1
+            assert main._PARTLY_READ_LINKS_TEXT in texts[0]
+            if read_count == 3:
+                assert "검사 결과" in texts[0] and "생략" in texts[0]
+                assert "하나씩 다시 보내" in texts[0]
+        else:
+            assert texts == []
+        expected_count = min(read_count, main.KAKAO_MAX_OUTPUTS - int(unverified))
+        cards = outputs[int(unverified):]
+        assert len(cards) == expected_count
+        # Real response parsing, collection, official-domain verdict and rendering.
+        assert all(card == main.render_card("r2-official", {
+            "org_name": "CJ대한통운", "official_url": "https://cjlogistics.com",
+        })["template"]["outputs"][0] for card in cards)
+        assert job["final_payload"]["url"]["official"] == "official"
