@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from backend.src.server.http_client import get_http_client
 from backend.src.server.lifespan import app_lifespan
+from backend.src.server.log import get_logger
 from backend.src.server.callback_guard import callback_host, is_allowed_callback_url
 from backend.src.server.media_guard import (
     MediaDownloadBlocked,
@@ -58,6 +59,7 @@ from urllib.parse import urlparse
 
 
 app = FastAPI(lifespan=app_lifespan)
+_log = get_logger("server")
 
 
 # ============================================================
@@ -88,7 +90,7 @@ def verify_skill_secret(request: Request) -> None:
 
     secret = os.getenv("KAKAO_SKILL_SECRET", "")
     if not secret:
-        print("[SKILL AUTH REJECTED] reason=secret_not_configured")
+        _log.warning("[SKILL AUTH REJECTED] reason=secret_not_configured")
         raise HTTPException(status_code=401, detail="Skill secret not configured")
 
     provided = request.headers.get("X-Skill-Secret", "")
@@ -101,9 +103,9 @@ def verify_skill_secret(request: Request) -> None:
         return
 
     if not provided:
-        print("[SKILL AUTH REJECTED] reason=header_missing")
+        _log.warning("[SKILL AUTH REJECTED] reason=header_missing")
     else:
-        print("[SKILL AUTH REJECTED] reason=secret_mismatch")
+        _log.warning("[SKILL AUTH REJECTED] reason=secret_mismatch")
 
     raise HTTPException(status_code=401, detail="Invalid skill secret")
 
@@ -167,7 +169,7 @@ def create_analysis_job(
         "callback_error": None
     }
 
-    print(
+    _log.info(
         f"[JOB CREATED] "
         f"job_id={job_id}"
     )
@@ -405,24 +407,24 @@ async def kakao_skill(
     is_voice_message = media.get("type") == "audio"
 
     # 문자 원문·서명 URL·사용자 ID 대신 요청 종류와 길이만 진단에 남긴다.
-    print(
+    _log.info(
         f"[KAKAO] "
         f"input_type={'voice' if is_voice_message else 'text'} "
         f"utterance_length={len(utterance) if isinstance(utterance, str) else 0} "
         f"user_present={bool(user_id)}"
     )
 
-    print(
+    _log.info(
         f"[CALLBACK EXISTS] "
         f"{bool(callback_url)}"
     )
 
     # 경로에는 1회용 콜백 토큰이 있어 호스트만 남긴다. 허용 목록을 좁힐 때 쓴다.
-    print(f"[CALLBACK HOST] {callback_host(callback_url)}")
+    _log.info(f"[CALLBACK HOST] {callback_host(callback_url)}")
 
     # 내부 주소로 결과를 POST 하게 만드는 요청을 막는다 (멘토 리뷰, isolation-security §5.5).
     if callback_url is not None and not is_allowed_callback_url(callback_url):
-        print("[CALLBACK REJECTED] 허용되지 않은 callbackUrl")
+        _log.warning("[CALLBACK REJECTED] 허용되지 않은 callbackUrl")
         return render_card("r4-unavailable")
 
     intent_name = (
@@ -477,7 +479,7 @@ async def kakao_skill(
 
     # callbackUrl이 없는 경우 개발/테스트용 동기 처리
     if not callback_url:
-        print("[CALLBACK] callbackUrl 없음 - 동기 처리")
+        _log.info("[CALLBACK] callbackUrl 없음 - 동기 처리")
 
         return await run_analysis(utterance)
 
@@ -541,7 +543,7 @@ def _response_without_links(reading: MessageReading) -> dict | None:
     extracted = reading.extracted
     if extracted.analysis_status is not AnalysisStatus.COMPLETED:
         failure = extracted.failure
-        print(f"[READ MESSAGE FAILED] {failure.value if failure else 'unknown'}")
+        _log.warning(f"[READ MESSAGE FAILED] {failure.value if failure else 'unknown'}")
         if failure is FailureCode.EMPTY_INPUT:
             return render_card("r6-input-required")
         if failure is FailureCode.INPUT_TOO_LARGE:
@@ -564,7 +566,7 @@ async def run_analysis(
     """
     started = time.monotonic()
     reading = await read_message(utterance, timeout_s=READ_MESSAGE_TIMEOUT_SECONDS)
-    print(
+    _log.info(
         f"[LINK COUNT] {len(reading.links)} "
         f"unverified={reading.unverified_links}"
     )
@@ -597,7 +599,7 @@ async def run_analysis(
                     collected = await collect_url_isolated(link)
                 except Exception as error:
                     # Keep message evidence even when the collection API is unavailable.
-                    print(f"[COLLECTION FAILED] {type(error).__name__}")
+                    _log.warning(f"[COLLECTION FAILED] {type(error).__name__}")
                     collected = CollectResult(
                         link, None, (), None, None, "", None, 0, ("collection_failed",),
                     )
@@ -605,7 +607,7 @@ async def run_analysis(
                 try:
                     message_result = await message_task
                 except Exception as error:
-                    print(f"[AI MESSAGE ERROR] {type(error).__name__}")
+                    _log.warning(f"[AI MESSAGE ERROR] {type(error).__name__}")
                     message_result = None
 
                 brand = message_result.brand if message_result is not None else None
@@ -626,7 +628,7 @@ async def run_analysis(
                 if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
                     job["final_payload"] = final_payload
             except Exception as error:
-                print(f"[ANALYSIS ERROR] {type(error).__name__}")
+                _log.warning(f"[ANALYSIS ERROR] {type(error).__name__}")
                 cards.append(render_card("r4-unavailable"))
     finally:
         if not message_task.done() and not message_task.cancelling():
@@ -654,10 +656,10 @@ async def _link_message_case(message: str, started: float) -> dict | None:
     except asyncio.CancelledError:
         raise
     except Exception as error:
-        print(f"[LINK CAUTION ERROR] {type(error).__name__}")
+        _log.warning(f"[LINK CAUTION ERROR] {type(error).__name__}")
         return None
     payload = result.model_dump(mode="json")
-    print(f"[LINK CAUTION] conclusion={payload.get('conclusion')} caution={payload.get('caution')}")
+    _log.info(f"[LINK CAUTION] conclusion={payload.get('conclusion')} caution={payload.get('caution')}")
     return payload
 
 
@@ -693,11 +695,11 @@ async def run_message_case(
     except asyncio.CancelledError:
         raise
     except Exception as error:
-        print(f"[MESSAGE CASE ERROR] {type(error).__name__}")
+        _log.warning(f"[MESSAGE CASE ERROR] {type(error).__name__}")
         return render_card("r4-unavailable")
 
     payload = result.model_dump(mode="json")
-    print(
+    _log.info(
         f"[MESSAGE CASE] conclusion={payload.get('conclusion')} "
         f"caution={payload.get('caution')} "
         f"questions={[q.get('question_id') for q in payload.get('questions') or []]}"
@@ -742,7 +744,7 @@ def handle_case_answer(
         return kakao_response(_CASE_NOT_FOUND_TEXT)
 
     if option_id not in _MESSAGE_QUESTION_OPTIONS.get(question_id, ()):
-        print("[MESSAGE ANSWER IGNORED] reason=unsupported_option")
+        _log.warning("[MESSAGE ANSWER IGNORED] reason=unsupported_option")
         return kakao_response(_CASE_NOT_FOUND_TEXT)
 
     return handle_message_answer(case_id, question_id, option_id, user_id)
@@ -777,7 +779,7 @@ def handle_message_answer(
         try:
             result = MessageCaseResult.model_validate(final_payload)
         except ValidationError as error:
-            print(f"[MESSAGE ANSWER ERROR] {type(error).__name__}")
+            _log.warning(f"[MESSAGE ANSWER ERROR] {type(error).__name__}")
 
     if result is None:
         notice = kakao_response(_CASE_NOT_FOUND_TEXT)
@@ -793,7 +795,7 @@ def handle_message_answer(
     payload = updated.model_dump(mode="json")
     job["final_payload"] = payload
 
-    print(
+    _log.info(
         f"[MESSAGE ANSWER] question={question_id} option={option_id} "
         f"conclusion={payload.get('conclusion')}"
     )
@@ -850,7 +852,7 @@ async def download_voice_media(url: str) -> tuple[str, int]:
     host = media_host(media_url := url)
 
     if not is_allowed_media_url(url):
-        print("[VOICE DOWNLOAD REJECTED] reason=not_allowed")
+        _log.warning("[VOICE DOWNLOAD REJECTED] reason=not_allowed")
         raise MediaDownloadBlocked("허용되지 않은 다운로드 주소")
 
     await assert_resolves_to_public_ip(host)
@@ -886,14 +888,14 @@ async def download_voice_media(url: str) -> tuple[str, int]:
         os.remove(path)
         raise invalid_audio("녹음 파일이 비어 있어요")
 
-    print(f"[VOICE DOWNLOAD OK] size={total}")
+    _log.info(f"[VOICE DOWNLOAD OK] size={total}")
     return path, total
 
 
 def _log_voice_stage(job_id: str | None, stage: str, status: str, started: float, **summary) -> None:
     """호출부에서 고른 고정 코드·숫자만 기록한다. 원문·예외 메시지는 넘기지 않는다."""
     details = " ".join(f"{key}={value}" for key, value in summary.items())
-    print(
+    _log.info(
         f"[VOICE STAGE] job_id={job_id or 'none'} stage={stage} status={status} "
         f"elapsed_s={time.monotonic() - started:.3f}" + (f" {details}" if details else "")
     )
@@ -928,7 +930,7 @@ async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
         raise
     except Exception as error:
         _log_voice_stage(job_id, "download", "failed", started, error=type(error).__name__)
-        print(f"[VOICE ANALYSIS ERROR] download failed: {type(error).__name__}")
+        _log.warning(f"[VOICE ANALYSIS ERROR] download failed: {type(error).__name__}")
         # Download failures have a user-facing R4 result even for callback Jobs.
         # Never forward a network exception containing the signed media URL.
         return _voice_failure_card(job_id, "r4-unavailable", started)
@@ -941,7 +943,7 @@ async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
         except asyncio.CancelledError:
             raise
         except OSError as error:
-            print(f"[VOICE ANALYSIS ERROR] read failed: {type(error).__name__}")
+            _log.warning(f"[VOICE ANALYSIS ERROR] read failed: {type(error).__name__}")
             if job_id is not None:
                 raise RuntimeError("음성 파일 읽기 실패") from error
             return _voice_failure_card(job_id, "r4-unavailable", started)
@@ -972,7 +974,7 @@ async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
         raise
     except Exception as error:
         _log_voice_stage(job_id, "stt", "failed", stt_started, error=type(error).__name__)
-        print(f"[VOICE ANALYSIS ERROR] transcribe failed: {type(error).__name__}")
+        _log.warning(f"[VOICE ANALYSIS ERROR] transcribe failed: {type(error).__name__}")
         if job_id is not None:
             raise RuntimeError("음성 받아쓰기 실패") from error
         return _voice_failure_card(job_id, "r4-unavailable", started)
@@ -1001,7 +1003,7 @@ async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
         raise
     except Exception as error:
         _log_voice_stage(job_id, "analysis", "failed", analysis_started, error=type(error).__name__)
-        print(f"[VOICE ANALYSIS ERROR] analyze failed: {type(error).__name__}")
+        _log.warning(f"[VOICE ANALYSIS ERROR] analyze failed: {type(error).__name__}")
         if job_id is not None:
             raise RuntimeError("통화 분석 실패") from error
         return _voice_failure_card(job_id, "r4-unavailable", started)
@@ -1043,7 +1045,7 @@ async def handle_voice_message(
 
     media_url = media.get("url")
     if not isinstance(media_url, str) or not media_url:
-        print("[VOICE MESSAGE] media.url 없음")
+        _log.info("[VOICE MESSAGE] media.url 없음")
         return render_card("r4-unavailable")
 
     if user_id and user_id in RUNNING_USERS:
@@ -1051,7 +1053,7 @@ async def handle_voice_message(
 
     # callbackUrl이 없는 경우 개발/테스트용 동기 처리 (문자 전용 경로와 동일한 패턴)
     if not callback_url:
-        print("[CALLBACK] callbackUrl 없음 - 음성 동기 처리")
+        _log.info("[CALLBACK] callbackUrl 없음 - 음성 동기 처리")
         if user_id:
             RUNNING_USERS.add(user_id)
         try:
@@ -1111,7 +1113,7 @@ def handle_voice_answer(job_id: str, option_id: str, user_id: str | None) -> dic
     try:
         result = VoiceCaseResult.model_validate(final_payload)
     except ValidationError as error:
-        print(f"[VOICE ANSWER ERROR] {type(error).__name__}")
+        _log.warning(f"[VOICE ANSWER ERROR] {type(error).__name__}")
         return kakao_response(_CASE_NOT_FOUND_TEXT)
 
     answers: list[str] = job.setdefault("qa_answers", [])
@@ -1216,13 +1218,13 @@ async def run_analysis_and_callback(
                     timezone.utc
                 ).isoformat()
         
-                print(
+                _log.info(
                     f"[JOB COMPLETED] "
                     f"job_id={job_id}"
                 )
 
         except asyncio.TimeoutError:
-            print(
+            _log.warning(
                 f"[ANALYSIS TIMEOUT] "
                 f"job_id={job_id}"
             )
@@ -1244,13 +1246,13 @@ async def run_analysis_and_callback(
                     timezone.utc
                 ).isoformat()
 
-            print(
+            _log.warning(
                 f"[JOB TIMEOUT] "
                 f"job_id={job_id}"
             )
 
         except Exception as e:
-            print(
+            _log.warning(
                 f"[ANALYSIS ERROR] job_id={job_id} "
                 f"{type(e).__name__}"
             )
@@ -1272,7 +1274,7 @@ async def run_analysis_and_callback(
                     timezone.utc
                 ).isoformat()
         
-                print(
+                _log.warning(
                     f"[JOB FAILED] "
                     f"job_id={job_id}"
                 )
@@ -1281,7 +1283,7 @@ async def run_analysis_and_callback(
         # 2. 카카오 callback 전송
         # ----------------------------------------------------
 
-        print(
+        _log.info(
             f"[CALLBACK] job_id={job_id} 결과 전송 시작"
         )
 
@@ -1296,7 +1298,7 @@ async def run_analysis_and_callback(
             follow_redirects=False,
         )
 
-        print(
+        _log.info(
             f"[CALLBACK STATUS] job_id={job_id} "
             f"{response.status_code}"
         )
@@ -1307,7 +1309,7 @@ async def run_analysis_and_callback(
         # [CALLBACK RESULT STATUS]로 따로 남긴다.
 
         if response.status_code >= 400:
-            print(f"[CALLBACK ERROR] job_id={job_id} status={response.status_code}")
+            _log.warning(f"[CALLBACK ERROR] job_id={job_id} status={response.status_code}")
 
         response.raise_for_status()
 
@@ -1325,7 +1327,7 @@ async def run_analysis_and_callback(
             if callback_result_status not in ("SUCCESS", "FAIL"):
                 callback_result_status = "UNKNOWN"
         
-            print(
+            _log.info(
                 f"[CALLBACK RESULT STATUS] job_id={job_id} status="
                 f"{callback_result_status}"
             )
@@ -1336,7 +1338,7 @@ async def run_analysis_and_callback(
                 if job:
                     job["callback_status"] = "success"
         
-                print(
+                _log.info(
                     f"[JOB CALLBACK SUCCESS] "
                     f"job_id={job_id}"
                 )
@@ -1348,7 +1350,7 @@ async def run_analysis_and_callback(
                         f"kakao_callback_status={callback_result_status}"
                     )
         
-                print(
+                _log.warning(
                     f"[JOB CALLBACK FAILED] "
                     f"job_id={job_id} "
                     f"status={callback_result_status}"
@@ -1361,12 +1363,12 @@ async def run_analysis_and_callback(
                 job["callback_status"] = "failed"
                 job["callback_error"] = "invalid_callback_response"
         
-            print(
+            _log.warning(
                 f"[CALLBACK WARNING] job_id={job_id} "
                 "응답을 JSON으로 파싱할 수 없습니다."
             )
         
-            print(
+            _log.warning(
                 f"[JOB CALLBACK FAILED] "
                 f"job_id={job_id}"
             )
@@ -1379,12 +1381,12 @@ async def run_analysis_and_callback(
             job["callback_status"] = "failed"
             job["callback_error"] = safe_error
 
-        print(
+        _log.warning(
             f"[CALLBACK SEND FAILED] job_id={job_id} "
             f"{safe_error}"
         )
     
-        print(
+        _log.warning(
             f"[JOB CALLBACK FAILED] "
             f"job_id={job_id}"
         )
@@ -1395,7 +1397,7 @@ async def run_analysis_and_callback(
                 user_id
             )
 
-            print(
+            _log.info(
                 f"[RUNNING USER REMOVED] "
                 f"job_id={job_id}"
             )

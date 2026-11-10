@@ -7,6 +7,7 @@ be_teammate_card_integration_tasks.md 4~6절 기준.
 캐러셀을 보여주는 구조라, 결과 카드와 캐러셀은 서로 다른 응답이다).
 """
 
+import logging
 import re
 from typing import Any
 
@@ -25,6 +26,8 @@ from services.chatbot_copy_data import (
 from services.official_domain_service import brand_for_domain, official_homepage
 from services.kakao_card_renderer import render_card, substitute_values
 from services.result_card_selector import select_result_card
+
+_LOGGER = logging.getLogger(__name__)
 
 DETAIL_BUTTON_LABEL = "자세히 보기"
 MAX_CAROUSEL_SIGNAL_ITEMS = 8  # + C2 + C3 = 10장 (카카오 캐러셀 상한)
@@ -884,7 +887,7 @@ def _guidance_items(analysis_result: dict) -> list[dict]:
     try:
         guidance_list = find_guidance(analysis_result) or []
     except Exception as e:
-        print(f"[GUIDANCE ERROR] {type(e).__name__}: {e}")
+        _LOGGER.warning("[GUIDANCE ERROR] %s", type(e).__name__)
         return []
 
     if not guidance_list:
