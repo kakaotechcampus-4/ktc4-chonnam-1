@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -60,9 +61,28 @@ class MessageRuntime:
     search_cases: Callable[[str], CaseSearchResult] = search_cases
 
 
+# "<받은 문자> 라고 (문자가) 왔는데 <내 질문>" 꼴(#143). 받은 문자를 문장 안에 넣어 보내면 줄 전체가
+# 받는 사람의 말로 읽혀 그 안의 요구·사정이 버려진다. 받은 문자와 질문을 다른 세그먼트로 나눈다
+_REPORTED = re.compile(
+    r"^(?P<message>.+?)\s*(?:이?라고|이렇게|하고)\s*"
+    r"(?:(?:문자|메시지|메세지|카톡|톡|연락)\s*(?:가|이)?\s*)?"
+    r"(?:왔는데|왔어요|왔어|왔습니다|왔네요|왔다|옴|받았는데|받았어요)[.,!?…]*\s*(?P<rest>.*)$"
+)
+
+
+def _split_reported(line: str) -> list[str]:
+    match = _REPORTED.match(line)
+    if match is None:
+        return [line]
+    return [part for part in (match["message"].strip(), match["rest"].strip()) if part]
+
+
 def message_source(text: str) -> ReadingSource:
-    """마스킹한 문자를 줄 단위 세그먼트로 만든다. 문자는 보낸 사람 한 명의 말이라 화자를 나누지 않는다."""
-    lines = [line.strip() for line in mask_pii(text).splitlines()]
+    """마스킹한 문자를 줄 단위 세그먼트로 만든다. 문자는 보낸 사람 한 명의 말이라 화자를 나누지 않는다.
+
+    "~라고 왔는데 ~맞을까?" 처럼 받은 문자를 문장 안에 넣은 줄은 받은 문자와 질문으로 나눈다(#143).
+    """
+    lines = [part for line in mask_pii(text).splitlines() for part in _split_reported(line.strip())]
     return ReadingSource(
         kind=InputKind.TEXT,
         segments=[Segment(side=Side.UNKNOWN, text=line) for line in lines if line],
@@ -80,6 +100,8 @@ async def _search(
     except asyncio.CancelledError:
         raise
     except TimeoutError:
+        # 검색 예산 전체를 넘겼다(#155). 임베딩 마감 뒤 TF-IDF 폴백과 구분해 남긴다
+        LOGGER.warning("message case search timed out budget=%.1fs", timeout_s)
         return None, UncheckedReason.TIMEOUT
     except Exception as exc:
         LOGGER.warning("message case search failed: %s", type(exc).__name__)
