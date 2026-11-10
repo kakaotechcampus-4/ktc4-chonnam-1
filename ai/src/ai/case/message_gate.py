@@ -104,8 +104,10 @@ def _answer_evidence(answers: MessageAnswers) -> list[Evidence]:
     ]
 
 
-def _stop_actions(codes: set[EvidenceCode]) -> list[StopAction]:
-    return [action for trigger, action in _STOP_TABLE if codes & trigger][:_MAX_STOP]
+def _stop_actions(codes: set[EvidenceCode], *, has_link: bool = False) -> list[StopAction]:
+    # 링크가 있는 문자는 "링크를 누르지 마세요" 를 맨 앞에 둔다 (#89, chatbot-copy.md R9 멈출 행동)
+    head = [StopAction.DONT_CLICK_LINK] if has_link else []
+    return [*head, *(action for trigger, action in _STOP_TABLE if codes & trigger)][:_MAX_STOP]
 
 
 def _slim(similar: CaseSearchResult | None) -> CaseSearchResult | None:
@@ -165,8 +167,13 @@ def decide_message(
     answers: MessageAnswers | None = None,
     failures: list[FailureCode] | None = None,
     reading_status: Literal["ok", "fallback"] = "ok",
+    has_link: bool = False,
 ) -> MessageCaseResult:
-    """accepted 가 None 이면 문자를 읽지 못한 것이다(not_analyzable)."""
+    """accepted 가 None 이면 문자를 읽지 못한 것이다(not_analyzable).
+
+    has_link: 링크가 있는 문자다(#89). 결론·주의 규칙은 같고, 시나리오와 멈출 행동만 다르다.
+    링크 판정은 공식 주소 대조가 따로 한다. 이 결과는 BE 가 판단 보류 카드의 갈래를 고르는 데만 쓴다.
+    """
     answers = answers or MessageAnswers()
     read_ran = accepted is not None
     q2 = answers.called_known_number
@@ -269,12 +276,12 @@ def decide_message(
     )
 
     return MessageCaseResult(
-        scenario=Scenario.IMPERSONATION_NO_LINK,
+        scenario=Scenario.LINK_SMISHING if has_link else Scenario.IMPERSONATION_NO_LINK,
         conclusion=conclusion,
         caution=caution,
         floors=floors,
         evidence=evidence,
-        stop_actions=_stop_actions(codes),
+        stop_actions=_stop_actions(codes, has_link=has_link),
         response_actions=response_actions_for(answers.already_acted, base, call=False),
         verify_actions=verify_actions,
         questions=questions,
