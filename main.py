@@ -1,11 +1,9 @@
 import asyncio
 import hmac
 import os
-import re
 import tempfile
 import time
 
-import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -15,7 +13,16 @@ from pydantic import ValidationError
 from backend.src.server.http_client import get_http_client
 from backend.src.server.lifespan import app_lifespan
 from backend.src.server.log import get_logger
+from backend.src.server.callback import send_callback
 from backend.src.server.callback_guard import callback_host, is_allowed_callback_url
+from backend.src.server.jobs import (
+    ANALYSIS_JOBS,
+    RUNNING_USERS,
+    create_analysis_job,
+    find_latest_job_by_user,
+    finish_job,
+    now_iso,
+)
 from backend.src.server.media_guard import (
     MediaDownloadBlocked,
     assert_resolves_to_public_ip,
@@ -110,19 +117,6 @@ def verify_skill_secret(request: Request) -> None:
     raise HTTPException(status_code=401, detail="Invalid skill secret")
 
 
-# TODO:
-# 현재는 콜백 기능 테스트를 위한 임시 인메모리 저장소.
-# 추후 PostgreSQL 또는 Redis 기반 작업 상태 관리로 변경.
-RUNNING_USERS: set[str] = set()
-
-
-# TODO:
-# 프로토타입 검증용 인메모리 작업 저장소.
-# 서버 재시작 시 데이터가 소실된다.
-# 추후 PostgreSQL 기반 저장소로 교체한다.
-ANALYSIS_JOBS: dict[str, dict] = {}
-
-
 # 콜백 URL 유효 시간을 고려한 안전 마진
 CALLBACK_DEADLINE_SECONDS = 45.0
 
@@ -133,73 +127,6 @@ READ_MESSAGE_TIMEOUT_SECONDS = 15.0
 # 카카오 SkillResponse 한 번에 담을 수 있는 outputs 수
 KAKAO_MAX_OUTPUTS = 3
 
-
-# ============================================================
-# Store Analysis Job
-# ============================================================
-
-def create_analysis_job(
-    user_id: str | None
-) -> str:
-    """
-    새로운 분석 작업을 생성하고 job_id를 반환한다.
-
-    현재는 인메모리 저장소를 사용하며,
-    추후 PostgreSQL 기반 저장소로 교체한다.
-    """
-
-    job_id = str(uuid.uuid4())
-
-    ANALYSIS_JOBS[job_id] = {
-        "job_id": job_id,
-        "user_id": user_id,
-        "status": "running",
-        "created_at": datetime.now(
-            timezone.utc
-        ).isoformat(),
-        "completed_at": None,
-        "result": None,
-        # 이슈 #69: "자세히 보기" 클릭 시 캐러셀(+ 공식 확인 방법 카드)을
-        # 다시 만들려면 렌더링 끝난 카카오 카드(result)가 아니라 원본
-        # 분석 결과가 필요하다. 다중 링크는 마지막 결과만 저장하므로
-        # 잘못 연결되지 않도록 상세 버튼과 직접 상세 조회를 차단한다.
-        "final_payload": None,
-        "error": None,
-        "callback_status": "pending",
-        "callback_error": None
-    }
-
-    _log.info(
-        f"[JOB CREATED] "
-        f"job_id={job_id}"
-    )
-
-    return job_id
-
-
-# ============================================================
-# Find Latest Job
-# ============================================================
-
-def find_latest_job_by_user(
-    user_id: str | None
-) -> dict | None:
-    if not user_id:
-        return None
-
-    user_jobs = [
-        job
-        for job in ANALYSIS_JOBS.values()
-        if job.get("user_id") == user_id
-    ]
-
-    if not user_jobs:
-        return None
-
-    return max(
-        user_jobs,
-        key=lambda job: job["created_at"]
-    )
 
 # ============================================================
 # Analysis Job API
@@ -805,7 +732,7 @@ def handle_message_answer(
         if job.get("status") == "completed":
             # "결과 확인" 이 새 결과와 답한 시각을 보여 주게 한다
             job["result"] = card
-            job["completed_at"] = datetime.now(timezone.utc).isoformat()
+            job["completed_at"] = now_iso()
         return card
 
     return render_message_answer_card(payload)
@@ -1127,55 +1054,47 @@ def handle_voice_answer(job_id: str, option_id: str, user_id: str | None) -> dic
 
 
 # ============================================================
-# Kakao callback
+# 분석 실행과 콜백
 # ============================================================
 
-_CALLBACK_CODE_FIELDS = ("status", "code", "errorCode", "error_code", "resultCode", "error")
-_SAFE_CALLBACK_TOKEN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
-# 주소 조각이나 토큰처럼 긴 문자열이 섞인 메시지는 버린다.
-_UNSAFE_CALLBACK_MESSAGE = re.compile(r"[/?=&]|[A-Za-z0-9_-]{24,}")
+_ANALYSIS_TIMEOUT_TEXT = "분석이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해주세요."
+_ANALYSIS_ERROR_TEXT = "분석 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요."
 
 
-def _callback_error_detail(response) -> str:
-    """카카오가 콜백을 거절한 사유를 요약한다.
+async def _analyze_for_job(utterance: str, job_id: str, voice_media_url: str | None) -> dict:
+    """분석을 돌리고 끝난 상태를 Job 에 남긴 뒤 사용자에게 보낼 응답을 돌려준다.
 
-    콜백 주소에 1회성 토큰이 있고 응답이 요청 주소를 반사할 수 있어 본문을 그대로 남기지 않는다.
-    형식이 정해진 값만 고르고, 나머지는 필드 이름만 남긴다.
+    시간 초과와 실패도 응답이다. 콜백 전에 저장해 두므로 전송이 실패해도 "결과 확인"이 같은 응답을 준다.
     """
+
+    started = time.monotonic()
+    is_voice = voice_media_url is not None
+    analysis = (
+        run_voice_analysis(voice_media_url, job_id=job_id) if is_voice
+        else run_analysis(utterance, job_id=job_id)
+    )
 
     try:
-        body = response.json()
-    except Exception:  # noqa: BLE001 — 진단 때문에 콜백 처리가 달라지면 안 된다
-        return "body=not_json"
-    if not isinstance(body, dict):
-        return "body=not_object"
-    keys = sorted(k for k in body if isinstance(k, str) and _SAFE_CALLBACK_TOKEN.fullmatch(k))[:10]
-    parts = [f"keys={keys}"]
-    for name in _CALLBACK_CODE_FIELDS:
-        value = body.get(name)
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, int) or (isinstance(value, str) and _SAFE_CALLBACK_TOKEN.fullmatch(value)):
-            parts.append(f"{name}={value}")
-    message = body.get("message")
-    if isinstance(message, str) and message and len(message) <= 160 and not _UNSAFE_CALLBACK_MESSAGE.search(message):
-        parts.append(f"message={message!r}")
-    return " ".join(parts)
+        result = await asyncio.wait_for(analysis, timeout=CALLBACK_DEADLINE_SECONDS)
+    except asyncio.TimeoutError:
+        _log.warning(f"[ANALYSIS TIMEOUT] job_id={job_id}")
+        result = render_card("r4-unavailable") if is_voice else kakao_response(_ANALYSIS_TIMEOUT_TEXT)
+        if is_voice:
+            _log_voice_stage(job_id, "card", "completed", started, card="r4-unavailable")
+        finish_job(job_id, "timeout", result, error="analysis_timeout")
+        _log.warning(f"[JOB TIMEOUT] job_id={job_id}")
+    except Exception as error:
+        _log.warning(f"[ANALYSIS ERROR] job_id={job_id} {type(error).__name__}")
+        result = kakao_response(_ANALYSIS_ERROR_TEXT)
+        if is_voice:
+            _log_voice_stage(job_id, "card", "completed", started, card="analysis-error-message")
+        finish_job(job_id, "failed", result, error=type(error).__name__)
+        _log.warning(f"[JOB FAILED] job_id={job_id}")
+    else:
+        finish_job(job_id, "completed", result)
+        _log.info(f"[JOB COMPLETED] job_id={job_id}")
 
-
-def _safe_callback_error(error: Exception) -> str:
-    """콜백 전송 실패를 안전하게 요약한다.
-
-    httpx.HTTPStatusError·ConnectError 등은 str()에 요청 URL 전체(쿼리
-    스트링의 1회성 토큰 포함)를 담는다 — 그대로 로그나 Job에 남기면
-    간접적으로 토큰이 샌다. 여기서는 예외 유형과(있으면) HTTP 상태
-    코드만 남긴다.
-    """
-
-    status_code = getattr(getattr(error, "response", None), "status_code", None)
-    if status_code is not None:
-        return f"{type(error).__name__} (status={status_code})"
-    return type(error).__name__
+    return result
 
 
 async def run_analysis_and_callback(
@@ -1185,222 +1104,19 @@ async def run_analysis_and_callback(
     job_id: str,
     *,
     voice_media_url: str | None = None,
-):
-    """
-    백그라운드에서 분석을 수행한 뒤
-    카카오 callbackUrl로 최종 결과를 전송한다.
+) -> None:
+    """백그라운드에서 분석한 뒤 카카오 callbackUrl 로 결과를 보낸다.
+
+    `voice_media_url` 이 있으면 통화 녹음 분석이고 `utterance` 는 쓰지 않는다.
     """
 
-    started = time.monotonic()
     try:
-        # ----------------------------------------------------
-        # 1. 분석 수행
-        # ----------------------------------------------------
-
-        if voice_media_url is not None:
-            analysis_coro = run_voice_analysis(voice_media_url, job_id=job_id)
-        else:
-            analysis_coro = run_analysis(utterance, job_id=job_id)
-
-        try:
-            result = await asyncio.wait_for(
-                analysis_coro,
-                timeout=CALLBACK_DEADLINE_SECONDS
-            )
-
-            # callback 전송 전에 분석 결과 저장
-            job = ANALYSIS_JOBS.get(job_id)
-        
-            if job:
-                job["status"] = "completed"
-                job["result"] = result
-                job["completed_at"] = datetime.now(
-                    timezone.utc
-                ).isoformat()
-        
-                _log.info(
-                    f"[JOB COMPLETED] "
-                    f"job_id={job_id}"
-                )
-
-        except asyncio.TimeoutError:
-            _log.warning(
-                f"[ANALYSIS TIMEOUT] "
-                f"job_id={job_id}"
-            )
-
-            result = render_card("r4-unavailable") if voice_media_url is not None else kakao_response(
-                "분석이 예상보다 오래 걸리고 있어요. "
-                "잠시 후 다시 확인해주세요."
-            )
-            if voice_media_url is not None:
-                _log_voice_stage(job_id, "card", "completed", started, card="r4-unavailable")
-
-            job = ANALYSIS_JOBS.get(job_id)
-
-            if job:
-                job["status"] = "timeout"
-                job["result"] = result
-                job["error"] = "analysis_timeout"
-                job["completed_at"] = datetime.now(
-                    timezone.utc
-                ).isoformat()
-
-            _log.warning(
-                f"[JOB TIMEOUT] "
-                f"job_id={job_id}"
-            )
-
-        except Exception as e:
-            _log.warning(
-                f"[ANALYSIS ERROR] job_id={job_id} "
-                f"{type(e).__name__}"
-            )
-
-            result = kakao_response(
-                "분석 중 문제가 발생했습니다. "
-                "잠시 후 다시 시도해주세요."
-            )
-            if voice_media_url is not None:
-                _log_voice_stage(job_id, "card", "completed", started, card="analysis-error-message")
-
-            job = ANALYSIS_JOBS.get(job_id)
-
-            if job:
-                job["status"] = "failed"
-                job["result"] = result
-                job["error"] = type(e).__name__
-                job["completed_at"] = datetime.now(
-                    timezone.utc
-                ).isoformat()
-        
-                _log.warning(
-                    f"[JOB FAILED] "
-                    f"job_id={job_id}"
-                )
-
-        # ----------------------------------------------------
-        # 2. 카카오 callback 전송
-        # ----------------------------------------------------
-
-        _log.info(
-            f"[CALLBACK] job_id={job_id} 결과 전송 시작"
-        )
-
-        # 입구에서 이미 걸렀지만, 다른 경로로 들어와도 내부 주소로 보내지 않게 한 번 더 본다.
-        if not is_allowed_callback_url(callback_url):
-            raise ValueError("허용되지 않은 callbackUrl")
-
-        response = await get_http_client().post(
-            callback_url,
-            json=result,
-            timeout=10.0,
-            follow_redirects=False,
-        )
-
-        _log.info(
-            f"[CALLBACK STATUS] job_id={job_id} "
-            f"{response.status_code}"
-        )
-
-        # 응답 본문은 로그에 그대로 남기지 않는다 — 콜백 호스트가 응답에
-        # 요청 URL을 그대로 반사하면(예: 디버그 echo) 쿼리스트링의 토큰이
-        # 로그로 샐 수 있다. 실제로 필요한 결과 상태는 JSON 파싱 후
-        # [CALLBACK RESULT STATUS]로 따로 남긴다.
-
-        if response.status_code >= 400:
-            _log.warning(f"[CALLBACK ERROR] job_id={job_id} status={response.status_code}")
-
-        response.raise_for_status()
-
-        # ----------------------------------------------------
-        # 3. Kakao callback 결과 확인
-        # ----------------------------------------------------
-
-        try:
-            callback_result = response.json()
-        
-            callback_result_status = callback_result.get(
-                "status"
-            )
-            # 응답이 원문·토큰을 status에 반사해도 로그나 Job에 저장하지 않는다.
-            if callback_result_status not in ("SUCCESS", "FAIL"):
-                callback_result_status = "UNKNOWN"
-        
-            _log.info(
-                f"[CALLBACK RESULT STATUS] job_id={job_id} status="
-                f"{callback_result_status}"
-            )
-        
-            job = ANALYSIS_JOBS.get(job_id)
-        
-            if callback_result_status == "SUCCESS":
-                if job:
-                    job["callback_status"] = "success"
-        
-                _log.info(
-                    f"[JOB CALLBACK SUCCESS] "
-                    f"job_id={job_id}"
-                )
-        
-            else:
-                if job:
-                    job["callback_status"] = "failed"
-                    job["callback_error"] = (
-                        f"kakao_callback_status={callback_result_status}"
-                    )
-        
-                _log.warning(
-                    f"[JOB CALLBACK FAILED] "
-                    f"job_id={job_id} "
-                    f"status={callback_result_status}"
-                )
-        
-        except ValueError:
-            job = ANALYSIS_JOBS.get(job_id)
-        
-            if job:
-                job["callback_status"] = "failed"
-                job["callback_error"] = "invalid_callback_response"
-        
-            _log.warning(
-                f"[CALLBACK WARNING] job_id={job_id} "
-                "응답을 JSON으로 파싱할 수 없습니다."
-            )
-        
-            _log.warning(
-                f"[JOB CALLBACK FAILED] "
-                f"job_id={job_id}"
-            )
-
-    except Exception as e:
-        job = ANALYSIS_JOBS.get(job_id)
-        safe_error = _safe_callback_error(e)
-
-        if job:
-            job["callback_status"] = "failed"
-            job["callback_error"] = safe_error
-
-        _log.warning(
-            f"[CALLBACK SEND FAILED] job_id={job_id} "
-            f"{safe_error}"
-        )
-    
-        _log.warning(
-            f"[JOB CALLBACK FAILED] "
-            f"job_id={job_id}"
-        )
-
+        result = await _analyze_for_job(utterance, job_id, voice_media_url)
+        await send_callback(get_http_client, callback_url, result, job_id)
     finally:
         if user_id:
-            RUNNING_USERS.discard(
-                user_id
-            )
-
-            _log.info(
-                f"[RUNNING USER REMOVED] "
-                f"job_id={job_id}"
-            )
+            RUNNING_USERS.discard(user_id)
+            _log.info(f"[RUNNING USER REMOVED] job_id={job_id}")
 
 
 # ============================================================
