@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from ai.case.actions import response_actions_for
-from ai.case.lexicon import read_with_lexicon
+from ai.case.lexicon import ACCOUNT_LOCK_PATTERN, read_with_lexicon
 from ai.case.message_gate import MESSENGER_HANDLE, Q1_ACCEPTED, Q2_OPTIONS, Q2_SETTLED, decide_message
 from ai.case.privacy import mask_pii
 from ai.case.types import (
@@ -201,7 +201,7 @@ async def _analyze(
         contact = None
 
     return decide_message(
-        accepted=_with_handle_line(source, verify.accepted),
+        accepted=_with_lock_lure(source, _with_handle_line(source, verify.accepted), has_link),
         claims=verify.claims,
         rejected=verify.rejected,
         similar=similar,
@@ -211,6 +211,25 @@ async def _analyze(
         reading_status=reading.status,
         has_link=has_link,
     )
+
+
+def _with_lock_lure(
+    source: ReadingSource, accepted: list[Evidence], has_link: bool
+) -> list[Evidence]:
+    """링크가 있는 문자에서 계정 정지 미끼 줄을 어휘표로 찾아 근거로 덧붙인다 (#160-4).
+
+    LLM 은 "일시동결 되었습니다" 를 명분으로만 읽고 "해지해주세요" 를 요구로 읽지 않는다.
+    판정은 이 근거를 보고 게이트가 한다. 링크가 없으면 쓰지 않는다(링크에서 풀게 하는 수법이다).
+    """
+    if not has_link:
+        return accepted
+    for seg in source.segments:
+        if ACCOUNT_LOCK_PATTERN.search(seg.text):
+            return [*accepted, Evidence(
+                code=EvidenceCode.ACCOUNT_LOCK_LURE, origin=Origin.MESSAGE, quote=seg.text,
+                derived_by="lexicon", counts_for_floor=False,
+            )]
+    return accepted
 
 
 def _with_handle_line(source: ReadingSource, accepted: list[Evidence]) -> list[Evidence]:
