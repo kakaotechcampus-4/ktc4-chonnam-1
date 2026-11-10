@@ -113,3 +113,21 @@ GUIDANCE_CARD_CONTACT = (
     "결제·승인 문제는 문자에 적힌 번호 대신 카드사 고객센터에 직접 전화해 확인하세요.\n"
     "고객센터 번호는 카드 뒷면이나 카드사 공식 앱에서 확인하세요."
 )
+
+# 녹음 캐러셀 "비슷한 사례" 장의 수법 문구(docs/designs/chatbot-copy.md 4절 "녹음 캐러셀의 비슷한 사례", #109).
+# 키는 통화 사례 KB 의 type(`similar_cases.matches[].type`). 값은 (similar_type, similar_line)
+VOICE_SIMILAR_TYPES: dict[str, tuple[str, str]] = {
+    "institution_impersonation": (
+        "기관 사칭",
+        "검찰, 경찰, 금융감독원이라며 사건에 연루됐다고 겁을 주고 돈이나 정보를 요구하는 수법이에요.",
+    ),
+    "loan_fraud": ("대출 빙자", "낮은 금리로 대출해 준다며 수수료나 기존 대출 상환을 요구하는 수법이에요."),
+    "family_impersonation": ("가족, 지인 사칭", "가족이나 지인인 척 급한 사정을 대며 송금을 부탁하는 수법이에요."),
+    "kidnapping": ("납치 빙자", "가족을 데리고 있다며 겁을 주고 바로 돈을 보내라고 하는 수법이에요."),
+    "account_recruitment": ("통장 모집", "일자리나 대가를 내세워 통장이나 체크카드를 빌려 달라고 하는 수법이에요."),
+    "other_impersonation": (
+        "그 밖의 사칭",
+        "택배사나 출입국사무소 같은 곳인 척하며 돈이나 개인정보를 요구하는 수법이에요.",
+    ),
+    "other": ("보이스피싱", ""),
+}
