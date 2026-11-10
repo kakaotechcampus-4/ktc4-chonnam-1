@@ -11,9 +11,14 @@ docker 와 systemctl 을 가짜 명령으로 바꿔 EC2 의 systemd 동작을 �
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+# build.sh 는 리눅스 서버용이다. 가짜 docker·systemctl 을 PATH(':' 구분) 앞에 두고 bash 로 돌리므로
+# 드라이브 문자(C:)가 있는 Windows 경로에서는 실행할 수 없다. CI·운영은 리눅스다
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX 셸·경로가 필요한 리눅스 배포 스크립트")
 
 ISOLATION = Path(__file__).resolve().parents[1] / "infra" / "isolation"
 
@@ -26,7 +31,7 @@ state = root / "container"
 args = sys.argv[1:]
 
 def current():
-    return state.read_text().strip() if state.exists() else ""
+    return state.read_text(encoding="utf-8").strip() if state.exists() else ""
 
 if args[:2] == ["image", "inspect"]:
     print("sha256:approved")
@@ -102,7 +107,7 @@ def run_build(tmp_path, *, old_container, unit_active, propagates=True, broken=F
         "for name in ('compose.egress.yaml', 'egress-ips.txt'):\n"
         "    (pathlib.Path(sys.argv[1]) / name).write_text('')\n"
     )
-    script = (ISOLATION / "build.sh").read_text().replace("/opt/ktc-isolation", str(work))
+    script = (ISOLATION / "build.sh").read_text(encoding="utf-8").replace("/opt/ktc-isolation", str(work))
     (work / "build.sh").write_text(script)
 
     bin_dir = tmp_path / "bin"
@@ -125,7 +130,7 @@ def run_build(tmp_path, *, old_container, unit_active, propagates=True, broken=F
     result = subprocess.run(["bash", str(work / "build.sh")], env=env,
                             capture_output=True, text=True, timeout=90)
     events = tmp_path / "events.log"
-    return result, events.read_text().splitlines() if events.exists() else []
+    return result, events.read_text(encoding="utf-8").splitlines() if events.exists() else []
 
 
 @pytest.mark.parametrize(("old_container", "unit_active", "propagates"), [

@@ -24,7 +24,7 @@ from backend.src.server.media_guard import (
 )
 from backend.src.server.templates.renderer import render_r1_lookalike
 from backend.src.server.voice_input import VoiceInputRejected, inspect_voice_audio, invalid_audio
-from services.official_domain_service import check_link_official
+from services.official_domain_service import brand_for_domain, check_link_official
 from services.link_resolution import first_real_host, is_shortener
 from services.kakao_card_renderer import render_card
 from services.result_card_renderer import (
@@ -525,8 +525,10 @@ async def kakao_skill(
 
 # read_message() 가 링크를 다 받지 못했을 때의 안내. 판정이 아니라 안내에만 쓴다 (ADR 0007)
 _UNREAD_LINKS_TEXT = (
-    "문자에서 주소처럼 보이는 부분을 찾았지만 정확히 읽지 못해 검사하지 못했어요.\n\n"
-    "확인하고 싶은 주소를 그대로 복사해 다시 보내 주세요.\n"
+    "문자에서 주소처럼 보이는 부분을 찾았지만\n"
+    "정확히 읽지 못해 검사하지 못했어요.\n\n"
+    "확인하고 싶은 주소를 그대로 복사해\n"
+    "다시 보내 주세요.\n\n"
     "※ 확인 전까지 링크는 누르지 마세요."
 )
 _PARTLY_READ_LINKS_TEXT = (
@@ -1193,6 +1195,10 @@ def build_ai_url_analysis(
     """Compare the received/first real host; incomplete or later movement only downgrades."""
     browser = collected.browser
     judged_domain = first_real_host(input_url, collected.redirect_chain)
+    if not brand or brand == "unknown":
+        # #164: 문자에 기관 이름이 없으면 주소가 목록의 공식 도메인인지로만 대조한다.
+        # 목록에 없는 주소면 None 그대로라 지금처럼 not_registered 다
+        brand = brand_for_domain(judged_domain)
 
     # fetch.final_url may name an unvisited blocked/timeout destination.
     final_url = (collected.final_url

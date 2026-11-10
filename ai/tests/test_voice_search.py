@@ -121,3 +121,16 @@ def test_boost_types_reorders_and_keeps_order_without_preference():
     assert [x.case_id for x in boosted] == ["B", "A", "C"]
     assert boosted[0].similarity == 0.12 and boosted[2].similarity == 0.08
     assert boost_types(matches, types, set(), 0.03) == matches
+
+
+def test_voice_match_carries_case_type(voice_dir):
+    # #109: FE 가 가장 닮은 사례의 수법 유형을 캐러셀에 쓴다. BE 가 사례 파일을 읽지 않게 결과에 싣는다
+    result = search_voice_cases(LOAN, cases_dir=voice_dir, use_embedding=False)
+    assert result.matches[0].case_id == "VC-9001"
+    assert result.matches[0].type == "loan_fraud"
+
+
+def test_every_shipped_voice_case_has_a_type():
+    # 운영 KB 의 모든 사례가 유형을 갖고 있어야 카드 문구를 고를 수 있다
+    index = load_index(VOICE_CASES_DIR, ngram_sizes=VOICE_NGRAM_SIZES, sublinear_tf=VOICE_SUBLINEAR_TF)
+    assert index.cases and all(case.case_type for case in index.cases)

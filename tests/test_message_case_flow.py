@@ -129,7 +129,7 @@ async def test_family_message_gets_r6b_with_q1_and_q2(monkeypatch, stub_read_mes
     assert len(description) <= 400
     _assert_no_placeholders(card)
 
-    assert outputs[1]["listCard"]["header"]["title"] == "🙋 이미 하신 게 있나요?"
+    assert outputs[1]["listCard"]["header"]["title"] == "📌 이미 하신 게 있나요?"
     q1 = _list_items(card, 1)
     assert [i["title"] for i in q1] == [
         "정보를 입력했어요", "앱을 설치했어요", "돈이나 상품권을 보냈어요", "아무것도 안 했어요",
@@ -213,7 +213,7 @@ async def test_q2_not_person_turns_into_warning_and_updates_check_result(monkeyp
     assert "- 원래 번호로 통화한 결과 (본인이 아니라고 답해 주셨어요)" in result["description"]
     # Q2 는 떨어지고 Q1 만 남는다
     assert len(_outputs(card)) == 2
-    assert _outputs(card)[1]["listCard"]["header"]["title"] == "🙋 이미 하신 게 있나요?"
+    assert _outputs(card)[1]["listCard"]["header"]["title"] == "📌 이미 하신 게 있나요?"
     assert job["final_payload"]["conclusion"] == "suspected"
     # "결과 확인" 도 새 결과를 보여 준다
     assert job["result"] == card
@@ -262,7 +262,7 @@ async def test_q1_sent_money_gets_k6_with_112(monkeypatch, stub_read_message):
     k6 = _text_card(card)
     assert k6["title"] == "🚨 지금 먼저 하세요"
     assert k6["description"].startswith(
-        "1. 송금한 은행 고객센터에 지급정지를 요청하세요.\n2. 112에 신고하세요.\n\n"
+        "1. 송금한 은행에 지급정지를 요청하세요.\n2. 112에 신고하세요.\n\n"
     )
     assert [b["label"] for b in k6["buttons"]] == ["112 신고"]
     # Q1 답은 결론을 바꾸지 않는다
@@ -290,7 +290,7 @@ async def test_q1_installed_app_only_has_no_buttons(monkeypatch, stub_read_messa
     card = await _answer(job["job_id"], "already_acted", "installed_app")
     k6 = _text_card(card)
     assert k6["buttons"] == []
-    assert "1. 휴대폰 전원을 끄거나 비행기 모드로 바꾸세요." in k6["description"]
+    assert "1. 휴대폰을 끄거나 비행기 모드로 바꾸세요." in k6["description"]
 
 
 async def test_q1_not_yet_gets_a2_and_later_answers_accumulate(monkeypatch, stub_read_message):

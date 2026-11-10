@@ -284,7 +284,7 @@ class TestVoiceMessageSyncPath:
         assert response.status_code == 200
         text_card = _card_body(response.json())
         assert text_card["title"] == "⚠️ 보이스피싱이 의심돼요"
-        assert "금융감독원 대표번호(1332)로 직접 전화해 확인하세요." in text_card["description"]
+        assert "금융감독원 대표번호(1332)로\n직접 전화해 확인하세요." in text_card["description"]
         assert "통화를 끊고" in text_card["description"]
         assert len(removed) == 1
 
@@ -469,7 +469,7 @@ class TestVoiceDetailCarouselTemplate:
         assert "- 통화에 나온 기관: '금융감독원입니다'" in items[0]["description"]
         assert "상대가 한 말로 보이는 문장만 근거로 썼어요." in items[0]["description"]
         assert len(items) == 4  # no matches: omit only the similarity card
-        assert items[1]["title"] == "❔ 확인 범위"
+        assert items[1]["title"] == "📋 확인 범위"
         assert "비교할 사례를 찾지 못했어요" in items[1]["description"]
         assert "{{" not in str(card)
         # "통화에서 들은 내용"/"주의할 점" 칸 제목이 claim_lines에 남으면 안 된다.
@@ -495,7 +495,7 @@ class TestVoiceDetailCarouselTemplate:
 
         card = main.render_detail_carousel(analysis_result)
 
-        assert card["template"]["outputs"][0]["carousel"]["type"] == "basicCard"
+        assert card["template"]["outputs"][0]["carousel"]["type"] == "textCard"
 
 
 class TestTranscribeAndAnalyzeWiring:
@@ -795,7 +795,7 @@ class TestVoiceInputValidation:
         (_wav_bytes(), "voice.wav"), (_m4a_header(), "voice.m4a"), (_webm_header(), "voice.webm"),
         (b"\xff\xfb\x90\x00" + b"\x00" * 413, "voice.mp3"),
         (b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x00" + b"\x00" * 413, "voice.mp3"),
-    ])
+    ], ids=["wav", "m4a", "webm", "mp3", "mp3_id3"])
     async def test_supported_content_controls_stt_filename_not_url_extension(self, monkeypatch, tmp_path, data, filename):
         path = tmp_path / "download"
         path.write_bytes(data)
@@ -887,7 +887,7 @@ class TestVoiceInputValidation:
         (_wav_bytes(), "etc/m4a", "⚠️ 보이스피싱이 의심돼요"),
         (b"%PDF-1.7 fake audio", "audio/mp4", "🎙️ 이 파일은 확인할 수 없어요"),
         (b"", "audio/mp4", "🎙️ 이 녹음은 확인할 수 없어요"),
-    ])
+    ], ids=["wav_with_wrong_mime", "pdf_as_audio", "empty"])
     async def test_real_download_mime_does_not_override_content(self, monkeypatch, data, mime, expected):
         def respond(request):
             return httpx.Response(200, content=data, headers={"Content-Type": mime})
@@ -1220,7 +1220,7 @@ class TestVoiceAnswerFlow:
         outputs = card["template"]["outputs"]
         assert len(outputs) == 2
         list_card = outputs[1]["listCard"]
-        assert list_card["header"]["title"] == "🙋 이미 하신 게 있나요?"
+        assert list_card["header"]["title"] == "📌 이미 하신 게 있나요?"
         assert [item["title"] for item in list_card["items"]] == ["돈이나 상품권을 보냈어요", "아무것도 안 했어요"]
         item = list_card["items"][0]
         assert item["extra"] == {"case_id": job_id, "question_id": "already_acted", "option_id": "sent_money"}

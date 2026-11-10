@@ -116,6 +116,19 @@ _READING_MONEY_PATTERN = re.compile(
 )
 
 
+# 폴백 읽기에서만 쓰는 메신저 아이디 안내("Line : mx5782", "카톡ID: abc12"). 외국어 문장이라도
+# 메신저 이름 뒤에 아이디를 적어 두면 옮겨 오라는 뜻이다. DEMAND_LEXICON 은 관문 학습 입력이라 따로 둔다
+_READING_MESSENGER_PATTERN = re.compile(
+    r"(?<![A-Za-z])(?:line|라인|카톡|카카오톡|텔레그램|telegram|위챗|wechat|whatsapp|왓츠앱)"
+    r"\s*(?:id|아이디)?\s*[:：]\s*@?[A-Za-z0-9_.]{3,}",
+    re.I,
+)
+
+
+# ai.case.privacy.mask_pii 가 넣는 가림 표시
+_MASK_TOKEN = re.compile(r"<(?:주민번호|카드번호|계좌번호)>")
+
+
 def classify_demand(sentence: str) -> DemandKind | None:
     for kind, pattern in DEMAND_LEXICON:
         if pattern.search(sentence):
@@ -151,9 +164,13 @@ def read_with_lexicon(
                 identity.append(
                     IdentityClaim(kind=IdentityKind.ACQUAINTANCE, name=m.group(0), quote=sentence)
                 )
-            kind = classify_demand(sentence)
+            # 가림 표시(<계좌번호> 등)는 우리가 넣은 글자라 요구 어휘로 읽지 않는다 (회의 ID 오탐)
+            bare = _MASK_TOKEN.sub(" ", sentence)
+            kind = classify_demand(bare)
             if kind is None and _READING_MONEY_PATTERN.search(sentence):
                 kind = DemandKind.MONEY_TRANSFER
+            if kind is None and _READING_MESSENGER_PATTERN.search(sentence):
+                kind = DemandKind.MOVE_MESSENGER
             if kind is not None:
                 demands.append(DemandClaim(kind=kind, quote=sentence))
             if BLOCKER_PATTERN.search(sentence):

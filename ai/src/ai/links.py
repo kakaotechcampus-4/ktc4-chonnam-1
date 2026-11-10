@@ -74,6 +74,13 @@ def _normalize(raw: str) -> tuple[str, str] | None:
         host, port = parts.hostname or "", parts.port
     except ValueError:
         return None
+    if scheme is not None and not host.isascii():
+        # 한글 주소(앱다운.com)도 스미싱에 쓰인다. 수집·대조가 같은 값을 쓰도록 퓨니코드로 바꾼다.
+        # 스킴이 있을 때만 받는다. "배송조회.완료" 같은 문장을 주소로 잡지 않기 위해서다
+        try:
+            host = host.encode("idna").decode("ascii")
+        except UnicodeError:
+            return None
     if not valid_host(host):
         return None
     if scheme is None and not re.search(r"[a-z]", host):
@@ -152,6 +159,14 @@ def has_link_mark(text: str) -> bool:
     """`://` 나 `www.` 가 남았는가. 무력화 표기(`hxxp`, `[.]`)도 되살려 본다."""
     flat = defang(text).lower()
     return any(mark in flat for mark in _LINK_MARKS)
+
+
+def looks_like_link(span: str) -> bool:
+    """주소 모양(`://`, `www.`, 점 뒤 글자)이 있는가.
+
+    메신저 아이디(`ck5529`)나 숫자(`3.5`)는 링크로 세지 않는다. 점 뒤에 글자가 와야 도메인이다.
+    """
+    return has_link_mark(span) or re.search(r"\.[^\W\d_]", defang(span)) is not None
 
 
 def remove_spans(text: str, spans: Iterable[str]) -> str:

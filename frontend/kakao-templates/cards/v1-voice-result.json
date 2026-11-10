@@ -5,7 +5,7 @@
       {
         "textCard": {
           "title": "{{ headline }}",
-          "description": "{{ stop_line }}\n{{ verify_line }}\n\n{{ call_claims }}확인한 것\n{{ checked }}\n\n확인하지 못한 것\n{{ unchecked }}",
+          "description": "{{ stop_line }}\n{{ verify_line }}\n\n{{ call_claims }}✅ 확인한 것\n{{ checked }}\n\n❌ 확인하지 못한 것\n{{ unchecked }}",
           "buttonLayout": "vertical",
           "buttons": [
             {

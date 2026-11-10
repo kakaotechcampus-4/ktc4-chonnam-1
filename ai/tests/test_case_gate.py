@@ -405,7 +405,7 @@ def _similar(status, n=1):
     return CaseSearchResult(
         status=status,
         matches=[
-            CaseMatch(case_id=f"v{i}", similarity=0.9, matched_variant="통째 대본 " * 30)
+            CaseMatch(case_id=f"v{i}", similarity=0.9, matched_variant="통째 대본 " * 30, type="kidnapping")
             for i in range(n)
         ],
     )
@@ -418,6 +418,8 @@ def test_similar_completed_is_checked_and_slimmed():
     assert r.similar_cases.matches[0].case_id == "v0"
     assert r.similar_cases.matches[0].similarity == 0.9
     assert r.similar_cases.matches[0].matched_variant == ""
+    # 대본은 빼도 수법 유형은 카드에 쓰므로 남긴다 (#109)
+    assert r.similar_cases.matches[0].type == "kidnapping"
 
 
 def test_similar_fallback_is_kb_empty():
