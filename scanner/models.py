@@ -50,4 +50,9 @@ class CollectResult:
     # 격리 서버의 3단계 결과. None 이면 돌리지 않음(메인 서버 로컬 수집기는 항상 None).
     browser: BrowserResult | None = None
 
+    @classmethod
+    def failed(cls, input_url: str, failure: str) -> "CollectResult":
+        """아무것도 모으지 못한 결과. 이유는 `failures` 한 칸에 담는다."""
+        return cls(input_url, None, (), None, None, "", None, 0, (failure,))
+
 

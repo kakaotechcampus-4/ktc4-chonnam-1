@@ -23,7 +23,7 @@ def warm_up_kb() -> None:
 
     try:
         result = warm_up_case_search()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 워밍업이 실패해도 서버는 떠야 한다
         _log.warning(
             f"[KB WARMUP FAILED] "
             f"{type(e).__name__}: {e}"
@@ -55,7 +55,7 @@ def warm_up_voice_case_search_task() -> None:
 
     try:
         result = warm_up_voice_case_search()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 워밍업이 실패해도 서버는 떠야 한다
         _log.warning(
             f"[VOICE KB WARMUP FAILED] "
             f"{type(e).__name__}: {e}"

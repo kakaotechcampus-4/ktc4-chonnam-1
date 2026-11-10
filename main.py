@@ -27,7 +27,7 @@ from backend.src.server.media_guard import (
 )
 from backend.src.server.voice_flow import log_voice_stage, run_voice_analysis
 from services.official_url_analysis import build_ai_url_analysis
-from services.kakao_card_renderer import render_card
+from services.kakao_card_renderer import kakao_response, render_card
 from services.result_card_renderer import (
     render_result_card,
     merge_kakao_responses,
@@ -43,7 +43,7 @@ from services.result_card_renderer import (
 
 # AI 연결
 from ai.pipeline import analyze_message_part, finalize_analysis, read_message
-from ai.types import AnalysisStatus, FailureCode, MessageReading
+from ai.types import AnalysisStatus, FailureCode, MessagePart, MessageReading
 
 # 통화(음성) 분석 연결. ai.case 는 카카오 payload를 모른다 (CLAUDE.md 의존 방향).
 from ai.case import apply_call_answers
@@ -405,25 +405,35 @@ async def kakao_skill(
 
         return await run_analysis(utterance)
 
-    # 사용자 분석 시작 상태 저장
+    return _start_background_analysis(background_tasks, utterance, callback_url, user_id)
+
+
+def _start_background_analysis(
+    background_tasks: BackgroundTasks,
+    utterance: str,
+    callback_url: str,
+    user_id: str | None,
+    *,
+    voice_media_url: str | None = None,
+) -> dict:
+    """Job 을 만들고 분석을 백그라운드로 넘긴 뒤 대기 카드를 돌려준다. 문자와 통화가 같이 쓴다.
+
+    콜백 주소가 만료됐거나 전송이 실패해도 `run_analysis_and_callback()` 이 결과를 Job 에
+    남기므로 여기서 따로 처리하지 않는다.
+    """
+
     if user_id:
         RUNNING_USERS.add(user_id)
 
-    # 분석 작업 생성
-    job_id = create_analysis_job(
-        user_id
-    )
+    job_id = create_analysis_job(user_id)
+    extra = {}
+    if voice_media_url is not None:
+        ANALYSIS_JOBS[job_id]["analysis_kind"] = "voice"
+        extra["voice_media_url"] = voice_media_url
 
-    # 오래 걸리는 분석은 background task에서 수행
     background_tasks.add_task(
-        run_analysis_and_callback,
-        utterance,
-        callback_url,
-        user_id,
-        job_id
+        run_analysis_and_callback, utterance, callback_url, user_id, job_id, **extra,
     )
-
-    # 카카오에는 즉시 callback 사용 응답
     return render_card("r5-analyzing")
 
 
@@ -478,6 +488,26 @@ def _response_without_links(reading: MessageReading) -> dict | None:
     return None
 
 
+async def _collect_link(link: str) -> CollectResult:
+    """격리 환경에서 링크를 수집한다. 수집 API 가 죽어도 문자 근거는 쓸 수 있게 실패를 결과로 돌려준다."""
+
+    try:
+        return await collect_url_isolated(link)
+    except Exception as error:  # noqa: BLE001 — 수집 실패는 판단 보류로 이어지는 정상 갈래다
+        _log.warning(f"[COLLECTION FAILED] {type(error).__name__}")
+        return CollectResult.failed(link, "collection_failed")
+
+
+async def _message_part(message_task: asyncio.Task) -> MessagePart | None:
+    """문자 분석 결과. 실패하면 None 이고 주소 대조 결과만으로 카드를 만든다."""
+
+    try:
+        return await message_task
+    except Exception as error:  # noqa: BLE001 — LLM 이 실패해도 응답은 나가야 한다 (원칙 3)
+        _log.warning(f"[AI MESSAGE ERROR] {type(error).__name__}")
+        return None
+
+
 async def run_analysis(
     utterance: str,
     job_id: str | None = None,
@@ -512,26 +542,14 @@ async def run_analysis(
         analyze_message_part(reading.message, extracted=reading.extracted)
     )
     # 판단 보류 링크가 처음 나올 때 한 번만 문자 게이트를 부른다(#89). 링크마다 본문은 같다
-    link_case: list[dict | None] = []
+    link_case: dict | None = None
+    link_case_read = False
     try:
         for candidate in reading.links:
             link = candidate.url
             try:
-                try:
-                    collected = await collect_url_isolated(link)
-                except Exception as error:
-                    # Keep message evidence even when the collection API is unavailable.
-                    _log.warning(f"[COLLECTION FAILED] {type(error).__name__}")
-                    collected = CollectResult(
-                        link, None, (), None, None, "", None, 0, ("collection_failed",),
-                    )
-
-                try:
-                    message_result = await message_task
-                except Exception as error:
-                    _log.warning(f"[AI MESSAGE ERROR] {type(error).__name__}")
-                    message_result = None
-
+                collected = await _collect_link(link)
+                message_result = await _message_part(message_task)
                 brand = message_result.brand if message_result is not None else None
                 url_analysis = build_ai_url_analysis(collected, brand, link)
                 page, failure = to_isolated_page(collected)
@@ -541,15 +559,16 @@ async def run_analysis(
                 final_payload = final_result.model_dump(mode="json")
                 caution_card = None
                 if link_caution_applies(final_payload):
-                    if not link_case:
-                        link_case.append(await _link_message_case(reading.message, started))
-                    caution_card = render_link_caution_card(final_payload, link_case[0])
+                    if not link_case_read:
+                        link_case = await _link_message_case(reading.message, started)
+                        link_case_read = True
+                    caution_card = render_link_caution_card(final_payload, link_case)
                 cards.append(caution_card or render_result_card(
                     final_payload, job_id=job_id, allow_details=(link_count == 1),
                 ))
                 if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
                     job["final_payload"] = final_payload
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 — 링크 하나가 실패해도 나머지 링크 결과는 보낸다
                 _log.warning(f"[ANALYSIS ERROR] {type(error).__name__}")
                 cards.append(render_card("r4-unavailable"))
     finally:
@@ -575,9 +594,7 @@ async def _link_message_case(message: str, started: float) -> dict | None:
     budget = max(MESSAGE_CASE_BUDGET_S - (time.monotonic() - started), 0.0)
     try:
         result = await analyze_message_case(message, time_budget_s=budget, has_link=True)
-    except asyncio.CancelledError:
-        raise
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 — 주의 갈래를 고르는 부가 정보다. 실패하면 R9 로 간다
         _log.warning(f"[LINK CAUTION ERROR] {type(error).__name__}")
         return None
     payload = result.model_dump(mode="json")
@@ -614,9 +631,7 @@ async def run_message_case(
 
     try:
         result = await analyze_message_case(utterance, time_budget_s=budget)
-    except asyncio.CancelledError:
-        raise
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 — 분석이 실패해도 분석 불가 카드는 나간다 (원칙 3)
         _log.warning(f"[MESSAGE CASE ERROR] {type(error).__name__}")
         return render_card("r4-unavailable")
 
@@ -788,25 +803,9 @@ async def handle_voice_message(
             if user_id:
                 RUNNING_USERS.discard(user_id)
 
-    if user_id:
-        RUNNING_USERS.add(user_id)
-
-    job_id = create_analysis_job(user_id)
-    ANALYSIS_JOBS[job_id]["analysis_kind"] = "voice"
-
-    # 콜백 URL이 비정상이어도(만료 등) run_analysis_and_callback()의 기존
-    # 콜백 전송 실패 처리(_safe_callback_error, job 상태 failed 전환)를
-    # 그대로 타므로 여기서 따로 처리하지 않는다.
-    background_tasks.add_task(
-        run_analysis_and_callback,
-        "",
-        callback_url,
-        user_id,
-        job_id,
-        voice_media_url=media_url,
+    return _start_background_analysis(
+        background_tasks, "", callback_url, user_id, voice_media_url=media_url,
     )
-
-    return render_card("r5-analyzing")
 
 
 def handle_voice_answer(job_id: str, option_id: str, user_id: str | None) -> dict:
@@ -877,7 +876,7 @@ async def _analyze_for_job(utterance: str, job_id: str, voice_media_url: str | N
             log_voice_stage(job_id, "card", "completed", started, card="r4-unavailable")
         finish_job(job_id, "timeout", result, error="analysis_timeout")
         _log.warning(f"[JOB TIMEOUT] job_id={job_id}")
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 — 백그라운드 작업의 맨 바깥이다. 실패도 사용자 응답으로 바꿔 저장한다
         _log.warning(f"[ANALYSIS ERROR] job_id={job_id} {type(error).__name__}")
         result = kakao_response(_ANALYSIS_ERROR_TEXT)
         if is_voice:
@@ -911,31 +910,6 @@ async def run_analysis_and_callback(
         if user_id:
             RUNNING_USERS.discard(user_id)
             _log.info(f"[RUNNING USER REMOVED] job_id={job_id}")
-
-
-# ============================================================
-# Kakao Response
-# ============================================================
-
-def kakao_response(
-    text: str
-) -> dict:
-    """
-    카카오 SkillResponse simpleText 생성.
-    """
-
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [
-                {
-                    "simpleText": {
-                        "text": text
-                    }
-                }
-            ]
-        }
-    }
 
 
 # ============================================================

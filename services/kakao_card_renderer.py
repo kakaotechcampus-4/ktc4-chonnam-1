@@ -89,3 +89,9 @@ def substitute_values(node: Any, values: dict[str, Any]) -> Any:
     """
 
     return _substitute(node, values)
+
+
+def kakao_response(text: str) -> dict:
+    """글만 담은 카카오 SkillResponse(simpleText). 카드 템플릿이 없는 짧은 안내에 쓴다."""
+
+    return {"version": "2.0", "template": {"outputs": [{"simpleText": {"text": text}}]}}

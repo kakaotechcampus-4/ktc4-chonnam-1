@@ -9,9 +9,15 @@
 | `src/server/callback_guard.py` | `callbackUrl` 허용 검사(`KAKAO_CALLBACK_HOSTS`) |
 | `src/server/media_guard.py` | 음성 메시지 CDN 주소 검사 |
 | `src/server/voice_input.py` | STT 전에 음성 파일 크기·형식 검사 |
+| `src/server/voice_flow.py` | 통화 녹음 분석 흐름(다운로드 → 형식 검사 → STT → 통화 분석 → 카드) |
+| `src/server/jobs.py` | 분석 작업(Job) 저장소와 Job 에 들어가는 값 |
+| `src/server/callback.py` | 결과를 카카오 `callbackUrl` 로 보내고 성공 여부를 기록 |
+| `src/server/budgets.py` | 분석 전체 상한 등 시간 예산(`docs/latency-budget.md`) |
+| `src/server/log.py` | 진단 로그 도우미. `print` 대신 쓴다 |
 
 카드 문구는 `frontend/kakao-templates/cards/`, 카드 렌더러는 `services/kakao_card_renderer.py`,
-공식 도메인 목록은 `services/official_domains.py` 에 있다.
+공식 도메인 목록은 `services/official_domains.py`, 수집 결과와 목록을 대조하는 판정은
+`services/official_url_analysis.py` 에 있다.
 
 ## 하지 않는 것
 
