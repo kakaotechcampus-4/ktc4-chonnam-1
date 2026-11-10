@@ -129,6 +129,15 @@ _READING_MESSENGER_PATTERN = re.compile(
 _MASK_TOKEN = re.compile(r"<(?:주민번호|카드번호|계좌번호)>")
 
 
+# 계정·지갑 정지 미끼(#160): 같은 줄에 "정지·동결됐다" 와 "해지·해제해 주세요" 가 함께 있어야 한다.
+# 분실신고 정지 안내, 영업점 해제 안내, 해외결제 차단 알림처럼 한쪽만 있는 정상 안내는 걸리지 않는다
+ACCOUNT_LOCK_PATTERN = re.compile(
+    r"(?:동결|정지|잠금|잠김|잠겼|제한|중지|차단|휴면|비활성)\s*(?:되었|됐|되어|처리|조치|예정|중|상태)"
+    r"[^\n]{0,80}?"
+    r"(?:해지|해제|복구|풀어|재인증|인증|활성화)\s*(?:해\s*주세요|하세요|하십시오|해\s*주시기|바랍니다|요망|하시기)"
+)
+
+
 def classify_demand(sentence: str) -> DemandKind | None:
     for kind, pattern in DEMAND_LEXICON:
         if pattern.search(sentence):

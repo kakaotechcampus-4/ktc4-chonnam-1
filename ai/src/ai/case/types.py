@@ -87,6 +87,8 @@ class EvidenceCode(str, Enum):
     REMOTE_APP_MENTION = "remote_app_mention"
     CALL_REQUEST = "call_request"
     MESSENGER_MOVE = "messenger_move"
+    # 링크가 있는 문자 전용(#160): 계정·지갑을 정지·동결했다며 해지·해제를 요구한다. 어휘표로만 낸다
+    ACCOUNT_LOCK_LURE = "account_lock_lure"
     # Q2 답 근거 (v3 §7.1). user_not_person 만 하한(L-4)에 쓴다
     USER_NOT_PERSON = "user_not_person"
     USER_IS_PERSON = "user_is_person"
