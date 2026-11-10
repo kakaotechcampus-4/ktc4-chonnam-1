@@ -10,6 +10,8 @@ import re
 import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
@@ -22,6 +24,12 @@ from ai.kb.normalize import normalize
 from ai.types import AnalysisStatus, CaseMatch, CaseSearchResult, CategoryCode
 
 LOGGER = logging.getLogger(__name__)
+
+# 질의 임베딩을 기다리는 전체 마감(#155). httpx 제한은 연결·읽기 단계마다 걸려 전체가 2초를 넘을 수
+# 있고, 그러면 바깥 검색 예산(2.5초)이 먼저 끝나 TF-IDF 결과까지 버려진다. 마감을 넘기면 TF-IDF 만 쓴다
+EMBED_DEADLINE_S = 1.5
+# 마감을 넘긴 요청은 httpx 제한까지 이 스레드에서 끝난다. 검색은 요청마다 한 번이라 몇 개면 된다
+_embed_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="query-embed")
 
 CASES_DIR = Path(__file__).resolve().parent / "case_examples"
 VOICE_CASES_DIR = Path(__file__).resolve().parent / "voice_cases"
@@ -292,8 +300,18 @@ def _embedded_scores(
     if index is None:
         return None
     started = time.perf_counter()
+    future = _embed_pool.submit(embed, text)
     try:
-        query = embed(text)
+        try:
+            query = future.result(timeout=EMBED_DEADLINE_S)
+        except FutureTimeout:
+            # 3.11 부터 FutureTimeout 은 내장 TimeoutError 와 같다. 임베딩이 스스로 낸 시간 초과는 아래에서 남긴다
+            if future.done():
+                raise
+            LOGGER.warning(
+                "query embedding deadline exceeded elapsed=%.3fs kind=%s", time.perf_counter() - started, kind,
+            )
+            return None
         # 운영 지연을 보려는 기록이다. 기본 로그 수준에서 보이도록 warning 으로 남긴다. 문자 내용은 남기지 않는다
         LOGGER.warning("query embedding elapsed=%.3fs kind=%s", time.perf_counter() - started, kind)
         return semantic.scores(index, query)
@@ -323,8 +341,10 @@ def _search(
         ranked = boost_types(ranked, types, preferred_types, boost)
     if embedded is not None:
         ranked = fuse(ranked, embedded, alpha)
-    matches = [match for match in ranked if match.similarity >= min_similarity]
-    return CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=matches[:top_k])
+    matches = [match for match in ranked if match.similarity >= min_similarity][:top_k]
+    # 혼합 검색인지 TF-IDF 폴백인지와 찾은 수만 남긴다(#155). 사례 id·문자 내용은 남기지 않는다
+    LOGGER.warning("case search mode=%s matches=%d", "tfidf" if embedded is None else "hybrid", len(matches))
+    return CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=matches)
 
 
 def search_cases(
