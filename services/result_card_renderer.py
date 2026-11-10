@@ -7,10 +7,15 @@ be_teammate_card_integration_tasks.md 4~6절 기준.
 캐러셀을 보여주는 구조라, 결과 카드와 캐러셀은 서로 다른 응답이다).
 """
 
+import re
 from typing import Any
 
 from ai.case.types import Conclusion
 from services.chatbot_copy_data import (
+    GUIDANCE_CARD_CONTACT,
+    GUIDANCE_DELIVERY_ACTION,
+    GUIDANCE_DELIVERY_ALL_CONTACTS,
+    GUIDANCE_DELIVERY_CONTACTS,
     get_message_failure_copy,
     get_signal_copy,
     get_unverified_copy,
@@ -814,7 +819,7 @@ def _message_unverified_line(message: dict) -> str | None:
     않는다)."""
 
     answer = message.get("answer")
-    if answer in _COMPLETE_ANSWERS or answer is None:
+    if answer in _COMPLETE_ANSWERS:
         return None
     failures = ((message.get("details") or {}).get("reason") or {}).get("failures") or []
     return f"문자: {get_message_failure_copy(failures)}"
@@ -827,28 +832,51 @@ def _env_unverified_line(env: dict) -> str | None:
     return f"페이지: {get_unverified_copy(answer)}"
 
 
-def _guidance_description(guidance: Any) -> str:
+def _guidance_description(guidance: Any, brand: str | None = None) -> str:
     """이슈 #69: `kind`에 따라 FE가 정한 두 형식 중 하나로 문장을 만든다.
 
     `procedure`는 "{source}는 ~라고 안내했어요({연도})" 형식이다 — 문자가
     가짜라는 결론이 아니라 공식 기관이 실제로 안내한 절차임을 보여주는
     것이 목적이라, 여기서 "그래서 가짜/진짜"라는 판단을 덧붙이지 않는다.
-    `Guidance.text`는 128자를 넘을 수 있어(이슈 댓글: 택배 고객센터
-    5곳·카드사 9곳 번호 포함) 잘라낸다 — 여러 장으로 쪼개는 규칙은 FE와
-    아직 합의되지 않아, 합의 전까지는 안전하게 자르는 쪽을 택한다.
+    긴 연락처 규칙은 FE가 정한 짧은 문구를 사용한다. 출처 표기가 넘치는
+    NR-0012·0013은 출처·연도와 원문을 두 줄로 배치한다. 그 밖의 긴 자료는
+    기존 길이 제한을 유지하되 전화번호·URL 중간에서 자르지 않는다.
     """
 
     kind = getattr(guidance, "kind", None)
     text = getattr(guidance, "text", None) or ""
+    rule_id = getattr(guidance, "rule_id", None)
+
+    if kind == "verification" and len(text) > _GUIDANCE_TEXT_MAX_LENGTH:
+        if rule_id == "NR-0015":
+            contact = GUIDANCE_DELIVERY_CONTACTS.get(brand)
+            contact_line = (
+                f"{contact[0]} 고객센터 {contact[1]}" if contact
+                else GUIDANCE_DELIVERY_ALL_CONTACTS
+            )
+            return f"{GUIDANCE_DELIVERY_ACTION}\n{contact_line}"
+        if rule_id == "NR-0019":
+            # 현재 분석 결과에는 카드사 식별 필드가 없으므로 추측하지 않는다.
+            return GUIDANCE_CARD_CONTACT
 
     if kind == "procedure":
         source = getattr(guidance, "source", None) or "관련 기관"
         published_at = getattr(guidance, "published_at", None) or ""
         year = published_at[:4] if published_at else ""
         year_suffix = f"({year})" if year else ""
-        text = f"{source}는 {text}라고 안내했어요{year_suffix}."
+        original_text = text
+        text = f"{source}는 {original_text}라고 안내했어요{year_suffix}."
+        if len(text) > _GUIDANCE_TEXT_MAX_LENGTH and rule_id in ("NR-0012", "NR-0013"):
+            text = f"{source}{year_suffix}\n{original_text}"
 
-    return _truncate_evidence(text, _GUIDANCE_TEXT_MAX_LENGTH)
+    if len(text) <= _GUIDANCE_TEXT_MAX_LENGTH:
+        return text
+    end = _GUIDANCE_TEXT_MAX_LENGTH - 1
+    for token in re.finditer(r"https?://\S+|(?<!\d)\+?\d[\d-]*", text):
+        if token.start() < end < token.end():
+            end = token.start()
+            break
+    return text[:end].rstrip() + "…"
 
 
 def _guidance_items(analysis_result: dict) -> list[dict]:
@@ -873,7 +901,9 @@ def _guidance_items(analysis_result: dict) -> list[dict]:
     item_template = template["template"]["outputs"][0]["carousel"]["items"][0]
 
     return [
-        substitute_values(item_template, {"guidance_text": _guidance_description(guidance)})
+        substitute_values(item_template, {"guidance_text": _guidance_description(
+            guidance, (analysis_result.get("message") or {}).get("brand"),
+        )})
         for guidance in guidance_list[:_MAX_GUIDANCE_ITEMS]
     ]
 
@@ -916,15 +946,26 @@ def render_detail_carousel(analysis_result: dict) -> dict:
     c1_items = []
     for signal in signals[:signal_budget]:
         code = signal.get("code", "")
-        evidence = signal.get("evidence", "")
+        evidence = signal.get("evidence") or ""
         signal_title, reason = get_signal_copy(code)
 
+        # Keep the complete reason; only shorten the quoted observation to fit textCard.
+        fixed_description = substitute_values(c1_template, {
+            "signal_title": signal_title,
+            "observed": "문자에 ''라고 적혀 있어요.",
+            "reason": reason,
+        })["description"]
+        evidence_budget = min(_EVIDENCE_MAX_LENGTH, max(0, 128 - len(fixed_description)))
+        observed = (
+            f"문자에 '{_truncate_evidence(evidence, evidence_budget)}'라고 적혀 있어요."
+            if evidence.strip() else "인용문이 제공되지 않았어요."
+        )
         c1_items.append(
             substitute_values(
                 c1_template,
                 {
                     "signal_title": signal_title,
-                    "observed": f"문자에 '{_truncate_evidence(evidence)}'라고 적혀 있어요.",
+                    "observed": observed,
                     "reason": reason,
                 },
             )
@@ -934,7 +975,13 @@ def render_detail_carousel(analysis_result: dict) -> dict:
         line for line in (_message_unverified_line(message), _env_unverified_line(env))
         if line
     ]
-    unverified_text = "\n".join(unverified_lines) if unverified_lines else "모두 확인했어요."
+    official = (analysis_result.get("url") or {}).get("official")
+    if official not in ("official", "brand_mismatch"):
+        unverified_lines.insert(0, "공식 주소 여부는 확인하지 못했어요.")
+    unverified_text = (
+        "\n".join(unverified_lines) if unverified_lines
+        else "공식 주소 대조와 문자·페이지 분석을 완료했어요."
+    )
 
     c2_item = substitute_values(c2_template, {"unverified": unverified_text})
 
