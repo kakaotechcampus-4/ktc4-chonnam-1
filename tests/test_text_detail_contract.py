@@ -1,5 +1,6 @@
-"""#157 textCard limits and guidance contracts."""
+"""#157 textCard limits and #159 presentation contracts."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -36,7 +37,16 @@ def test_text_carousel_keeps_complete_reason_within_128(monkeypatch, code, lengt
         assert "…'라고 적혀 있어요." in first["description"]
 
 
-
+@pytest.mark.parametrize("answers, expected", [
+    (["installed_app"], "거래 은행에 계좌 지급정지를 요청하세요."),
+    (["sent_money"], "송금한 은행에 지급정지를 요청하세요."),
+    (["entered_info", "sent_money"], "송금한 은행에 지급정지를 요청하세요."),
+])
+def test_k6_payment_stop_matches_answer_and_numbers_only_visible_actions(answers, expected):
+    lines = renderer._response_action_lines(
+        ["unknown_action", "request_payment_stop", "report_112"], answers,
+    )
+    assert lines == [f"1. {expected}", "2. 112에 신고하세요."]
 
 
 def test_guidance_shares_text_card_and_ten_item_budget(monkeypatch):
@@ -72,7 +82,17 @@ def test_scope_with_failures_fits_without_losing_disclaimer(monkeypatch, message
     assert scope["description"].endswith("확인하지 못한 부분은 판단에 넣지 않았어요.")
 
 
-
+def test_r8_basic_card_uses_existing_image_asset():
+    payload = {
+        "url": {"official": "brand_mismatch", "domain": "example.com"},
+        "message": {"brand": "누리몰", "answer": "no_risk_found", "details": {}},
+        "env": {"answer": "not_run", "details": {}},
+    }
+    card = renderer.render_result_card(payload)["template"]["outputs"][0]["basicCard"]
+    assert "누리몰" in card["description"]
+    assert card["thumbnail"]["imageUrl"].endswith("/r1-danger.png")
+    assets = Path(__file__).resolve().parents[1] / "frontend/kakao-templates/assets/cards"
+    assert (assets / "r1-danger.png").is_file()
 
 
 @pytest.mark.parametrize("official", ["unresolved", "not_registered", None, "official", "brand_mismatch"])
