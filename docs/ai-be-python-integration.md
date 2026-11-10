@@ -30,6 +30,7 @@ python -m pip install ./ai
 ```
 
 - `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`을 실행 환경에 설정한다. 값은 코드에 기록하지 않는다.
+- 돌릴 분석을 에이전트가 고르게 하려면 `AGENT_MODEL`에 도구 호출을 지원하는 모델 이름을 넣는다. 없으면 에이전트 없이 지금처럼 돈다([ADR 0012](adr/0012-agent-analysis-router.md)).
 - 앱 시작 시 `ai.kb.search.load_cases()`를 한 번 호출해 사례 검색 캐시를 준비한다. 매 요청마다 호출하지 않는다.
 - 기본 호출은 `client`, `model`을 생략한다. AI가 생성한 client는 AI가 닫는다. 선택적으로 주입한 client는 BE가 관리한다.
 
