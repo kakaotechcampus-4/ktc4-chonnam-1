@@ -82,7 +82,9 @@ def run_network_config(*args, **env_vars):
     return subprocess.run(
         [sys.executable, str(ISOLATION / "network_config.py"), *args],
         capture_output=True, text=True, cwd=ROOT,
-        env={"PATH": os.environ["PATH"], "PYTHONPATH": str(ROOT), **env_vars},
+        # Windows 의 asyncio 는 SYSTEMROOT 가 없으면 import 하지 못한다. 리눅스에는 없는 값이라 영향이 없다
+        env={"PATH": os.environ["PATH"], "PYTHONPATH": str(ROOT),
+             **{key: os.environ[key] for key in ("SYSTEMROOT",) if key in os.environ}, **env_vars},
     )
 
 

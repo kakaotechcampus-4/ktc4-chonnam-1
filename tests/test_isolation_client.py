@@ -313,7 +313,7 @@ async def test_slow_drip_response_stops_at_total_deadline(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("body", [b"[" * 100_000, b"1" * 5000])
+@pytest.mark.parametrize("body", [b"[" * 100_000, b"1" * 5000], ids=["deep_nesting", "long_number"])
 async def test_hostile_json_is_a_client_error(body):
     def handler(request):
         return httpx.Response(200, content=body)
