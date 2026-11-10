@@ -220,18 +220,16 @@ def _voice_stop_line_excluding_hang_up(stop_actions: list[str]) -> str:
     return _voice_join_stop_actions(ordered)
 
 
-def _voice_verify_line(official_contact: dict | None, *, speaker_unknown: bool = False) -> str:
+def _voice_verify_line(official_contact: dict | None) -> str:
     if official_contact:
         org = official_contact.get("org", "")
         number = official_contact.get("number", "")
         # 실기기 폭에 맞춰 기관 이름·번호 뒤에서 줄을 바꾼다(2026-11-09)
         return f"{org} 대표번호({number})로\n직접 전화해 확인하세요."
-    if speaker_unknown:
-        return "통화에 나온 기관의 대표번호를\n직접 찾아 전화해 확인하세요."
-    return "상대가 말한 기관의 대표번호를\n직접 찾아 전화해 확인하세요."
+    return "통화에 나온 기관의 대표번호를\n직접 찾아 전화해 확인하세요."
 
 
-def _voice_call_claims(claims: dict, caution: bool, *, speaker_unknown: bool = False) -> str:
+def _voice_call_claims(claims: dict, caution: bool) -> str:
     """"주의할 점"/"통화에서 들은 내용" 블록(이슈 #115 V1 call_claims 매핑).
 
     기관 = identity[].quote, 통화에 나온 말 = 첫 demands[].quote, 통화에
@@ -245,9 +243,13 @@ def _voice_call_claims(claims: dict, caution: bool, *, speaker_unknown: bool = F
 
     말머리는 이슈 #139에 따라 "통화에 나온 ~"로 기본값을 바꿨다(ADR
     0008로 화자 분리를 아예 없앴으니 "상대가"라고 단정할 근거가 없다).
-    `speaker_unknown` 분기는 바뀐 기본값과 같은 문구를 가리켜 아래
-    치환 루프가 이제 아무것도 바꾸지 못한다 — #116이 정리될 때까지
-    지우지 말라는 지시가 있어 구조만 남겨 둔다(점검 결과, 보고 사항).
+    예전에는 `speaker_unknown`일 때만 이 말머리로 바꾸는 치환 루프가
+    있었다 — ADR 0008이 채택되고(2026-11-07) #116이 "화자 분리 코드
+    자체가 없어져 speaker/speaker_unknown을 결과에 남길 필요가 없다"며
+    닫혀(2026-11-10), 그 분기가 영영 쓰일 수 없다는 게 확정돼 지웠다
+    (이슈 #139). 같은 이유로 `_voice_verify_line()`·`claim_note`의
+    `speaker_unknown` 분기와 `_voice_speaker_unknown()` 자체도 PR #167
+    리뷰에 따라 함께 지웠다.
     """
 
     identity = claims.get("identity") or []
@@ -274,18 +276,6 @@ def _voice_call_claims(claims: dict, caution: bool, *, speaker_unknown: bool = F
 
     if not lines:
         return ""
-
-    if speaker_unknown:
-        for index, line in enumerate(lines):
-            for original, replacement in (
-                ("상대가 내세운 기관:", "통화에 나온 기관:"),
-                ("상대가 한 말:", "통화에 나온 말:"),
-                ("내세운 사정:", "통화에 나온 사정:"),
-                ("요구한 것:", "통화에 나온 요구:"),
-            ):
-                if line.startswith(f"- {original}"):
-                    lines[index] = line.replace(original, replacement, 1)
-                    break
 
     title = "⚠️ 주의할 점" if caution else "📞 통화에서 들은 내용"
     return f"{title}\n" + "\n".join(lines) + "\n\n"
@@ -319,11 +309,6 @@ def _voice_similar_cases_state(result: dict) -> str:
     return "empty"
 
 
-def _voice_speaker_unknown(result: dict) -> bool:
-    # #116의 명시적인 표시만 읽는다. caution/claims로 화자 상태를 추측하지 않는다.
-    return any(entry.get("item") == "speaker" for entry in result.get("unchecked") or [])
-
-
 def _voice_checked_unchecked(result: dict) -> tuple[str, str]:
     number_checks = result.get("number_checks") or []
     nc_checked, nc_unchecked = _voice_number_check_entries(number_checks)
@@ -341,9 +326,6 @@ def _voice_checked_unchecked(result: dict) -> tuple[str, str]:
     has_transcript_accuracy = False
     for entry in result.get("unchecked") or []:
         item, reason = entry.get("item"), entry.get("reason")
-        if item == "speaker":
-            unchecked_lines.append("- 누가 한 말인지 (말한 사람을 나누지 못했어요)")
-            continue
         if item == "similar_cases" or (item == "phone_number" and skip_phone_number):
             continue
         if item == "transcript_accuracy":
@@ -416,12 +398,8 @@ def render_voice_result_card(result: dict, job_id: str | None = None) -> dict:
     card = render_card("v1-voice-result", {
         "headline": headline,
         "stop_line": _voice_stop_line(result.get("stop_actions") or []),
-        "verify_line": _voice_verify_line(
-            result.get("official_contact"), speaker_unknown=_voice_speaker_unknown(result)
-        ),
-        "call_claims": _voice_call_claims(
-            result.get("claims") or {}, caution, speaker_unknown=_voice_speaker_unknown(result)
-        ),
+        "verify_line": _voice_verify_line(result.get("official_contact")),
+        "call_claims": _voice_call_claims(result.get("claims") or {}, caution),
         "checked": checked,
         "unchecked": unchecked,
     })
@@ -527,22 +505,16 @@ def render_voice_detail_carousel(result: dict) -> dict:
     """
 
     caution = bool(result.get("caution"))
-    speaker_unknown = _voice_speaker_unknown(result)
-    claims_block = _voice_call_claims(
-        result.get("claims") or {}, caution, speaker_unknown=speaker_unknown
-    ).strip()
+    claims_block = _voice_call_claims(result.get("claims") or {}, caution).strip()
     claim_lines = (
         "\n".join(claims_block.splitlines()[1:]) if claims_block else "확인된 의심 근거가 없어요."
     )
     _, unchecked = _voice_checked_unchecked(result)
-    verify_line = _voice_verify_line(result.get("official_contact"), speaker_unknown=speaker_unknown)
+    verify_line = _voice_verify_line(result.get("official_contact"))
 
     card = render_card("c-detail-carousel-voice", {
         "claim_lines": claim_lines,
-        "claim_note": (
-            "누가 한 말인지 가리지 못해 통화에 나온 말을 옮겼어요."
-            if speaker_unknown else "상대가 한 말로 보이는 문장만 근거로 썼어요."
-        ),
+        "claim_note": "상대가 한 말로 보이는 문장만 근거로 썼어요.",
         "similar_type": "",
         "similar_line": "",
         "unchecked": unchecked,

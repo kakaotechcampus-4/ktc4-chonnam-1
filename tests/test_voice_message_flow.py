@@ -1377,25 +1377,35 @@ class TestLatestVoice115Contract:
         assert "상대가 한 말로 보이는 문장만 근거로 썼어요." in items[0]["description"]
         assert "누가 한 말인지 가리지 못해" not in str(items)
 
-    def test_explicit_future_speaker_marker_changes_only_display(self):
-        # #116's AI schema/propagation is pending. Exercise the documented display
-        # boundary with a dict; do not infer the marker or change the AI model.
-        # Issue #139 made the neutral "통화에 나온 ~" headers the default for every
-        # call, so the marker no longer changes the call_claims labels themselves
-        # (they already read neutral) -- only claim_note still differs when present.
+    def test_speaker_item_in_unchecked_is_fully_inert(self):
+        # #116's AI schema/propagation never arrived -- per #116's own closing
+        # comment, diarization was removed outright instead, so the AI side
+        # never emits an unchecked "speaker" item in practice. Issue #139 +
+        # the PR #167 review removed every speaker_unknown wording branch
+        # (ADR 0008 adopted, #116 closed) and the dead `item == "speaker"`
+        # unchecked-line branch in `_voice_checked_unchecked()`. A "speaker"
+        # entry in `unchecked` must now change nothing at all: no call_claims/
+        # claim_note/verify_line wording change, and no extra unchecked line.
         result = _voice_result(claims=ClaimView(
             identity=[ClaimViewIdentity(kind=IdentityKind.INSTITUTION, name="검찰", quote="검찰입니다", listed_institution=True)],
             demands=[ClaimViewDemand(kind=DemandKind.MONEY_TRANSFER, quote="돈을 보내세요")],
             blockers=["전화가 안 돼요"],
         )).model_dump(mode="json")
+        without_marker = main.render_voice_result_card(result)
+        carousel_without_marker = main.render_voice_detail_carousel(result)
         result["unchecked"].append({"item": "speaker", "reason": "speaker_unknown"})
         initial = main.render_voice_result_card(result)
-        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        carousel = main.render_voice_detail_carousel(result)
+        items = carousel["template"]["outputs"][0]["carousel"]["items"]
         for label in ("통화에 나온 기관", "통화에 나온 말", "통화에 나온 사정", "통화에 나온 요구"):
             assert label in str(initial)
             assert label in items[0]["description"]
-        assert "누가 한 말인지 가리지 못해 통화에 나온 말을 옮겼어요." in items[0]["description"]
+        assert "상대가 한 말로 보이는 문장만 근거로 썼어요." in items[0]["description"]
         assert "통화에 나온 기관의 대표번호" in items[-1]["description"]
+        assert "누가 한 말인지" not in str(initial)
+        assert "누가 한 말인지" not in str(carousel)
+        assert initial == without_marker
+        assert carousel == carousel_without_marker
         assert result["conclusion"] == "suspected"
 
     def test_b2d_uses_only_112_and_1394(self):
