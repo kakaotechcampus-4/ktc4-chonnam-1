@@ -683,7 +683,7 @@ def _analysis_tools(
              "링크가 있어도 기관·지인을 내세우거나 무언가를 요구하는 문자면 쓸모가 있다",
              False, claims, _see_claims),
     )
-    return need, (*need, case_search_tool(reading.message), official_number_tool(utterance))
+    return need, (*need, case_search_tool(reading.message), official_number_tool(reading.message))
 
 
 def _record_trace(job_id: str | None, trace: Trace) -> None:
@@ -718,7 +718,10 @@ async def run_analysis(
         return response
     need, tools = _analysis_tools(utterance, reading, started)
     # 여기서는 카드 종류만 고른다. 어떤 분석이 도는지는 카드가 board 에서 꺼내는 것으로 정해진다
-    async with investigation(reading, tools) as board:
+    # 카드·저장 여유 5초는 에이전트를 기다리는 데 쓰지 않는다
+    async with investigation(
+        reading, tools, grace_until=started + MESSAGE_CASE_BUDGET_S,
+    ) as board:
         if reading.links:
             response = await _link_cards(board, need, reading, job_id)
         else:

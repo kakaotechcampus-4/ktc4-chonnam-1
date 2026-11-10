@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from enum import Enum
@@ -36,11 +37,14 @@ async def investigation(
     *,
     client: AsyncOpenAI | None = None,
     model: str | None = None,
+    grace_until: float | None = None,
 ) -> AsyncIterator[Board]:
     """Board 를 열고 에이전트 루프를 붙인다. 나갈 때 루프와 남은 분석을 모두 취소하고 회수한다.
 
     에이전트가 먼저 고른다. 첫 턴의 도구 호출이 board 에 오르거나 루프가 끝난 뒤에 board 를 내준다.
     모델은 인자 → AGENT_MODEL 이고, 없으면 루프를 돌리지 않는다. 에이전트의 실패는 밖으로 나오지 않는다.
+    `grace_until`(time.monotonic 기준)을 넘겨서는 에이전트를 기다리지 않는다. 다 만든 카드를
+    부른 쪽의 전체 상한에 잃지 않게 하려는 것이다.
     """
     board = Board(tools, len(reading.links))
     model = model or os.getenv("AGENT_MODEL", "").strip()
@@ -53,7 +57,9 @@ async def investigation(
         yield board
         if agent is not None:
             # 본문이 정상으로 끝났을 때만 온다. 바로 끊으면 기록이 늘 preempted 로 남는다
-            await asyncio.wait({agent}, timeout=GRACE_S)
+            grace = GRACE_S if grace_until is None else min(GRACE_S, grace_until - time.monotonic())
+            if grace > 0:
+                await asyncio.wait({agent}, timeout=grace)
     finally:
         if agent is not None:
             agent.cancel()

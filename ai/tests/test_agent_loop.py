@@ -351,6 +351,21 @@ async def test_agent_still_running_after_the_grace_is_cut_and_reaped(monkeypatch
     assert steps(board) == [("held", None, ("agent",), "cancelled")]
 
 
+async def test_grace_is_skipped_once_the_callers_deadline_has_passed():
+    tool, seen = probe("held", hold=True)
+    client, _ = scripted_client([("held", {})])
+    started = time.monotonic()
+
+    async with investigation(
+        reading(), [tool], client=client, model="m", grace_until=time.monotonic(),
+    ) as board:
+        pass
+
+    assert time.monotonic() - started < loop.GRACE_S / 2
+    assert board.trace().stop == "preempted"
+    assert seen["stopped"]
+
+
 async def test_failing_body_cuts_the_agent_without_the_grace():
     tool, seen = probe("held", hold=True)
     client, _ = scripted_client([("held", {})])
