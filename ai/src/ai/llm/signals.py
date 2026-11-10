@@ -4,22 +4,15 @@ LLM은 후보만 냅니다. 근거가 원문에 있는지 검증하고 결과로
 `ai/pipeline/results.py` 가 합니다.
 """
 
-import asyncio
 import json
 import logging
-from contextlib import AsyncExitStack
 from pathlib import Path
 
 from openai import (
-    APIResponseValidationError,
-    APIStatusError,
-    APITimeoutError,
     AsyncOpenAI,
-    LengthFinishReasonError,
 )
-from pydantic import ValidationError
 
-from ai.llm._client import create_client, required_env
+from ai.llm._client import create_client, failure_of, parse_answer, prompt_text, required_env
 from ai.types import (
     AnalysisStatus,
     CaseSearchResult,
@@ -77,53 +70,17 @@ async def analyze_signals(
     user_content = json.dumps(payload, ensure_ascii=False)
 
     try:
-        async with AsyncExitStack() as stack:
-            llm = client
-            if llm is None:
-                llm = await stack.enter_async_context(create_client(TIMEOUT_SECONDS))
-            model_name = model or required_env("LLM_MODEL")
-            response = await asyncio.wait_for(
-                llm.chat.completions.parse(
-                    model=model_name,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": PROMPT_PATH.read_text(encoding="utf-8")
-                            + RAG_REFERENCE_RULE,
-                        },
-                        {"role": "user", "content": user_content},
-                    ],
-                    response_format=SignalProposal,
-                    temperature=0,
-                ),
-                timeout=TIMEOUT_SECONDS,
-            )
-        message = response.choices[0].message
-        if message.refusal:
-            return _failure(FailureCode.REFUSED)
-        if message.parsed is None:
-            return _failure(FailureCode.INVALID_OUTPUT)
-        proposal = SignalProposal.model_validate(message.parsed)
-        return SignalAnalysis(status=AnalysisStatus.COMPLETED, signals=list(proposal.signals))
-    except asyncio.CancelledError:
-        raise
-    except (asyncio.TimeoutError, TimeoutError, APITimeoutError) as exc:
-        LOGGER.warning("signal extraction failed: %s", type(exc).__name__)
-        return _failure(FailureCode.TIMEOUT)
-    except (ValidationError, APIResponseValidationError, LengthFinishReasonError) as exc:
-        LOGGER.warning("signal extraction failed: %s", type(exc).__name__)
-        return _failure(FailureCode.INVALID_OUTPUT)
-    except APIStatusError as exc:
-        # 예외 클래스 이름과 상태 코드만 남긴다 — exc.code/exc.type/
-        # exc.request_id/exc.message/exc.body는 제공자가 보낸 값이라 민감
-        # 정보 노출 가능성을 더 줄이기 위해 남기지 않는다.
-        LOGGER.warning(
-            "signal extraction failed: %s status=%s",
-            type(exc).__name__, exc.status_code,
+        proposal = await parse_answer(
+            SignalProposal,
+            system=prompt_text(PROMPT_PATH) + RAG_REFERENCE_RULE,
+            user=user_content,
+            client=client,
+            make_client=create_client,
+            model=model or required_env("LLM_MODEL"),
+            timeout_s=TIMEOUT_SECONDS,
         )
-        return _failure(FailureCode.LLM_ERROR)
-    except Exception as exc:
-        LOGGER.warning("signal extraction failed: %s", type(exc).__name__)
-        return _failure(FailureCode.LLM_ERROR)
+        return SignalAnalysis(status=AnalysisStatus.COMPLETED, signals=list(proposal.signals))
+    except Exception as exc:  # noqa: BLE001 — LLM 이 실패해도 폴백 결과를 낸다 (원칙 3). 실패 코드는 failure_of 가 정한다
+        return _failure(failure_of(exc, "signal extraction", LOGGER))
 
 
