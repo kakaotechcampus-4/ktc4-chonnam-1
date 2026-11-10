@@ -643,6 +643,8 @@ class CaseMatch(StrictModel):
     similarity: float
     matched_variant: str
     categories: list[CategoryCode] = Field(default_factory=list)
+    # 사례 레코드의 수법 유형(예: kidnapping). 통화 카드의 "비슷한 사례" 문구에 쓴다(#109). 판정에는 쓰지 않는다
+    type: str = ""
 
 
 class CaseSearchResult(StrictModel):

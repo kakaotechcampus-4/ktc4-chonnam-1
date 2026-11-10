@@ -81,6 +81,22 @@ class TestRenderResultCard:
         buttons = {b["label"]: b for b in text_card["buttons"]}
         assert buttons["공식 홈페이지 열기"]["webLinkUrl"] == "https://cjlogistics.com"
 
+    def test_official_card_without_message_brand_uses_domain_brand(self):
+        # #164: 문자에 기관 이름이 없으면 주소로 찾은 공식 기관 이름과 홈페이지를 쓴다
+        analysis = _analysis(
+            "official",
+            _part("no_risk_found", brand="unknown"),
+            _part("no_risk_found"),
+            domain="www.hanjin.com",
+        )
+
+        card = render_result_card(analysis)
+
+        text_card = card["template"]["outputs"][0]["basicCard"]
+        assert "한진택배" in text_card["title"]
+        buttons = {b["label"]: b for b in text_card["buttons"]}
+        assert buttons["공식 홈페이지 열기"]["webLinkUrl"] == "https://hanjin.com"
+
     def test_not_official_card_fills_org_name(self):
         analysis = _analysis(
             "brand_mismatch",

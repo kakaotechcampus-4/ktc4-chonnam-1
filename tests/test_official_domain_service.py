@@ -200,3 +200,23 @@ class TestCheckOfficialDomainWithInjectedWhitelist:
 def test_guide_required_cases(brand, domain, expected):
     """BE_DOMAIN_MATCH_TASK_GUIDE.md 10절 표를 그대로 파라미터화한 버전."""
     assert check_official_domain(brand, domain) == expected
+
+
+class TestBrandForDomain:
+    """#164: 문자에 기관 이름이 없어도 공식 주소 목록의 주소면 그 기관으로 대조한다."""
+
+    def test_official_carrier_domain_gives_brand(self):
+        from services.official_domain_service import brand_for_domain
+        assert brand_for_domain("www.hanjin.com") == "한진택배"
+        assert brand_for_domain("hanjin.co.kr") == "한진택배"
+        assert brand_for_domain("service.epost.go.kr") == "우체국택배"
+
+    def test_unlisted_or_lookalike_domain_gives_none(self):
+        from services.official_domain_service import brand_for_domain
+        for domain in ("hanjin-delivery.com", "hanjin.com.evil.top", "evil.top", "", None):
+            assert brand_for_domain(domain) is None
+
+    def test_user_content_host_is_not_used(self):
+        # 블로그처럼 누구나 글을 올리는 주소는 주소만으로 기관을 정하지 않는다
+        from services.official_domain_service import brand_for_domain
+        assert brand_for_domain("blog.naver.com") is None

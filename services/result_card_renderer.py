@@ -20,7 +20,7 @@ from services.chatbot_copy_data import (
     get_signal_copy,
     get_unverified_copy,
 )
-from services.official_domain_service import official_homepage
+from services.official_domain_service import brand_for_domain, official_homepage
 from services.kakao_card_renderer import render_card, substitute_values
 from services.result_card_selector import select_result_card
 
@@ -748,6 +748,9 @@ def _result_card_values(analysis_result: dict, card_name: str) -> dict[str, str]
     url = analysis_result.get("url") or {}
     message = analysis_result.get("message") or {}
     brand = message.get("brand")
+    if card_name == "r2-official" and (not brand or brand == _UNKNOWN):
+        # #164: 문자에 기관 이름이 없으면 공식 대조에 쓴 주소의 기관을 쓴다
+        brand = brand_for_domain(url.get("domain"))
 
     values: dict[str, str] = {}
 

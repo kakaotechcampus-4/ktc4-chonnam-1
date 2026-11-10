@@ -795,7 +795,7 @@ class TestVoiceInputValidation:
         (_wav_bytes(), "voice.wav"), (_m4a_header(), "voice.m4a"), (_webm_header(), "voice.webm"),
         (b"\xff\xfb\x90\x00" + b"\x00" * 413, "voice.mp3"),
         (b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x00" + b"\x00" * 413, "voice.mp3"),
-    ])
+    ], ids=["wav", "m4a", "webm", "mp3", "mp3_id3"])
     async def test_supported_content_controls_stt_filename_not_url_extension(self, monkeypatch, tmp_path, data, filename):
         path = tmp_path / "download"
         path.write_bytes(data)
@@ -887,7 +887,7 @@ class TestVoiceInputValidation:
         (_wav_bytes(), "etc/m4a", "⚠️ 보이스피싱이 의심돼요"),
         (b"%PDF-1.7 fake audio", "audio/mp4", "🎙️ 이 파일은 확인할 수 없어요"),
         (b"", "audio/mp4", "🎙️ 이 녹음은 확인할 수 없어요"),
-    ])
+    ], ids=["wav_with_wrong_mime", "pdf_as_audio", "empty"])
     async def test_real_download_mime_does_not_override_content(self, monkeypatch, data, mime, expected):
         def respond(request):
             return httpx.Response(200, content=data, headers={"Content-Type": mime})

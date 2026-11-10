@@ -15,11 +15,13 @@ from dataclasses import dataclass
 
 from ai.case.actions import response_actions_for
 from ai.case.lexicon import read_with_lexicon
-from ai.case.message_gate import Q1_ACCEPTED, Q2_OPTIONS, Q2_SETTLED, decide_message
+from ai.case.message_gate import MESSENGER_HANDLE, Q1_ACCEPTED, Q2_OPTIONS, Q2_SETTLED, decide_message
 from ai.case.privacy import mask_pii
 from ai.case.types import (
     CheckItem,
     ClaimReadingResult,
+    Evidence,
+    EvidenceCode,
     InputKind,
     MessageCaseResult,
     OfficialContact,
@@ -194,7 +196,7 @@ async def _analyze(
         contact = None
 
     return decide_message(
-        accepted=verify.accepted,
+        accepted=_with_handle_line(source, verify.accepted),
         claims=verify.claims,
         rejected=verify.rejected,
         similar=similar,
@@ -203,6 +205,24 @@ async def _analyze(
         failures=failures,
         reading_status=reading.status,
     )
+
+
+def _with_handle_line(source: ReadingSource, accepted: list[Evidence]) -> list[Evidence]:
+    """메신저 이동 인용에 아이디가 빠졌으면 같은 줄의 아이디를 근거로 덧붙인다.
+
+    LLM 은 "제 라인 추가해 주세요" 만 인용하고 같은 줄 끝의 "zxf226" 을 빼기도 한다.
+    게이트는 근거만 보고 다시 돌므로(답 처리) 아이디가 든 줄을 근거로 남겨 둔다.
+    """
+    moves = [e for e in accepted if e.code == EvidenceCode.MESSENGER_MOVE and e.quote]
+    if not moves or any(MESSENGER_HANDLE.search(e.quote) for e in moves):
+        return accepted
+    for seg in source.segments:
+        if MESSENGER_HANDLE.search(seg.text) and any(e.quote in seg.text for e in moves):
+            return [*accepted, Evidence(
+                code=EvidenceCode.MESSENGER_MOVE, origin=Origin.MESSAGE, quote=seg.text,
+                derived_by="code", counts_for_floor=False,
+            )]
+    return accepted
 
 
 def _search_miss(result: MessageCaseResult) -> UncheckedReason | None:
