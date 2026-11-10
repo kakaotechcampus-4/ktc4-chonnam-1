@@ -119,9 +119,9 @@ async def test_family_message_gets_r6b_with_q1_and_q2(monkeypatch, stub_read_mes
     assert result["title"] == "🔎 주의가 필요한 문자예요"
     description = result["description"]
     assert description.startswith("돈을 보내지 마세요.\n원래 알던 번호로 직접 전화해 확인하세요.")
-    assert "주의할 점\n- 내세운 관계: '엄마 나야'" in description
+    assert "⚠️ 주의할 점\n- 내세운 관계: '엄마 나야'" in description
     assert "- 요구한 것: 송금·입금" in description
-    assert "확인한 것\n- 문자 내용" in description
+    assert "✅ 확인한 것\n- 문자 내용" in description
     assert "- 실제로 보낸 사람" in description
     assert "답해 주신 내용 기준" not in description
     assert "스미싱" not in json.dumps(card, ensure_ascii=False)
