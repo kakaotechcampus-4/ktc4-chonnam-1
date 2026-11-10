@@ -1341,6 +1341,60 @@ class TestV1NumberChecksAndSimilarCases:
         assert "0.98" not in description
 
 
+    @pytest.mark.parametrize("case_type,similar_type,similar_line", [
+        ("kidnapping", "납치 빙자", "가족을 데리고 있다며 겁을 주고 바로 돈을 보내라고 하는 수법이에요."),
+        ("family_impersonation", "가족, 지인 사칭", "가족이나 지인인 척 급한 사정을 대며 송금을 부탁하는 수법이에요."),
+        ("account_recruitment", "통장 모집", "일자리나 대가를 내세워 통장이나 체크카드를 빌려 달라고 하는 수법이에요."),
+        ("other_impersonation", "그 밖의 사칭", "택배사나 출입국사무소 같은 곳인 척하며 돈이나 개인정보를 요구하는 수법이에요."),
+    ])
+    def test_similar_case_type_fills_card_wording(self, case_type, similar_type, similar_line):
+        """#109: 가장 닮은 사례의 type 으로 chatbot-copy.md 4절 문구를 채운다."""
+
+        from ai.types import AnalysisStatus, CaseMatch, CaseSearchResult
+
+        similar = CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=[
+            CaseMatch(case_id="c1", similarity=0.9, matched_variant="", type=case_type),
+            CaseMatch(case_id="c2", similarity=0.5, matched_variant="", type="other"),
+        ])
+        result = _voice_result(similar_cases=similar).model_dump(mode="json")
+
+        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+
+        assert items[1]["description"] == (
+            f"이번 통화는 '{similar_type}' 수법의 예시 통화와 비슷해요.\n{similar_line}\n\n"
+            "비슷하다고 해서 사기라는 뜻은 아니에요.\n결과 판단에는 쓰지 않았어요."
+        )
+        assert "0.9" not in str(items)
+
+    def test_other_type_drops_the_empty_line(self):
+        from ai.types import AnalysisStatus, CaseMatch, CaseSearchResult
+
+        similar = CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=[
+            CaseMatch(case_id="c1", similarity=0.9, matched_variant="", type="other"),
+        ])
+        result = _voice_result(similar_cases=similar).model_dump(mode="json")
+
+        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+
+        assert items[1]["description"] == (
+            "이번 통화는 '보이스피싱' 수법의 예시 통화와 비슷해요.\n\n"
+            "비슷하다고 해서 사기라는 뜻은 아니에요.\n결과 판단에는 쓰지 않았어요."
+        )
+
+    def test_unknown_type_keeps_generic_wording(self):
+        from ai.types import AnalysisStatus, CaseMatch, CaseSearchResult
+
+        similar = CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=[
+            CaseMatch(case_id="c1", similarity=0.9, matched_variant="", type="new_unlisted_type"),
+        ])
+        result = _voice_result(similar_cases=similar).model_dump(mode="json")
+
+        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+
+        assert "비슷한 예시 통화를 찾았어요" in items[1]["description"]
+        assert "new_unlisted_type" not in str(items)
+
+
 class TestLatestVoice115Contract:
     @pytest.mark.parametrize("status,reason,expected", [
         ("completed", None, "비교할 사례를 찾지 못했어요"),
