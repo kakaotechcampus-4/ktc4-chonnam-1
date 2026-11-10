@@ -48,6 +48,33 @@ def is_same_or_subdomain(domain: str, official_domain: str) -> bool:
     )
 
 
+# 누구나 글·페이지를 올리는 주소(blog.naver.com 등)를 가진 항목. 주소만으로 기관을 정하지 않는다
+_USER_CONTENT_BRANDS = frozenset({"NAVER"})
+
+
+def brand_for_domain(
+    domain: str | None,
+    *,
+    whitelist: dict[str, set[str]] | None = None,
+) -> str | None:
+    """주소가 목록의 공식 도메인이면 그 기관을 돌려준다 (#164).
+
+    문자에서 기관을 읽지 못했을 때만 쓴다. 주소에서 찾은 기관은 문자가 내세운
+    기관이 아니므로 `brand_mismatch`(사칭) 근거가 될 수 없다. 이 기관으로 대조하면
+    입력 주소는 늘 `official` 이고, 경유·최종 주소가 다르면 `unresolved` 로 내려간다.
+    """
+
+    if not domain or not domain.strip():
+        return None
+    active_whitelist = OFFICIAL_DOMAINS if whitelist is None else whitelist
+    for brand, official_domains in active_whitelist.items():
+        if brand in _USER_CONTENT_BRANDS:
+            continue
+        if any(is_same_or_subdomain(domain, official) for official in official_domains):
+            return brand
+    return None
+
+
 def check_official_domain(
     brand: str | None,
     domain: str | None,
