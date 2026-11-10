@@ -6,6 +6,7 @@ L-3(기관 사칭)은 통화에만 쓴다(v3 §13 열린 항목 7). 문자 기�
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from ai.case.actions import response_actions_for
@@ -49,6 +50,14 @@ _RISK_DEMANDS = frozenset(
 )
 _ANY_DEMAND = _RISK_DEMANDS | {_E.MESSENGER_MOVE}
 _CLAIMS = frozenset({_E.INSTITUTION_CLAIM, _E.ACQUAINTANCE_CLAIM})
+# 개인 메신저 아이디: @handle, "아이디: xxx", 영문·숫자가 섞인 낱말(ck5529, zxf226).
+# 가게 "채널 추가" 광고와 모르는 사람의 아이디 유도를 가른다 (#160)
+MESSENGER_HANDLE = re.compile(
+    r"@[A-Za-z0-9_.]{3,}"
+    r"|(?<![A-Za-z])(?:아이디|ID)\s*[:：]?\s*[A-Za-z][A-Za-z0-9_.]{2,}"
+    r"|(?<![A-Za-z0-9])(?=[A-Za-z0-9_]*[A-Za-z])(?=[A-Za-z0-9_]*\d)[A-Za-z0-9_]{4,20}(?![A-Za-z0-9])",
+    re.I,
+)
 # L-4 지인 사칭의 요구 짝
 _L4_DEMANDS = frozenset({_E.MONEY_REQUEST, _E.GIFT_CARD_REQUEST, _E.AUTH_CODE_REQUEST})
 
@@ -221,6 +230,8 @@ def decide_message(
         codes & _RISK_DEMANDS
         or _E.INSTITUTION_CLAIM in codes
         or (acquaintance and codes & {_E.MESSENGER_MOVE, _E.CONTACT_BLOCKER})
+        # 모르는 사람이 개인 메신저 아이디로 옮기라는 문자도 주의다 (#160). 통화 게이트는 그대로 둔다
+        or any(e.code == _E.MESSENGER_MOVE and e.quote and MESSENGER_HANDLE.search(e.quote) for e in base)
     )
     if floors:
         conclusion, caution = Conclusion.SUSPECTED, False
