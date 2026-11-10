@@ -127,3 +127,27 @@ def test_message_brand_still_wins_over_domain():
     # 문자가 CJ대한통운이라 했는데 주소가 한진이면 지금처럼 사칭 패턴이다
     result = collected(HANJIN, final_url=HANJIN)
     assert main.build_ai_url_analysis(result, "CJ대한통운", HANJIN).official.value == "brand_mismatch"
+
+
+COUPANG_SHORT = "https://coupa.ng/cbL6qT"
+COUPANG = "https://www.coupang.com/np/fresh-bag"
+
+
+def test_coupang_short_link_landing_on_coupang_is_official():
+    # #161 1번: 쿠팡 단축 주소가 쿠팡 공식 주소로 이동하면 공식 대조
+    result = collected(COUPANG_SHORT, final_url=COUPANG, redirect_chain=(COUPANG_SHORT, COUPANG))
+    analysis = main.build_ai_url_analysis(result, "쿠팡", COUPANG_SHORT)
+    assert analysis.domain == "www.coupang.com"
+    assert analysis.official.value == "official"
+
+
+def test_coupang_short_link_landing_elsewhere_is_not_official():
+    result = collected(COUPANG_SHORT, final_url=EVIL, redirect_chain=(COUPANG_SHORT, EVIL))
+    assert main.build_ai_url_analysis(result, "쿠팡", COUPANG_SHORT).official.value == "brand_mismatch"
+
+
+def test_university_link_without_brand_is_official():
+    # #161 2번: 문자에 기관 이름이 없어도 대학 공식 주소면 공식 대조(#164 와 같은 방식)
+    jnu = "https://international.jnu.ac.kr/"
+    result = collected(jnu, final_url=jnu)
+    assert main.build_ai_url_analysis(result, None, jnu).official.value == "official"
