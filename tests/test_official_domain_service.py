@@ -220,3 +220,23 @@ class TestBrandForDomain:
         # 블로그처럼 누구나 글을 올리는 주소는 주소만으로 기관을 정하지 않는다
         from services.official_domain_service import brand_for_domain
         assert brand_for_domain("blog.naver.com") is None
+
+
+class TestScopeExpansion161:
+    """#161: 택배 문자를 많이 보내는 쇼핑몰(쿠팡)과 소유가 분명한 대학 도메인을 대조한다 (ADR 0011)."""
+
+    def test_coupang_message_brand_matches_coupang_domain(self):
+        assert check_official_domain("쿠팡", "www.coupang.com") == "official"
+        assert check_official_domain("쿠팡", "coupang-event.top") == "brand_mismatch"
+
+    def test_university_domain_found_without_brand(self):
+        from services.official_domain_service import brand_for_domain
+        assert brand_for_domain("international.jnu.ac.kr") == "전남대학교"
+        assert brand_for_domain("jnu.ac.kr.evil.top") is None
+
+    def test_coupang_short_link_is_resolved_not_trusted(self):
+        # coupa.ng 는 쿠팡 소유라는 공식 근거가 없어 공식 목록에 넣지 않는다. 단축 주소로 보고 도착 주소로 대조한다
+        from services.link_resolution import is_shortener
+        from services.official_domain_service import brand_for_domain
+        assert is_shortener("coupa.ng")
+        assert brand_for_domain("coupa.ng") is None
