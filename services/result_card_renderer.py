@@ -303,9 +303,6 @@ def _voice_checked_unchecked(result: dict) -> tuple[str, str]:
     has_transcript_accuracy = False
     for entry in result.get("unchecked") or []:
         item, reason = entry.get("item"), entry.get("reason")
-        if item == "speaker":
-            unchecked_lines.append("- 누가 한 말인지 (말한 사람을 나누지 못했어요)")
-            continue
         if item == "similar_cases" or (item == "phone_number" and skip_phone_number):
             continue
         if item == "transcript_accuracy":
