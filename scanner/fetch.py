@@ -203,7 +203,7 @@ async def collect_url(
     max_redirects: int = MAX_REDIRECTS,
     timeout: float = FETCH_TIMEOUT_SECONDS,
     html_limit: int = HTML_LIMIT_BYTES,
-    allow_insecure_retry: bool = True,
+    allow_insecure_retry: bool = False,
     make_insecure_client: Callable[[], httpx.AsyncClient] = _default_insecure_client,
     url_allowed: Callable[[str], bool] | None = None,
 ) -> CollectResult:
@@ -213,8 +213,8 @@ async def collect_url(
     그때까지 모은 정보(redirect_chain 등)는 그대로 돌려준다. `client` 를
     넘기지 않으면 이 호출 동안만 쓰는 클라이언트를 만들고 끝에 닫는다.
 
-    TLS 인증서 검증에 실패하면(`tls_cert_verify_failed`) `verify=False`로
-    한 번 더 전체를 재시도한다 — 스미싱 페이지가 검증 안 되는 서버 뒤에
+    `allow_insecure_retry=True` 를 주면 TLS 인증서 검증에 실패했을 때(`tls_cert_verify_failed`)
+    `verify=False`로 한 번 더 전체를 재시도한다. 기본은 끈다. 격리 수집기도 끄고 쓴다 — 스미싱 페이지가 검증 안 되는 서버 뒤에
     redirect 체인을 숨겨둔 사례(link24.kr 등)가 있어, 검증 실패만으로
     포기하면 final_url 을 영영 못 얻는다. 재시도가 성공해도
     `tls_cert_verify_failed` 는 failures 에 그대로 남긴다 — 위험 신호로

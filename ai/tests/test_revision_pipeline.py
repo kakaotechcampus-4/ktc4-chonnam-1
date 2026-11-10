@@ -74,7 +74,6 @@ async def test_successful_no_match_is_not_retrieval_failure(monkeypatch):
     assert first_doubt(part) is MessageDoubt.PARCEL_LOOKUP
     assert signals.await_args.kwargs["case_search"].status is AnalysisStatus.COMPLETED
     assert signals.await_args.kwargs["case_search"].matches == []
-    assert signals.await_args.args[2] is None
 
 
 @pytest.mark.asyncio

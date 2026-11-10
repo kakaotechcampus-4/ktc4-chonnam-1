@@ -180,7 +180,7 @@ async def analyze_message_part(
                 extracted = extraction_result
             if extracted.analysis_status is AnalysisStatus.COMPLETED:
                 signals = await analyze_signals(
-                    text, extracted, None, case_search=cases, client=llm, model=model
+                    text, extracted, case_search=cases, client=llm, model=model
                 )
     except Exception as error:
         signals = SignalAnalysis(status=AnalysisStatus.FALLBACK, failure=_failure_code(error))

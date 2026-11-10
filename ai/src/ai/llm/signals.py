@@ -1,7 +1,7 @@
 """위험 신호 제안.
 
-LLM은 후보만 냅니다. 최종 판정은 ai.verdict.decide()가 합니다.
-스크린샷은 격리 서버가 이미 멀티모달로 봤으므로 다시 보내지 않습니다.
+LLM은 후보만 냅니다. 근거가 원문에 있는지 검증하고 결과로 조립하는 일은
+`ai/pipeline/results.py` 가 합니다.
 """
 
 import asyncio
@@ -25,8 +25,6 @@ from ai.types import (
     CaseSearchResult,
     FailureCode,
     MessageAnalysis,
-    Observations,
-    RiskSignal,
     SignalAnalysis,
     SignalProposal,
 )
@@ -40,25 +38,6 @@ RAG_REFERENCE_RULE = (
     "from the current message, never only from a reference case. Similarity is not "
     "a probability and does not decide safety."
 )
-
-
-def _observation_digest(observations: Observations | None) -> dict:
-    """판정에 쓰지 않는 필드는 프롬프트에서 뺍니다."""
-    if observations is None:
-        return {}
-    return {
-        "page_state": observations.page_state.value,
-        "payload_type": observations.payload_type,
-        "checks": {
-            key: {"state": check.state.value, "items": check.items}
-            for key, check in observations.checks.items()
-        },
-        "static_risk_signals": observations.static_risk_signals,
-        "unchecked": [
-            {"check": item.check, "reason": item.reason}
-            for item in observations.unchecked
-        ],
-    }
 
 
 def _failure(code: FailureCode) -> SignalAnalysis:
@@ -77,21 +56,21 @@ def _reference_cases(case_search: CaseSearchResult | None) -> list[dict[str, str
 async def analyze_signals(
     masked_text: str,
     extracted: MessageAnalysis,
-    observations: Observations | None,
     *,
     case_search: CaseSearchResult | None = None,
     client: AsyncOpenAI | None = None,
     model: str | None = None,
 ) -> SignalAnalysis:
     """위험 신호 제안의 성공·실패 상태를 함께 반환합니다."""
-    digest = _observation_digest(observations)
-    if not masked_text.strip() and not digest:
+    if not masked_text.strip():
         return _failure(FailureCode.EMPTY_INPUT)
 
     payload = {
         "message": masked_text,
         "extracted": extracted.model_dump(mode="json"),
-        "observations": digest,
+        # 프롬프트(signals.md)가 이 칸을 전제한다. 문자 단계에는 관측이 없어 늘 비어 있고,
+        # 페이지 관측은 analyze_page 가 따로 본다.
+        "observations": {},
     }
     if case_search is not None:
         payload["reference_cases"] = _reference_cases(case_search)
@@ -148,16 +127,3 @@ async def analyze_signals(
         return _failure(FailureCode.LLM_ERROR)
 
 
-async def extract_signals(
-    masked_text: str,
-    extracted: MessageAnalysis,
-    observations: Observations | None,
-    *,
-    client: AsyncOpenAI | None = None,
-    model: str | None = None,
-) -> list[RiskSignal]:
-    """기존 호출자의 빈 목록 폴백 계약을 보존합니다."""
-    analysis = await analyze_signals(
-        masked_text, extracted, observations, client=client, model=model
-    )
-    return analysis.signals

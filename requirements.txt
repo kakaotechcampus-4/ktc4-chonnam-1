@@ -1,6 +1,5 @@
 fastapi
 uvicorn[standard]
 httpx
-idna
 
 -e ./ai

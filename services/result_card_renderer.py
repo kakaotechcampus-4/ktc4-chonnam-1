@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from ai.case.types import Conclusion
+from ai.kb.guidance import find_guidance
 from services.chatbot_copy_data import (
     GUIDANCE_CARD_CONTACT,
     VOICE_SIMILAR_TYPES,
@@ -24,16 +25,6 @@ from services.chatbot_copy_data import (
 from services.official_domain_service import brand_for_domain, official_homepage
 from services.kakao_card_renderer import render_card, substitute_values
 from services.result_card_selector import select_result_card
-
-try:
-    # 이슈 #69: ai.kb.guidance는 이 글을 쓰는 시점에 feature/rag-fix-ai에만
-    # 있고 develop에는 아직 merge되지 않았다. merge 전까지는 빈 목록으로
-    # 동작해 "자세히 보기" 자체는 먼저 쓸 수 있게 하고, AI 쪽이 merge되면
-    # BE 코드를 더 바꾸지 않아도 안내 카드가 자동으로 붙는다.
-    from ai.kb.guidance import find_guidance
-except ImportError:
-    def find_guidance(final_payload: Any) -> list:
-        return []
 
 DETAIL_BUTTON_LABEL = "자세히 보기"
 MAX_CAROUSEL_SIGNAL_ITEMS = 8  # + C2 + C3 = 10장 (카카오 캐러셀 상한)

@@ -23,7 +23,6 @@ from backend.src.server.media_guard import (
     is_allowed_media_url,
     media_host,
 )
-from backend.src.server.templates.renderer import render_r1_lookalike
 from backend.src.server.voice_input import VoiceInputRejected, inspect_voice_audio, invalid_audio
 from services.official_domain_service import brand_for_domain, check_link_official
 from services.link_resolution import first_real_host, is_shortener
@@ -1606,11 +1605,6 @@ def kakao_response(
 
 @app.post("/test/kakao/r1-lookalike", dependencies=[Depends(verify_skill_secret)])
 async def test_r1_lookalike():
-    """
-    FE-BE Kakao 카드 연동 테스트용.
+    """FE-BE 카드 연동 확인용. 분석 없이 R1 카드 템플릿을 그대로 돌려준다."""
 
-    실제 분석 로직을 거치지 않고
-    R1 lookalike 카드를 반환한다.
-    """
-
-    return render_r1_lookalike()
+    return render_card("r1-lookalike")
