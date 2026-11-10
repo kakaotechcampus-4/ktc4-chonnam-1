@@ -5,11 +5,13 @@
 
 import asyncio
 import json
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from functools import partial
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -336,6 +338,20 @@ async def test_cancelled_request_reaps_the_agent_and_every_analysis(
 
     assert client.hang_reaped
     assert stopped == {"collector", "message"}
+
+
+async def test_eval_offers_the_agent_the_same_tool_menu_as_the_backend(stub_read_message):
+    sys.path.insert(0, str(Path(main.__file__).resolve().parent / "ai" / "eval"))
+    import agent_router_eval
+
+    stub_read_message([EVIL], "본문")
+    reading = await main.read_message("본문 " + EVIL)
+    _, real = main._analysis_tools("본문 " + EVIL, reading, 0.0)
+
+    def menu(offered):
+        return [(tool.name, tool.description, tool.per_link) for tool in offered]
+
+    assert menu(agent_router_eval.stub_tools(reading, "본문 " + EVIL)) == menu(real)
 
 
 BROWSED = CollectResult(
