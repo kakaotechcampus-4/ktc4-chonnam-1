@@ -32,7 +32,10 @@ def browser(final_url, chain, failures=()):
 def _run(caplog, result, brand="CJ대한통운"):
     with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
         main.build_ai_url_analysis(result, brand, result.input_url)
-    lines = [r.message for r in caplog.records if r.name == _LOGGER_NAME]
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.name == _LOGGER_NAME and r.getMessage().startswith("[OFFICIAL_CHECK]")
+    ]
     assert len(lines) == 1, "분석 1회당 [OFFICIAL_CHECK] 로그는 정확히 1줄이어야 한다"
     return lines[0]
 
@@ -60,17 +63,16 @@ def test_case2b_browser_failure_logs_browser_failure(caplog):
     assert "'BROWSER_FAILURE'" in line
 
 
-def test_case2c_non_official_hop_logs_reason_and_only_host_on_separate_line(caplog, capsys):
+def test_case2c_non_official_hop_logs_reason_and_only_host_on_separate_line(caplog):
     hop = "https://parcel-attacker.example/track?phone=01012345678"
     line = _run(caplog, collected(browser=browser(OFFICIAL, (OFFICIAL, hop, OFFICIAL))))
     assert "final_official=unresolved" in line
     assert "'BROWSER_NON_OFFICIAL_HOP'" in line
     assert "parcel-attacker.example" not in line
 
-    printed = capsys.readouterr().out
-    assert "[OFFICIAL_HOP] demotion_host=parcel-attacker.example\n" in printed
-    assert "01012345678" not in printed
-    assert "/track" not in printed
+    logged = [r.getMessage() for r in caplog.records if r.name == _LOGGER_NAME]
+    assert "[OFFICIAL_HOP] demotion_host=parcel-attacker.example" in logged
+    assert not any("01012345678" in entry or "/track" in entry for entry in logged)
 
 
 def test_case3_missing_final_url_logs_final_url_missing(caplog):
