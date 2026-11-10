@@ -781,6 +781,9 @@ async def handle_voice_message(
             )
         except asyncio.TimeoutError:
             return render_card("r4-unavailable")
+        except Exception as error:  # noqa: BLE001 — Job 이 없는 경로라 여기서 안내 카드로 끝낸다
+            _log.warning(f"[VOICE ANALYSIS ERROR] sync path failed: {type(error).__name__}")
+            return render_card("r4-unavailable")
         finally:
             if user_id:
                 RUNNING_USERS.discard(user_id)

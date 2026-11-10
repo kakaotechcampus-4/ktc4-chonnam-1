@@ -35,7 +35,7 @@ def isolated_state(monkeypatch):
 
 
 @pytest.fixture
-def pipeline(monkeypatch, tmp_path):
+def pipeline(monkeypatch):
     stream = io.BytesIO()
     with wave.open(stream, "wb") as audio:
         audio.setnchannels(1)
@@ -43,11 +43,9 @@ def pipeline(monkeypatch, tmp_path):
         audio.setframerate(8000)
         audio.writeframes(b"\x00\x00" * 8000)
     data = stream.getvalue()
-    path = tmp_path / "audio"
 
     async def download(url):
-        path.write_bytes(data)
-        return str(path), len(data)
+        return data
 
     transcript = TranscriptResult(segments=[Segment(side=Side.UNKNOWN, text=TRANSCRIPT)])
     result = VoiceCaseResult(scenario=Scenario.VOICE_PHISHING, conclusion=Conclusion.INCONCLUSIVE)
@@ -57,7 +55,7 @@ def pipeline(monkeypatch, tmp_path):
     monkeypatch.setattr(voice_flow, "download_voice_media", download_mock)
     monkeypatch.setattr(voice_flow, "transcribe_call", stt)
     monkeypatch.setattr(voice_flow, "analyze_call", analyze)
-    return SimpleNamespace(download=download_mock, stt=stt, analyze=analyze, path=path)
+    return SimpleNamespace(download=download_mock, stt=stt, analyze=analyze)
 
 
 def assert_private(output):
@@ -119,7 +117,6 @@ async def test_voice_stage_times_and_remaining_budget(monkeypatch, pipeline, cap
     assert f"[CALLBACK RESULT STATUS] job_id={job_id} status=SUCCESS" in output
     pipeline.analyze.assert_awaited_once_with(stt, time_budget_s=33.0)
     assert delivered == [main.ANALYSIS_JOBS[job_id]["result"]]
-    assert not pipeline.path.exists()
     assert USER not in main.RUNNING_USERS
 
 
@@ -172,7 +169,6 @@ async def test_voice_failures_keep_existing_card_and_safe_logs(monkeypatch, pipe
         assert card is None and "analysis-error-message" in output
         assert_private(str(job["error"]))
     assert USER not in main.RUNNING_USERS
-    assert not pipeline.path.exists()
 
 
 @pytest.mark.parametrize("kind", ["text", "voice", "attachment"])
