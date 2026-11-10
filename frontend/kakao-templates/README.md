@@ -2,7 +2,6 @@
 
 챗봇 응답 카드 템플릿 (선언형). FE 소유.
 렌더러는 `services/kakao_card_renderer.py`. BE가 이 폴더의 `cards/`를 직접 읽는다.
-`backend/src/server/templates/kakao_templates/`는 시험 경로(`/test/kakao/r1-lookalike`)만 쓰는 옛 사본이라 기준이 아니다.
 
 카카오 응답 타입: simpleText / textCard / basicCard / itemCard / listCard / quickReplies
 

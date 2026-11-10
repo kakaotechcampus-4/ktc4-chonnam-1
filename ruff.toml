@@ -1,0 +1,32 @@
+# 실행: ruff check .
+# 포매터(ruff format)는 아직 저장소 전체에 적용하지 않았다. 열려 있는 브랜치와 모두 충돌하므로
+# 팀이 시점을 정해 한 번에 적용한다. 그때까지 새 코드만 아래 줄 길이를 따른다.
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+    "docs",
+    "infra/isolation/scanner",  # prepare.sh 가 scanner/ 에서 복사해 만드는 사본
+]
+
+[lint]
+select = [
+    "F",    # 안 쓰는 import·변수, 정의되지 않은 이름
+    "B",    # 흔한 버그 꼴
+    "BLE",  # except Exception. 경계에서 꼭 필요하면 `# noqa: BLE001 — 이유` 를 붙인다
+    "T20",  # print. 서버 코드는 logging 을 쓴다
+    "ARG",  # 안 쓰는 인자
+]
+ignore = [
+    "B905",  # zip(strict=). 길이가 같다는 것은 호출부가 보장한다
+]
+
+[lint.per-file-ignores]
+# 가짜 함수는 진짜 시그니처를 따라야 해서 안 쓰는 인자가 생긴다
+"tests/**" = ["ARG"]
+"ai/tests/**" = ["ARG"]
+# 직접 실행하면 스키마를 다시 쓰고 경로를 알려 준다
+"ai/tests/test_*_schema_contract.py" = ["T20"]
+# 터미널에서 돌리는 스크립트는 print 로 결과를 낸다
+"ai/eval/**" = ["T20", "B023"]
+"infra/isolation/*.py" = ["T20"]
+"infra/isolation/checks/*.py" = ["T20"]

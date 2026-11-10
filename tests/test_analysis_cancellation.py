@@ -33,8 +33,7 @@ async def test_cancel_reaps_message_and_only_collection(
     stub_read_message([link], "취소")
     monkeypatch.setattr(main, "analyze_message_part", lambda text, **_: hold("message"))
     monkeypatch.setattr(main, "collect_url_isolated", lambda url: hold("collector"))
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
-    monkeypatch.setattr(main, "RUNNING_USERS", {"cancel-user"})
+    main.RUNNING_USERS.add("cancel-user")
     job_id = main.create_analysis_job("cancel-user")
     parent = asyncio.create_task(main.run_analysis_and_callback(
         f"취소 {link}", "https://bot-api.kakao.com/callback", "cancel-user", job_id,
@@ -74,7 +73,6 @@ async def test_shortener_collection_and_message_run_concurrently_once(monkeypatc
 
     monkeypatch.setattr(main, "analyze_message_part", message)
     monkeypatch.setattr(main, "collect_url_isolated", collector)
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
     job_id = main.create_analysis_job("u")
     stub_read_message(["https://bit.ly/test"])
     await asyncio.wait_for(main.run_analysis("https://bit.ly/test", job_id), 2)
@@ -93,7 +91,6 @@ async def test_message_exception_still_finalizes_collection(monkeypatch, stub_re
 
     monkeypatch.setattr(main, "analyze_message_part", message)
     monkeypatch.setattr(main, "collect_url_isolated", collector)
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
     job_id = main.create_analysis_job("u")
     stub_read_message(["https://example.test/"], "m")
     await main.run_analysis("m https://example.test/", job_id)
@@ -123,8 +120,7 @@ async def test_callback_deadline_cancels_collection_and_preserves_timeout_result
     monkeypatch.setattr(main, "analyze_message_part", lambda text, **_: hold("message"))
     monkeypatch.setattr(main, "collect_url_isolated", lambda url: hold("collector"))
     monkeypatch.setattr(main, "CALLBACK_DEADLINE_SECONDS", 0.1)
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
-    monkeypatch.setattr(main, "RUNNING_USERS", {"timeout-user"})
+    main.RUNNING_USERS.add("timeout-user")
     monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "bot-api.kakao.com")
     job_id = main.create_analysis_job("timeout-user")
     async with httpx.AsyncClient(transport=httpx.MockTransport(callback)) as client:

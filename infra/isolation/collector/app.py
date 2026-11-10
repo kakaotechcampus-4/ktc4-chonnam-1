@@ -60,13 +60,6 @@ class Renderer(Protocol):
 log = logging.getLogger("collector")
 
 
-def _failed(url: str, failure: str) -> CollectResult:
-    return CollectResult(
-        input_url=url, final_url=None, redirect_chain=(), status_code=None,
-        content_type=None, html="", title=None, elapsed_ms=0, failures=(failure,),
-    )
-
-
 def encode_result(result: CollectResult, limit: int = MAX_RESPONSE_BYTES) -> bytes:
     """응답이 `limit`을 넘지 않을 때까지 더 긴 HTML 부터 절반씩 줄이고 `html_truncated`를 남긴다.
 
@@ -201,7 +194,7 @@ def create_app(
             return JSONResponse({"error": "invalid_request"}, status_code=400)
 
         if not policy.url_allowed(url):
-            result = _failed(url, "blocked_address")
+            result = CollectResult.failed(url, "blocked_address")
         elif active >= max_concurrency:
             log.warning("event=busy host=%s", _host_for_log(url))
             return JSONResponse({"error": "busy"}, status_code=503, headers={"Retry-After": "1"})
@@ -213,10 +206,10 @@ def create_app(
             except TimeoutError:
                 if renderer is not None:
                     renderer.mark_broken()
-                result = _failed(url, "timeout")
+                result = CollectResult.failed(url, "timeout")
             except Exception:
                 log.exception("event=collector_error host=%s", _host_for_log(url))
-                result = _failed(url, "collector_error")
+                result = CollectResult.failed(url, "collector_error")
             finally:
                 active -= 1
 

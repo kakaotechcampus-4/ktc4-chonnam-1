@@ -11,7 +11,9 @@ import wave
 import httpx
 import pytest
 
+import backend.src.server.voice_flow as voice_flow
 import main
+from services.kakao_card_renderer import render_card
 from ai.case.types import Conclusion, Scenario, Segment, Side, TranscriptResult, VoiceCaseResult
 from ai.types import FailureCode
 
@@ -26,8 +28,6 @@ SECRET = "private-auth-secret"
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch):
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
-    monkeypatch.setattr(main, "RUNNING_USERS", set())
     monkeypatch.setenv("APP_ENV", "staging")
     monkeypatch.setenv("KAKAO_SKILL_SECRET", SECRET)
     monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "callback.example.test")
@@ -35,7 +35,7 @@ def isolated_state(monkeypatch):
 
 
 @pytest.fixture
-def pipeline(monkeypatch, tmp_path):
+def pipeline(monkeypatch):
     stream = io.BytesIO()
     with wave.open(stream, "wb") as audio:
         audio.setnchannels(1)
@@ -43,21 +43,19 @@ def pipeline(monkeypatch, tmp_path):
         audio.setframerate(8000)
         audio.writeframes(b"\x00\x00" * 8000)
     data = stream.getvalue()
-    path = tmp_path / "audio"
 
     async def download(url):
-        path.write_bytes(data)
-        return str(path), len(data)
+        return data
 
     transcript = TranscriptResult(segments=[Segment(side=Side.UNKNOWN, text=TRANSCRIPT)])
     result = VoiceCaseResult(scenario=Scenario.VOICE_PHISHING, conclusion=Conclusion.INCONCLUSIVE)
     download_mock = AsyncMock(side_effect=download)
     stt = AsyncMock(return_value=transcript)
     analyze = AsyncMock(return_value=result)
-    monkeypatch.setattr(main, "download_voice_media", download_mock)
-    monkeypatch.setattr(main, "transcribe_call", stt)
-    monkeypatch.setattr(main, "analyze_call", analyze)
-    return SimpleNamespace(download=download_mock, stt=stt, analyze=analyze, path=path)
+    monkeypatch.setattr(voice_flow, "download_voice_media", download_mock)
+    monkeypatch.setattr(voice_flow, "transcribe_call", stt)
+    monkeypatch.setattr(voice_flow, "analyze_call", analyze)
+    return SimpleNamespace(download=download_mock, stt=stt, analyze=analyze)
 
 
 def assert_private(output):
@@ -77,6 +75,7 @@ async def deliver(monkeypatch, job_id, *, voice=True, callback_body=None, callba
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         monkeypatch.setattr(main, "get_http_client", lambda: client)
+        monkeypatch.setattr(voice_flow, "get_http_client", lambda: client)
         await main.run_analysis_and_callback(
             TEXT, CALLBACK, USER, job_id, voice_media_url=MEDIA if voice else None,
         )
@@ -86,6 +85,7 @@ async def deliver(monkeypatch, job_id, *, voice=True, callback_body=None, callba
 async def test_voice_stage_times_and_remaining_budget(monkeypatch, pipeline, capsys):
     clock = [0.0]
     monkeypatch.setattr(main, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(voice_flow, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     download, stt, analyze = pipeline.download.side_effect, pipeline.stt.return_value, pipeline.analyze.return_value
 
     async def timed_download(url):
@@ -117,7 +117,6 @@ async def test_voice_stage_times_and_remaining_budget(monkeypatch, pipeline, cap
     assert f"[CALLBACK RESULT STATUS] job_id={job_id} status=SUCCESS" in output
     pipeline.analyze.assert_awaited_once_with(stt, time_budget_s=33.0)
     assert delivered == [main.ANALYSIS_JOBS[job_id]["result"]]
-    assert not pipeline.path.exists()
     assert USER not in main.RUNNING_USERS
 
 
@@ -162,7 +161,7 @@ async def test_voice_failures_keep_existing_card_and_safe_logs(monkeypatch, pipe
     assert job["callback_status"] == "success"
     assert delivered == [job["result"]]
     if card:
-        assert delivered[0] == main.render_card(card)
+        assert delivered[0] == render_card(card)
         assert f"card={card}" in output
         assert job["status"] == "completed"  # VE3/R4 카드 반환은 Job 예외와 다르다
     else:
@@ -170,7 +169,6 @@ async def test_voice_failures_keep_existing_card_and_safe_logs(monkeypatch, pipe
         assert card is None and "analysis-error-message" in output
         assert_private(str(job["error"]))
     assert USER not in main.RUNNING_USERS
-    assert not pipeline.path.exists()
 
 
 @pytest.mark.parametrize("kind", ["text", "voice", "attachment"])
@@ -187,9 +185,10 @@ async def test_actual_skill_request_does_not_log_private_data(monkeypatch, pipel
         request["params"] = {"media": {"type": "audio", "url": MEDIA}}
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as callback:
         monkeypatch.setattr(main, "get_http_client", lambda: callback)
+        monkeypatch.setattr(voice_flow, "get_http_client", lambda: callback)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="https://skill.example.test") as client:
             response = await client.post("/kakao/skill", headers={"X-Skill-Secret": SECRET}, json={"userRequest": request})
-    assert response.json() == main.render_card("r5-analyzing")
+    assert response.json() == render_card("r5-analyzing")
     output = capsys.readouterr().out
     assert_private(output)
     job_id, job = next(iter(main.ANALYSIS_JOBS.items()))
@@ -225,7 +224,7 @@ async def test_voice_deadline_logs_cancel_and_r4_without_user(monkeypatch, pipel
     assert f"job_id={job_id} stage=download status=cancelled" in output
     assert "card=r4-unavailable" in output
     assert main.ANALYSIS_JOBS[job_id]["status"] == "timeout"
-    assert main.ANALYSIS_JOBS[job_id]["result"] == main.render_card("r4-unavailable")
+    assert main.ANALYSIS_JOBS[job_id]["result"] == render_card("r4-unavailable")
     assert USER not in main.RUNNING_USERS
 
 

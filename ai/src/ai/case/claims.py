@@ -4,17 +4,15 @@ LLM 은 읽기만 한다. 위험·안전 판단은 없고, 누가 말했는지�
 있는지, 받는 사람 쪽 말 꼴이 아닌지는 verify 가 확인한다. 실패하면 어휘표로 같은 모양의 결과를 돌려준다.
 """
 
-import asyncio
 import logging
 import os
 from pathlib import Path
 
-from openai import APIResponseValidationError, APITimeoutError, AsyncOpenAI, LengthFinishReasonError
-from pydantic import ValidationError
+from openai import AsyncOpenAI
 
 from ai.case.lexicon import read_with_lexicon
 from ai.case.types import ClaimReading, ClaimReadingResult, InputKind, ReadingSource
-from ai.llm._client import create_client, required_env
+from ai.llm._client import create_client, failure_of, parse_answer, prompt_text, required_env
 from ai.types import FailureCode
 
 
@@ -58,42 +56,16 @@ async def read_claims(
         raise ValueError("read_claims 는 통화(audio)와 문자(text)만 지원합니다")
 
     try:
-        llm = client or create_client(timeout_s)
-        response = await asyncio.wait_for(
-            llm.chat.completions.parse(
-                model=_resolve_model(model),
-                messages=[
-                    {"role": "system", "content": prompt_path.read_text(encoding="utf-8")},
-                    {"role": "user", "content": _render_segments(source)},
-                ],
-                response_format=ClaimReading,
-                temperature=0,
-            ),
-            timeout=timeout_s,
+        reading = await parse_answer(
+            ClaimReading,
+            system=prompt_text(prompt_path),
+            user=_render_segments(source),
+            client=client,
+            make_client=create_client,
+            model=_resolve_model(model),
+            timeout_s=timeout_s,
         )
-        message = response.choices[0].message
-        if message.refusal:
-            return _fallback(source, FailureCode.REFUSED)
-        if message.parsed is None:
-            return _fallback(source, FailureCode.INVALID_OUTPUT)
-        reading = ClaimReading.model_validate(message.parsed)
         # 읽을 주장이 없는 정상 통화는 빈 결과가 맞다. 실패로 보지 않는다 (R14)
         return ClaimReadingResult(status="ok", reading=reading)
-    except asyncio.CancelledError:
-        raise
-    except (TimeoutError, APITimeoutError) as exc:
-        LOGGER.warning("claims reading failed: %s", type(exc).__name__)
-        return _fallback(source, FailureCode.TIMEOUT)
-    except ValidationError as exc:
-        # 어느 칸이 왜 깨졌는지만 남긴다. 입력값(모델 출력·원문)은 남기지 않는다
-        fields = ",".join(
-            f"{'.'.join(map(str, e['loc']))}:{e['type']}" for e in exc.errors(include_input=False)
-        )
-        LOGGER.warning("claims reading failed: ValidationError fields=%s", fields)
-        return _fallback(source, FailureCode.INVALID_OUTPUT)
-    except (APIResponseValidationError, LengthFinishReasonError) as exc:
-        LOGGER.warning("claims reading failed: %s", type(exc).__name__)
-        return _fallback(source, FailureCode.INVALID_OUTPUT)
-    except Exception as exc:
-        LOGGER.warning("claims reading failed: %s", type(exc).__name__)
-        return _fallback(source, FailureCode.LLM_ERROR)
+    except Exception as exc:  # noqa: BLE001 — LLM 이 실패해도 폴백 결과를 낸다 (원칙 3). 실패 코드는 failure_of 가 정한다
+        return _fallback(source, failure_of(exc, "claims reading", LOGGER))

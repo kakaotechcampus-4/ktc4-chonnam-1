@@ -6,6 +6,13 @@ import httpx
 import pytest
 
 import main
+from services.result_card_renderer import (
+    render_detail_carousel,
+    render_result_card,
+    render_voice_detail_carousel,
+    render_voice_result_card,
+)
+from services.kakao_card_renderer import render_card
 from ai.case.types import (
     AttachedQuestion, Conclusion, QuestionId, Scenario, VoiceCaseResult,
 )
@@ -19,8 +26,6 @@ SECRET = "synthetic-skill-secret"
 def isolated_state(monkeypatch):
     monkeypatch.setenv("APP_ENV", "staging")
     monkeypatch.setenv("KAKAO_SKILL_SECRET", SECRET)
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
-    monkeypatch.setattr(main, "RUNNING_USERS", set())
 
 
 def voice_payload(conclusion=Conclusion.INCONCLUSIVE, caution=True, with_question=False):
@@ -43,7 +48,7 @@ def buttons(card):
 def test_voice_detail_button_has_job_id_without_changing_other_actions(conclusion, caution, with_question):
     job_id = main.create_analysis_job(USER)
     payload = voice_payload(conclusion, caution, with_question)
-    card = main.render_voice_result_card(payload, job_id)
+    card = render_voice_result_card(payload, job_id)
     detail, restart = buttons(card)
     assert detail == {"label": "자세히 보기", "action": "block",
                       "blockId": "6aad3abfe745d3358bd90c8d", "extra": {"job_id": job_id}}
@@ -62,8 +67,8 @@ async def test_real_button_click_uses_existing_detail_without_starting_analysis(
     job_id = main.create_analysis_job(USER)
     if voice:
         payload = voice_payload(with_question=True)
-        card = main.render_voice_result_card(payload, job_id)
-        expected = main.render_voice_detail_carousel(payload)
+        card = render_voice_result_card(payload, job_id)
+        expected = render_voice_detail_carousel(payload)
     else:
         payload = {
             "url": {"domain": "example.test", "final_url": "https://example.test", "official": "not_registered"},
@@ -71,8 +76,8 @@ async def test_real_button_click_uses_existing_detail_without_starting_analysis(
                         "details": {"signals": [], "doubts": [], "reason": {"text": "확인 결과", "failures": []}}},
             "env": {"answer": "not_run", "details": {"reason": {"failures": []}}}, "result": False,
         }
-        card = main.render_result_card(payload, job_id)
-        expected = main.render_detail_carousel(payload)
+        card = render_result_card(payload, job_id)
+        expected = render_detail_carousel(payload)
     main.ANALYSIS_JOBS[job_id].update(
         status="completed", final_payload=payload, result=card,
         analysis_kind="voice" if voice else "url",
@@ -127,7 +132,7 @@ async def test_invalid_detail_reference_keeps_safe_fallback(monkeypatch, state):
 
 
 def test_rendering_without_job_does_not_invent_detail_reference():
-    card = main.render_voice_result_card(voice_payload(), job_id=None)
+    card = render_voice_result_card(voice_payload(), job_id=None)
     assert all("extra" not in button for button in buttons(card))
 
 
@@ -135,4 +140,4 @@ def test_rendering_without_job_does_not_invent_detail_reference():
     (Conclusion.NOT_ANALYZABLE, "ve3-unrecognized"), (Conclusion.INPUT_REQUIRED, "ve4-no-claim"),
 ])
 def test_voice_failure_cards_remain_unchanged(conclusion, card_name):
-    assert main.render_voice_result_card(voice_payload(conclusion, False), "job") == main.render_card(card_name)
+    assert render_voice_result_card(voice_payload(conclusion, False), "job") == render_card(card_name)

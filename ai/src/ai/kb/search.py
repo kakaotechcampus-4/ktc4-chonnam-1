@@ -315,7 +315,7 @@ def _embedded_scores(
         # 운영 지연을 보려는 기록이다. 기본 로그 수준에서 보이도록 warning 으로 남긴다. 문자 내용은 남기지 않는다
         LOGGER.warning("query embedding elapsed=%.3fs kind=%s", time.perf_counter() - started, kind)
         return semantic.scores(index, query)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — 질의 임베딩이 실패하면 TF-IDF 만으로 검색한다
         LOGGER.warning(
             "query embedding failed: %s elapsed=%.3fs kind=%s",
             type(exc).__name__, time.perf_counter() - started, kind,

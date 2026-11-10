@@ -2,22 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
-from contextlib import AsyncExitStack
 import json
 import logging
 import re
 
 from openai import (
-    APIResponseValidationError,
-    APIStatusError,
-    APITimeoutError,
     AsyncOpenAI,
-    LengthFinishReasonError,
 )
-from pydantic import ValidationError
 
-from ai.llm._client import create_client, required_env
+from ai.llm._client import create_client, failure_of, parse_answer, required_env
 from ai.page import PageElement, PageInspection
 from ai.taxonomy import identify_brand
 from ai.types import (
@@ -340,52 +333,20 @@ async def analyze_page(
         return _failure(FailureCode.INPUT_TOO_LARGE)
 
     try:
-        async with AsyncExitStack() as stack:
-            llm = client
-            if llm is None:
-                llm = await stack.enter_async_context(create_client(TIMEOUT_SECONDS))
-            model_name = model or required_env("LLM_MODEL")
-            response = await asyncio.wait_for(
-                llm.chat.completions.parse(
-                    model=model_name,
-                    messages=[
-                        {"role": "system", "content": PAGE_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_content},
-                    ],
-                    response_format=PageProposal,
-                    temperature=0,
-                ),
-                timeout=TIMEOUT_SECONDS,
-            )
-        message = response.choices[0].message
-        if message.refusal:
-            return _failure(FailureCode.REFUSED)
-        if message.parsed is None:
-            return _failure(FailureCode.INVALID_OUTPUT)
-        proposal = PageProposal.model_validate(message.parsed)
+        proposal = await parse_answer(
+            PageProposal,
+            system=PAGE_SYSTEM_PROMPT,
+            user=user_content,
+            client=client,
+            make_client=create_client,
+            model=model or required_env("LLM_MODEL"),
+            timeout_s=TIMEOUT_SECONDS,
+        )
         return PageAnalysis(
             status=AnalysisStatus.COMPLETED,
             brand=_supported_brand(inspection, proposal),
             category=_supported_category(inspection, proposal),
             signals=_validated_signals(inspection, proposal),
         )
-    except asyncio.CancelledError:
-        raise
-    except (asyncio.TimeoutError, TimeoutError, APITimeoutError) as exc:
-        LOGGER.warning("page analysis failed: %s", type(exc).__name__)
-        return _failure(FailureCode.TIMEOUT)
-    except (ValidationError, APIResponseValidationError, LengthFinishReasonError) as exc:
-        LOGGER.warning("page analysis failed: %s", type(exc).__name__)
-        return _failure(FailureCode.INVALID_OUTPUT)
-    except APIStatusError as exc:
-        # 예외 클래스 이름과 상태 코드만 남긴다 — exc.code/exc.type/
-        # exc.request_id/exc.message/exc.body는 제공자가 보낸 값이라 민감
-        # 정보 노출 가능성을 더 줄이기 위해 남기지 않는다.
-        LOGGER.warning(
-            "page analysis failed: %s status=%s",
-            type(exc).__name__, exc.status_code,
-        )
-        return _failure(FailureCode.LLM_ERROR)
-    except Exception as exc:
-        LOGGER.warning("page analysis failed: %s", type(exc).__name__)
-        return _failure(FailureCode.LLM_ERROR)
+    except Exception as exc:  # noqa: BLE001 — LLM 이 실패해도 폴백 결과를 낸다 (원칙 3). 실패 코드는 failure_of 가 정한다
+        return _failure(failure_of(exc, "page analysis", LOGGER))
