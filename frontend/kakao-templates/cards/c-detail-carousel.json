@@ -11,7 +11,7 @@
               "description": "확인한 내용\n{{ observed }}\n\n의심되는 이유\n{{ reason }}"
             },
             {
-              "title": "❔ 확인 범위",
+              "title": "📋 확인 범위",
               "description": "{{ unverified }}\n결과는 확인한 자료로만 안내했어요. 확인하지 못한 부분은 판단에 넣지 않았어요."
             },
             {

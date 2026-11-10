@@ -7,7 +7,7 @@
           "type": "textCard",
           "items": [
             {
-              "title": "📋 공식 확인 방법",
+              "title": "🏛️ 공식 확인 방법",
               "description": "{{ guidance_text }}"
             }
           ]
