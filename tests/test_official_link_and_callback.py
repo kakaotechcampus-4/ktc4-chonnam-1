@@ -9,7 +9,7 @@ import main
 from services.kakao_card_renderer import render_card
 from backend.src.server.callback_guard import callback_host, is_allowed_callback_url
 from services.official_domain_service import check_link_official, official_homepage
-from services.result_card_renderer import _result_card_values
+from services.link_cards import _result_card_values
 
 WL = {"CJ대한통운": {"cjlogistics.com"}}
 
