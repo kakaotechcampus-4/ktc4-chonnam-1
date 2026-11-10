@@ -153,6 +153,7 @@ def rank(index: CaseIndex, masked_text: str) -> list[CaseMatch]:
                 similarity=round(min(best_score, 1.0), 4),
                 matched_variant=best_variant,
                 categories=list(case.categories),
+                type=case.case_type,
             )
         )
     matches.sort(key=lambda item: item.similarity, reverse=True)
@@ -367,7 +368,7 @@ def search_voice_cases(
 
     search_cases 와 같은 색인·순위 코드에 KB 폴더와 VOICE_* 값만 바꿔 씁니다.
     통화 유형은 CategoryCode 가 아니어서 matches 의 categories 는 비어 있고,
-    유형은 KB 레코드의 type 에 있습니다. 기준값은 호출할 때 모듈 값을 읽습니다.
+    유형은 KB 레코드의 type 을 matches 의 type 에 싣습니다(#109). 기준값은 호출할 때 모듈 값을 읽습니다.
     preferred_types 의 유형 사례에는 VOICE_IDENTITY_BOOST 를 더해 순위와 기준값 비교에 반영합니다.
     가점은 TF-IDF 점수에 더한 뒤 임베딩과 섞는다(평가와 같은 순서). 임베딩이 실패하면 TF-IDF 만 쓴다.
     """

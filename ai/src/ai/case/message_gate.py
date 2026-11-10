@@ -109,7 +109,7 @@ def _stop_actions(codes: set[EvidenceCode]) -> list[StopAction]:
 
 
 def _slim(similar: CaseSearchResult | None) -> CaseSearchResult | None:
-    """matched_variant 는 사례 본문이라 결과에 싣지 않는다. id·유사도만 남긴다."""
+    """matched_variant 는 사례 본문이라 결과에 싣지 않는다. id·유사도·유형만 남긴다."""
     if similar is None:
         return None
     return CaseSearchResult(

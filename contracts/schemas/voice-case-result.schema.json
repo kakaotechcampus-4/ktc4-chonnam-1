@@ -54,6 +54,11 @@
           },
           "title": "Categories",
           "type": "array"
+        },
+        "type": {
+          "default": "",
+          "title": "Type",
+          "type": "string"
         }
       },
       "required": [
