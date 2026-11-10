@@ -93,6 +93,7 @@ def embed_transcript(text: str) -> Vector:
 _index_lock = threading.Lock()
 _indexes: dict[tuple[Path, str], EmbeddingIndex] = {}
 _failed_at: dict[tuple[Path, str], float] = {}
+_building: set[tuple[Path, str]] = set()
 
 
 def _build(cases, kind: str) -> EmbeddingIndex:
@@ -110,23 +111,45 @@ def _build(cases, kind: str) -> EmbeddingIndex:
         return EmbeddingIndex({case.case_id: tuple(next(flat) for _ in case.variants) for case in cases})
 
 
+def _build_and_store(key: tuple[Path, str], cases, kind: str) -> EmbeddingIndex | None:
+    """락 밖에서 만든다. 만드는 동안(최대 BUILD_TIMEOUT_S) 다른 검색이 락에서 기다리면 안 된다."""
+    try:
+        index = _build(cases, kind)
+    except Exception as exc:
+        LOGGER.warning("case embedding build failed: %s", type(exc).__name__)
+        index = None
+    with _index_lock:
+        _building.discard(key)
+        if index is None:
+            _failed_at[key] = time.monotonic()
+        else:
+            _indexes[key] = index
+    return index
+
+
 def load_index(cases_dir: Path, kind: str, cases) -> EmbeddingIndex | None:
-    """KB 벡터. 설정이 없거나 만들다 실패하면 None 이다(RETRY_AFTER_S 뒤에 다시 시도)."""
+    """KB 벡터. 설정이 없거나 아직 없으면 None 이다(부르는 쪽이 TF-IDF 만으로 검색).
+
+    처음 한 번은 부른 자리에서 만든다. 기동 워밍업이 여기로 온다. 실패한 뒤의 재시도는
+    RETRY_AFTER_S 가 지난 첫 호출이 백그라운드 스레드로 시작하고 자기는 None 을 받는다.
+    요청이 KB 전체 임베딩을 떠안으면 검색 예산을 넘겨 TF-IDF 결과까지 버려진다.
+    """
     if not embedding.is_configured() or not cases:
         return None
     key = (Path(cases_dir), kind)
     with _index_lock:
         if key in _indexes:
             return _indexes[key]
-        if time.monotonic() - _failed_at.get(key, -RETRY_AFTER_S) < RETRY_AFTER_S:
+        if key in _building:
             return None
-        try:
-            _indexes[key] = _build(cases, kind)
-        except Exception as exc:
-            LOGGER.warning("case embedding build failed: %s", type(exc).__name__)
-            _failed_at[key] = time.monotonic()
+        failed_at = _failed_at.get(key)
+        if failed_at is not None and time.monotonic() - failed_at < RETRY_AFTER_S:
             return None
-        return _indexes[key]
+        _building.add(key)
+    if failed_at is None:
+        return _build_and_store(key, cases, kind)
+    threading.Thread(target=_build_and_store, args=(key, cases, kind), daemon=True).start()
+    return None
 
 
 def scores(index: EmbeddingIndex, query: Vector) -> dict[str, float]:
@@ -139,3 +162,4 @@ def reset() -> None:
     with _index_lock:
         _indexes.clear()
         _failed_at.clear()
+        _building.clear()
