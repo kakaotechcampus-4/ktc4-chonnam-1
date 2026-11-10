@@ -422,7 +422,7 @@ def render_voice_result_card(result: dict, job_id: str | None = None) -> dict:
         "unchecked": unchecked,
     })
 
-    card = _inject_job_id(card, job_id)
+    card = _inject_job_id(_tidy_description(card), job_id)
     questions = result.get("questions") or []
     if not questions:
         return card
@@ -487,9 +487,9 @@ def render_voice_answer_card(result: dict, answers: list[str]) -> dict:
     response_actions = result.get("response_actions") or []
 
     if not response_actions:
-        return render_card("a2-not-yet-voice", {
+        return _tidy_description(render_card("a2-not-yet-voice", {
             "stop_line": _voice_stop_line_excluding_hang_up(result.get("stop_actions") or []),
-        })
+        }))
 
     lines = _response_action_lines(response_actions, answers)
     buttons = _voice_d17_buttons(answers)
@@ -499,19 +499,12 @@ def render_voice_answer_card(result: dict, answers: list[str]) -> dict:
         if any(button.get("phoneNumber") == "1394" for button in buttons) else ""
     )
 
-    card = render_card("k6-response", {
+    # contact_line 이 비면 템플릿이 빈 줄을 하나 더 남긴다. 정리한다.
+    return _tidy_description(render_card("k6-response", {
         "response_lines": "\n".join(lines),
         "contact_line": contact_line,
         "buttons": buttons,
-    })
-
-    if not contact_line:
-        text_card = card["template"]["outputs"][0]["textCard"]
-        # contact_line이 비면 템플릿의 "{{ response_lines }}\n{{ contact_line }}\n\n"가
-        # 빈 줄을 하나 더 남긴다 — 정리한다(이슈 #115 "남는 빈 줄은 BE가 정리한다").
-        text_card["description"] = text_card["description"].replace("\n\n\n", "\n\n")
-
-    return card
+    }))
 
 
 def render_voice_detail_carousel(result: dict) -> dict:

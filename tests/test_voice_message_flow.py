@@ -1215,6 +1215,18 @@ class TestVoiceAnswerFlow:
 
         assert main.ANALYSIS_JOBS[job_id]["qa_answers"] == ["sent_money"]
 
+    def test_not_yet_card_has_no_doubled_blank_line_when_only_hang_up_remains(self):
+        """멈출 행동이 hang_up 뿐이면 stop_line 이 비는데, 빈 줄이 겹쳐 나가면 안 된다."""
+
+        job_id = self._seed_voice_job()
+        main.ANALYSIS_JOBS[job_id]["final_payload"]["stop_actions"] = ["hang_up"]
+
+        card = main.handle_voice_answer(job_id, "not_yet", "voice-user")
+
+        description = _card_body(card)["description"]
+        assert "차단하세요.\n\n신고·상담은" in description
+        assert "\n\n\n" not in description
+
     def test_answer_for_unknown_job_is_handled_safely(self, client):
         response = client.post(
             "/kakao/skill",
