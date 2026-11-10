@@ -17,7 +17,7 @@ from ai.types import (
     SignalAnalysis, SignalProposal, Topic,
 )
 
-from ai.types import AnswerState as _Answer, DomainMatch as _Domain
+from ai.types import AnswerState as _Answer
 
 INCOMPLETE = {_Answer.PARTIAL, _Answer.FAILED, _Answer.NOT_RUN}
 

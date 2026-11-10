@@ -32,7 +32,6 @@ from ai.case.types import (
     DemandKind,
     IdentityKind,
     OfficialContact,
-    ResponseAction,
     Scenario,
     Segment,
     Side,

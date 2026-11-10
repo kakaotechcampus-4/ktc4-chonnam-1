@@ -9,7 +9,7 @@ _client: httpx.AsyncClient | None = None
 
 
 @asynccontextmanager
-async def http_client_lifespan(app):
+async def http_client_lifespan(app):  # noqa: ARG001 — FastAPI lifespan 은 app 을 넘긴다
     """서버 수명 동안 쓸 httpx 클라이언트를 만들고 종료 시 닫는다.
 
     httpx.AsyncClient 생성은 SSL 초기화로 이벤트 루프를 200~470ms 막는다(측정).

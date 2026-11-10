@@ -613,9 +613,7 @@ def _r9_message_lines(
     return None, None
 
 
-def _r9_env_lines(
-    answer: str | None, failures: list[str]
-) -> tuple[str | None, str | None]:
+def _r9_env_lines(answer: str | None) -> tuple[str | None, str | None]:
     if answer == _NO_RISK:
         return "페이지에서 위험 신호를 찾지 못했어요", None
 
@@ -652,10 +650,7 @@ def _r9_blank_values(analysis_result: dict) -> dict[str, str]:
         message.get("answer"),
         ((message.get("details") or {}).get("reason") or {}).get("failures") or [],
     )
-    env_checked, env_unchecked = _r9_env_lines(
-        env.get("answer"),
-        ((env.get("details") or {}).get("reason") or {}).get("failures") or [],
-    )
+    env_checked, env_unchecked = _r9_env_lines(env.get("answer"))
 
     checked = [
         line for line in (
@@ -1327,9 +1322,7 @@ def render_link_caution_card(analysis_result: dict, case_result: dict | None) ->
     brand = message.get("brand")
 
     address_checked, address_unchecked = _r9_address_lines(url.get("official"), brand)
-    env_checked, env_unchecked = _r9_env_lines(
-        env.get("answer"), ((env.get("details") or {}).get("reason") or {}).get("failures") or [],
-    )
+    env_checked, env_unchecked = _r9_env_lines(env.get("answer"))
     case_checked, case_unchecked = _message_checked_unchecked(case_result)
     checked = [line for line in case_checked.splitlines() if line != _R9_NO_LINES]
     checked += [f"- {line}" for line in (address_checked, env_checked) if line]

@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from egress_hosts import EgressHostsError, parse_egress_hosts  # noqa: E402
+from egress_hosts import parse_egress_hosts  # noqa: E402
 from network_config import public_config  # noqa: E402
 
 HEADER = "# render-egress.py 가 egress-hosts 로 만든 파일이다. 직접 고치지 않는다.\n"

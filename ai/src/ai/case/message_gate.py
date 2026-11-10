@@ -175,7 +175,6 @@ def decide_message(
     링크 판정은 공식 주소 대조가 따로 한다. 이 결과는 BE 가 판단 보류 카드의 갈래를 고르는 데만 쓴다.
     """
     answers = answers or MessageAnswers()
-    read_ran = accepted is not None
     q2 = answers.called_known_number
 
     common = {

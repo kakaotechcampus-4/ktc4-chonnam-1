@@ -124,10 +124,7 @@ def test_other_category_preserves_evidence_backed_custom_label():
 
 
 from ai.types import (
-    DomainMatch,
-    EvidenceSource,
     RiskSignal,
-    RiskSignalCode,
     SignalProposal,
 )
 

@@ -11,7 +11,6 @@ from pydantic import ValidationError
 import ai.llm.page as page_analysis_module
 import ai.page as page_module
 import ai.pipeline.analysis as pipeline_module
-import ai.pipeline.results as results_module
 from ai.page import inspect_html
 from ai.pipeline import analyze_environment_part, analyze_message_part, assemble_analysis
 from ai.types import (

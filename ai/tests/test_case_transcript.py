@@ -8,7 +8,7 @@ import httpx
 import pytest
 import yaml
 
-from ai.case import TranscribeRuntime, VoiceRuntime, analyze_call, transcribe_call
+from ai.case import TranscribeRuntime, analyze_call, transcribe_call
 from ai.case.transcript import split_sentences
 from ai.llm import transcribe as transcribe_llm
 from ai.types import FailureCode

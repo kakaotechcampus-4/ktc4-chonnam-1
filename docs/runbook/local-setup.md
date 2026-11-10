@@ -21,7 +21,7 @@ python -m pip install -r requirements-dev.txt
 ```
 
 `requirements-dev.txt` 는 `requirements.txt`(FastAPI·uvicorn·httpx, `-e ./ai`)에
-pytest·pytest-asyncio 를 더합니다. `ai` 패키지는 편집 가능 모드로 같이 설치됩니다.
+pytest·pytest-asyncio·ruff 를 더합니다. 린트는 `ruff check .` 로 돌립니다(규칙은 `ruff.toml`). `ai` 패키지는 편집 가능 모드로 같이 설치됩니다.
 
 **`APP_ENV=local` 을 설정하세요.** `APP_ENV` 기본값은 `production` 이라
 `KAKAO_SKILL_SECRET` 없이 띄우면 `/kakao/skill` 이 모두 401 로 막힙니다
