@@ -27,6 +27,8 @@ class Job(TypedDict, total=False):
     # 카드로 만들기 전의 분석 결과. "자세히 보기"와 답 처리가 이것으로 카드를 다시 만든다.
     # 여러 링크는 마지막 결과만 남으므로 상세 조회를 막는다(link_count)
     final_payload: dict | None
+    # 어떤 분석을 누가 불렀는지(도구 이름·상태·시간). 문자·주소는 담지 않는다
+    investigation: dict | None
     error: str | None
     callback_status: Literal["pending", "success", "failed"]
     callback_error: str | None
@@ -55,6 +57,7 @@ def create_analysis_job(user_id: str | None) -> str:
         "completed_at": None,
         "result": None,
         "final_payload": None,
+        "investigation": None,
         "error": None,
         "callback_status": "pending",
         "callback_error": None,
