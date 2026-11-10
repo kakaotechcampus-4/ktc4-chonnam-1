@@ -8,8 +8,10 @@ import tempfile
 import time
 
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import NamedTuple
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 
@@ -43,7 +45,10 @@ from services.result_card_renderer import (
 
 # AI 연결
 from ai.pipeline import analyze_message_part, finalize_analysis, read_message
-from ai.types import AnalysisStatus, FailureCode, MessageReading, UrlAnalysis
+from ai.types import AnalysisStatus, FailureCode, MessagePart, MessageReading, UrlAnalysis
+
+# 분석 장부. 카드가 읽는 분석을 요청마다 한 번씩만 돌린다
+from ai.agent import Board, Obs, Tool, investigation
 
 # 통화(음성) 분석 연결. ai.case 는 카카오 payload를 모른다 (CLAUDE.md 의존 방향).
 from ai.case import transcribe_call, analyze_call, apply_call_answers
@@ -572,6 +577,104 @@ def _response_without_links(reading: MessageReading) -> dict | None:
     return None
 
 
+class _Need(NamedTuple):
+    """카드가 읽는 분석. 카드 코드가 board.get 으로 꺼내므로 에이전트가 빼먹어도 돈다."""
+
+    collect: Tool[CollectResult]
+    signals: Tool[MessagePart | None]
+    official: Tool[UrlAnalysis]
+    claims: Tool[MessageCaseResult]
+
+
+def _see_collection(collected: CollectResult) -> Obs:
+    browser = collected.browser
+    return {
+        "reached": collected.status_code is not None,
+        "redirects": len(collected.redirect_chain),
+        "has_page": bool(collected.html),
+        "browser_used": browser is not None,
+        "downloads": len(browser.downloads) if browser else 0,
+        "failed": bool(collected.failures),
+    }
+
+
+def _see_signals(part: MessagePart | None) -> Obs:
+    if part is None:
+        return {"answer": None, "brand_named": False, "signals": 0}
+    return {
+        "answer": part.answer,
+        "brand_named": bool(part.brand) and part.brand != "unknown",
+        "signals": len(part.details.signals),
+    }
+
+
+def _see_official(url: UrlAnalysis) -> Obs:
+    return {"official": url.official}
+
+
+def _see_claims(case: MessageCaseResult) -> Obs:
+    return {
+        "conclusion": case.conclusion,
+        "caution": case.caution,
+        "institution_claimed": any(claim.kind == "institution" for claim in case.claims.identity),
+        "demands": len(case.claims.demands),
+    }
+
+
+def _analysis_tools(
+    utterance: str, reading: MessageReading, started: float,
+) -> tuple[_Need, tuple[Tool, ...]]:
+    """이 요청의 분석 도구. 새 시나리오는 여기에 Tool 하나를 더한다.
+
+    함수 이름을 부를 때 찾으므로 테스트가 main.* 를 바꿔 끼울 수 있다.
+    """
+    # ponytail: 격리 수집기의 동시 처리량을 재지 않아 한 번에 하나만 수집한다. 재고 나면 링크별 병렬로 푼다
+    one_collection = asyncio.Lock()
+
+    async def collect(board: Board, n: int) -> CollectResult:
+        # 주소는 여기서만 정해진다. 부르는 쪽은 번호만 낸다
+        link = reading.links[n - 1].url
+        async with one_collection:
+            try:
+                return await collect_url_isolated(link)
+            except Exception as error:
+                # Keep message evidence even when the collection API is unavailable.
+                print(f"[COLLECTION FAILED] {type(error).__name__}")
+                return CollectResult(
+                    link, None, (), None, None, "", None, 0, ("collection_failed",),
+                )
+
+    async def signals(board: Board, _: None) -> MessagePart | None:
+        try:
+            # 같은 읽기를 넘겨 추출 LLM 을 다시 부르지 않는다
+            return await analyze_message_part(reading.message, extracted=reading.extracted)
+        except Exception as error:
+            print(f"[AI MESSAGE ERROR] {type(error).__name__}")
+            return None
+
+    async def official(board: Board, n: int) -> UrlAnalysis:
+        collected, part = await asyncio.gather(board.get(need.collect, n), board.get(need.signals))
+        brand = part.brand if part is not None else None
+        return build_ai_url_analysis(collected, brand, reading.links[n - 1].url)
+
+    async def claims(board: Board, _: None) -> MessageCaseResult:
+        if reading.links:
+            return await _claims(reading.message, started, has_link=True)
+        return await _claims(utterance, started)
+
+    need = _Need(
+        Tool("collect_link", "링크를 격리 환경에서 열어 이동 경로와 페이지를 수집한다", True,
+             collect, _see_collection),
+        Tool("analyze_message_signals", "문자 본문의 위험 신호와 내세운 기관 이름을 읽는다", False,
+             signals, _see_signals),
+        Tool("check_official_domain", "수집한 링크 주소를 공식 도메인 목록과 대조한다", True,
+             official, _see_official),
+        Tool("analyze_claims", "문자가 내세운 사칭 주장과 요구를 읽는다", False,
+             claims, _see_claims),
+    )
+    return need, tuple(need)
+
+
 async def run_analysis(
     utterance: str,
     job_id: str | None = None,
@@ -589,9 +692,20 @@ async def run_analysis(
     response = _response_without_links(reading)
     if response is not None:
         return response
-    if not reading.links:
-        return await run_message_case(utterance, job_id=job_id, started=started)
+    need, tools = _analysis_tools(utterance, reading, started)
+    # 여기서는 카드 종류만 고른다. 어떤 분석이 도는지는 카드가 board 에서 꺼내는 것으로 정해진다
+    async with investigation(reading, tools) as board:
+        if reading.links:
+            return await _link_cards(board, need, reading, job_id)
+        return await run_message_case(
+            utterance, job_id=job_id, started=started, claims=lambda: board.get(need.claims),
+        )
 
+
+async def _link_cards(
+    board: Board, need: _Need, reading: MessageReading, job_id: str | None,
+) -> dict:
+    """링크마다 결과 카드를 만든다. 근거는 직접 만들지 않고 board 에서 꺼낸다."""
     link_count = len(reading.links)
     if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
         # 링크별 상세 저장은 지원하지 않는다. 숨겨진 결과로의 직접 조회도 막는다.
@@ -601,55 +715,32 @@ async def run_analysis(
     # 미검사 안내를 먼저 확보한다. 분석은 모두 수행하고 마지막에 표시 개수만 제한한다.
     if reading.unverified_links:
         cards.append(kakao_response(_PARTLY_READ_LINKS_TEXT))
-    # 같은 읽기를 넘겨 추출 LLM 을 다시 부르지 않는다
-    message_task = asyncio.create_task(
-        analyze_message_part(reading.message, extracted=reading.extracted)
-    )
     # 판단 보류 링크가 처음 나올 때 한 번만 문자 게이트를 부른다(#89). 링크마다 본문은 같다
     link_case: list[dict | None] = []
-    try:
-        for candidate in reading.links:
-            link = candidate.url
-            try:
-                try:
-                    collected = await collect_url_isolated(link)
-                except Exception as error:
-                    # Keep message evidence even when the collection API is unavailable.
-                    print(f"[COLLECTION FAILED] {type(error).__name__}")
-                    collected = CollectResult(
-                        link, None, (), None, None, "", None, 0, ("collection_failed",),
-                    )
-
-                try:
-                    message_result = await message_task
-                except Exception as error:
-                    print(f"[AI MESSAGE ERROR] {type(error).__name__}")
-                    message_result = None
-
-                brand = message_result.brand if message_result is not None else None
-                url_analysis = build_ai_url_analysis(collected, brand, link)
-                page, failure = to_isolated_page(collected)
-                final_result = await finalize_analysis(
-                    url=url_analysis, message=message_result, page=page, failure=failure,
-                )
-                final_payload = final_result.model_dump(mode="json")
-                caution_card = None
-                if link_caution_applies(final_payload):
-                    if not link_case:
-                        link_case.append(await _link_message_case(reading.message, started))
-                    caution_card = render_link_caution_card(final_payload, link_case[0])
-                cards.append(caution_card or render_result_card(
-                    final_payload, job_id=job_id, allow_details=(link_count == 1),
-                ))
-                if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
-                    job["final_payload"] = final_payload
-            except Exception as error:
-                print(f"[ANALYSIS ERROR] {type(error).__name__}")
-                cards.append(render_card("r4-unavailable"))
-    finally:
-        if not message_task.done() and not message_task.cancelling():
-            message_task.cancel()
-        await asyncio.gather(message_task, return_exceptions=True)
+    for n in range(1, link_count + 1):
+        try:
+            # 공식 대조가 이 링크의 수집과 문자 분석을 함께 시작한다
+            url_analysis = await board.get(need.official, n)
+            collected = await board.get(need.collect, n)
+            message_result = await board.get(need.signals)
+            page, failure = to_isolated_page(collected)
+            final_result = await finalize_analysis(
+                url=url_analysis, message=message_result, page=page, failure=failure,
+            )
+            final_payload = final_result.model_dump(mode="json")
+            caution_card = None
+            if link_caution_applies(final_payload):
+                if not link_case:
+                    link_case.append(await _link_caution_payload(board, need))
+                caution_card = render_link_caution_card(final_payload, link_case[0])
+            cards.append(caution_card or render_result_card(
+                final_payload, job_id=job_id, allow_details=(link_count == 1),
+            ))
+            if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
+                job["final_payload"] = final_payload
+        except Exception as error:
+            print(f"[ANALYSIS ERROR] {type(error).__name__}")
+            cards.append(render_card("r4-unavailable"))
     response = merge_kakao_responses(cards)
     outputs = response["template"]["outputs"]
     if reading.unverified_links and len(outputs) > KAKAO_MAX_OUTPUTS:
@@ -660,15 +751,14 @@ async def run_analysis(
     return response
 
 
-async def _link_message_case(message: str, started: float) -> dict | None:
+async def _link_caution_payload(board: Board, need: _Need) -> dict | None:
     """링크 결과가 판단 보류일 때 본문을 문자 게이트로 읽는다(#89). 실패하면 None 이라 R9 를 쓴다.
 
     결과는 판단 보류 카드의 주의 갈래를 고르는 데만 쓴다. 링크 판정과 Job 저장 값은 바꾸지 않는다.
     """
 
-    budget = max(MESSAGE_CASE_BUDGET_S - (time.monotonic() - started), 0.0)
     try:
-        result = await analyze_message_case(message, time_budget_s=budget, has_link=True)
+        result = await board.get(need.claims)
     except asyncio.CancelledError:
         raise
     except Exception as error:
@@ -693,21 +783,29 @@ MESSAGE_CASE_BUDGET_S = CALLBACK_DEADLINE_SECONDS - 5.0
 _CASE_NOT_FOUND_TEXT = "분석 결과를 찾을 수 없어요. 문자나 통화 녹음을 다시 보내 주세요."
 
 
+async def _claims(text: str, started: float | None, **options) -> MessageCaseResult:
+    """문자 게이트를 남은 예산으로 부른다. 예산은 처음 불린 때의 `40 - 경과 초`다."""
+
+    elapsed = time.monotonic() - started if started is not None else 0.0
+    budget = max(MESSAGE_CASE_BUDGET_S - elapsed, 0.0)
+    return await analyze_message_case(text, time_budget_s=budget, **options)
+
+
 async def run_message_case(
     utterance: str,
     job_id: str | None = None,
     started: float | None = None,
+    *,
+    claims: Callable[[], Awaitable[MessageCaseResult]] | None = None,
 ) -> dict:
     """링크 없는 문자를 분석해 R6b(또는 R6·R4) 카드와 붙일 질문을 만든다.
 
     analyze_message_case()는 계약상 CancelledError만 올리지만 외부 함수라 방어적으로 감싼다.
+    run_analysis 는 board 에 올린 같은 분석을 `claims` 로 넘긴다.
     """
 
-    elapsed = time.monotonic() - started if started is not None else 0.0
-    budget = max(MESSAGE_CASE_BUDGET_S - elapsed, 0.0)
-
     try:
-        result = await analyze_message_case(utterance, time_budget_s=budget)
+        result = await (claims() if claims else _claims(utterance, started))
     except asyncio.CancelledError:
         raise
     except Exception as error:
