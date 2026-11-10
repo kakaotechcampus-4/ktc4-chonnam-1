@@ -24,7 +24,6 @@ from ai.case.types import (
     IdentityKind,
     InputKind,
     NumberCheck,
-    OfficialContact,
     ReadingSource,
     Scenario,
     TranscriptResult,
@@ -35,18 +34,17 @@ from ai.case.types import (
 )
 from ai.case.verify import VerifyResult, verify_call
 from ai.kb import search
-from ai.kb.numbers import check_phone_number, find_numbers, official_contact, resolve_org
+from ai.kb.numbers import check_phone_number, find_numbers, resolve_org
 from ai.kb.search import search_voice_cases
 from ai.case.claims import TIMEOUT_SECONDS as READ_BUDGET_S
+from ai.case.steps import READ_GRACE_S as _READ_GRACE_S
+from ai.case.steps import SEARCH_BUDGET_S, official_contact_for, read_or_lexicon, search_within
 from ai.case.claims import read_claims
 from ai.types import CaseSearchResult, FailureCode
 
 LOGGER = logging.getLogger(__name__)
 
-SEARCH_BUDGET_S = 2.5
 DEFAULT_TIME_BUDGET_S = 40.0
-# read_claims 가 제 시간 초과에서 스스로 어휘표로 폴백하도록, 바깥 한도는 조금 넉넉히 둔다
-_READ_GRACE_S = 0.5
 MAX_NUMBER_CHECKS = 2
 
 
@@ -128,40 +126,6 @@ def _set_unchecked(
     result.unchecked.append(entry)
 
 
-async def _search(
-    runtime: VoiceRuntime, text: str, timeout_s: float
-) -> tuple[CaseSearchResult | None, UncheckedReason | None]:
-    try:
-        found = await asyncio.wait_for(
-            asyncio.to_thread(runtime.search_cases, text), timeout=timeout_s
-        )
-        return found, None
-    except asyncio.CancelledError:
-        raise
-    except TimeoutError:
-        # 검색 예산 전체를 넘겼다(#155). 임베딩 마감 뒤 TF-IDF 폴백과 구분해 남긴다
-        LOGGER.warning("voice case search timed out budget=%.1fs", timeout_s)
-        return None, UncheckedReason.TIMEOUT
-    except Exception as exc:
-        LOGGER.warning("voice case search failed: %s", type(exc).__name__)
-        return None, UncheckedReason.FAILED
-
-
-async def _read(
-    runtime: VoiceRuntime, source: ReadingSource, timeout_s: float
-) -> ClaimReadingResult:
-    try:
-        return await asyncio.wait_for(runtime.read_claims(source), timeout=timeout_s)
-    except asyncio.CancelledError:
-        raise
-    except TimeoutError:
-        failure = FailureCode.TIMEOUT
-    except Exception as exc:
-        LOGGER.warning("voice claims reading failed: %s", type(exc).__name__)
-        failure = FailureCode.LLM_ERROR
-    return read_with_lexicon(source, failure)
-
-
 def _check_numbers(
     runtime: VoiceRuntime, source: ReadingSource, verify: VerifyResult
 ) -> tuple[list[NumberCheck], bool]:
@@ -222,19 +186,6 @@ def _log_reading(
         unused or "-",
         result.conclusion.value,
     )
-
-
-def _official_contact(verify: VerifyResult) -> OfficialContact | None:
-    """받아들인 기관 주장 중 대표번호 KB 에 있는 첫 기관. V1 확인 안내에 쓴다.
-
-    번호는 KB 에서만 온다. 누가 말했는지와 상관없이 공식 번호로 직접 확인하라는 안내다.
-    """
-    for ident in verify.claims.identity:
-        if ident.listed_institution:
-            contact = official_contact(ident.name) or official_contact(ident.quote)
-            if contact:
-                return contact
-    return None
 
 
 async def analyze_call(
@@ -325,10 +276,13 @@ async def _analyze(
     # 사례 데이터에 화자 표기가 없어서 질의는 마스킹 대본 전체다 (Task 6)
     query = "\n".join(seg.text for seg in source.segments)
     reading, (similar, search_miss) = await asyncio.gather(
-        _read(
-            runtime, source, min(READ_BUDGET_S + _READ_GRACE_S, max(remaining(), 0.0))
+        read_or_lexicon(
+            runtime.read_claims, source,
+            min(READ_BUDGET_S + _READ_GRACE_S, max(remaining(), 0.0)), label="voice",
         ),
-        _search(runtime, query, min(SEARCH_BUDGET_S, max(remaining(), 0.0))),
+        search_within(
+            runtime.search_cases, query, min(SEARCH_BUDGET_S, max(remaining(), 0.0)), label="voice",
+        ),
     )
 
     if reading.reading is None:
@@ -369,7 +323,7 @@ async def _analyze(
     )
     _log_reading(reading, verify, result)
     try:
-        result.official_contact = _official_contact(verify)
+        result.official_contact = official_contact_for(verify)
     except Exception as exc:
         # 확인 안내는 부가 정보다. 못 찾으면 FE 가 일반 문장을 쓴다
         LOGGER.warning("official contact lookup failed: %s", type(exc).__name__)

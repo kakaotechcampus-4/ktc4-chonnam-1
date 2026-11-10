@@ -25,7 +25,6 @@ from ai.case.types import (
     EvidenceCode,
     InputKind,
     MessageCaseResult,
-    OfficialContact,
     Origin,
     QuestionId,
     ReadingSource,
@@ -35,19 +34,17 @@ from ai.case.types import (
     UncheckedItem,
     UncheckedReason,
 )
-from ai.case.verify import VerifyResult, verify_call
-from ai.kb.numbers import official_contact
+from ai.case.verify import verify_call
 from ai.kb.search import search_cases
 from ai.case.claims import TIMEOUT_SECONDS as READ_BUDGET_S
+from ai.case.steps import READ_GRACE_S as _READ_GRACE_S
+from ai.case.steps import SEARCH_BUDGET_S, official_contact_for, read_or_lexicon, search_within
 from ai.case.claims import read_claims
 from ai.types import CaseSearchResult, FailureCode
 
 LOGGER = logging.getLogger(__name__)
 
-SEARCH_BUDGET_S = 2.5
 DEFAULT_TIME_BUDGET_S = 25.0
-# read_claims 가 제 시간 초과에서 스스로 어휘표로 폴백하도록, 바깥 한도는 조금 넉넉히 둔다
-_READ_GRACE_S = 0.5
 # read_message 의 MAX_MESSAGE_CHARS 와 같다. 더 긴 글은 BE 가 먼저 막는다
 MAX_MESSAGE_CHARS = 8192
 
@@ -87,50 +84,6 @@ def message_source(text: str) -> ReadingSource:
         kind=InputKind.TEXT,
         segments=[Segment(side=Side.UNKNOWN, text=line) for line in lines if line],
     )
-
-
-async def _search(
-    runtime: MessageRuntime, text: str, timeout_s: float
-) -> tuple[CaseSearchResult | None, UncheckedReason | None]:
-    try:
-        found = await asyncio.wait_for(
-            asyncio.to_thread(runtime.search_cases, text), timeout=timeout_s
-        )
-        return found, None
-    except asyncio.CancelledError:
-        raise
-    except TimeoutError:
-        # 검색 예산 전체를 넘겼다(#155). 임베딩 마감 뒤 TF-IDF 폴백과 구분해 남긴다
-        LOGGER.warning("message case search timed out budget=%.1fs", timeout_s)
-        return None, UncheckedReason.TIMEOUT
-    except Exception as exc:
-        LOGGER.warning("message case search failed: %s", type(exc).__name__)
-        return None, UncheckedReason.FAILED
-
-
-async def _read(
-    runtime: MessageRuntime, source: ReadingSource, timeout_s: float
-) -> ClaimReadingResult:
-    try:
-        return await asyncio.wait_for(runtime.read_claims(source), timeout=timeout_s)
-    except asyncio.CancelledError:
-        raise
-    except TimeoutError:
-        failure = FailureCode.TIMEOUT
-    except Exception as exc:
-        LOGGER.warning("message claims reading failed: %s", type(exc).__name__)
-        failure = FailureCode.LLM_ERROR
-    return read_with_lexicon(source, failure)
-
-
-def _official_contact(verify: VerifyResult) -> OfficialContact | None:
-    """받아들인 기관 주장 중 대표번호 KB 에 있는 첫 기관. 번호는 KB 에서만 온다."""
-    for ident in verify.claims.identity:
-        if ident.listed_institution:
-            contact = official_contact(ident.name) or official_contact(ident.quote)
-            if contact:
-                return contact
-    return None
 
 
 async def analyze_message_case(
@@ -189,8 +142,10 @@ async def _analyze(
     else:
         query = "\n".join(seg.text for seg in source.segments)
         reading, (similar, search_miss) = await asyncio.gather(
-            _read(runtime, source, min(READ_BUDGET_S + _READ_GRACE_S, remaining())),
-            _search(runtime, query, min(SEARCH_BUDGET_S, remaining())),
+            read_or_lexicon(
+                runtime.read_claims, source, min(READ_BUDGET_S + _READ_GRACE_S, remaining()), label="message",
+            ),
+            search_within(runtime.search_cases, query, min(SEARCH_BUDGET_S, remaining()), label="message"),
         )
 
     if reading.reading is None:
@@ -216,7 +171,7 @@ async def _analyze(
         )
 
     try:
-        contact = _official_contact(verify)
+        contact = official_contact_for(verify)
     except Exception as exc:
         # 확인 안내는 부가 정보다. 못 찾으면 FE 가 일반 문장을 쓴다
         LOGGER.warning("official contact lookup failed: %s", type(exc).__name__)

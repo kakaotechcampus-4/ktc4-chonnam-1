@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -255,7 +256,7 @@ def test_official_contact_lookup_failure_keeps_result(monkeypatch):
     def boom(_verify):
         raise RuntimeError("kb")
 
-    monkeypatch.setattr(voice, "_official_contact", boom)
+    monkeypatch.setattr(voice, "official_contact_for", boom)
     result = asyncio.run(analyze_call(_transcript(_v1()), runtime=_runtime(_v1(), Calls())))
 
     assert result.conclusion == Conclusion.SUSPECTED
@@ -428,15 +429,20 @@ def test_exhausted_budget_skips_reading_with_timeout():
     assert (UncheckedItem.TRANSCRIPT, UncheckedReason.TIMEOUT) in items
 
 
-def test_budget_spent_during_reading_marks_phone_number_timeout():
+def test_budget_spent_during_reading_marks_phone_number_timeout(monkeypatch):
+    # 실제 시간으로 재면 시계 해상도(윈도우 약 15.6ms)에 따라 결과가 흔들린다.
+    # 읽기가 끝나는 순간 시계를 예산 뒤로 옮겨 "읽기가 예산을 다 썼다"를 만든다.
+    clock = [0.0]
+    monkeypatch.setattr(voice, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     case = _v1()
     calls = Calls()
     runtime = _runtime(case, calls)
     inner = runtime.read_claims
 
     async def slow_read(source):
-        await asyncio.sleep(0.1)
-        return await inner(source)
+        found = await inner(source)
+        clock[0] = 1.0
+        return found
 
     runtime.read_claims = slow_read
 
