@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-_WHOLE_PLACEHOLDER_RE = re.compile(r"^\{\{\s*[^{}]+\s*\}\}$")
+_PLACEHOLDER_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 
 CARDS_DIR = (
     Path(__file__).resolve().parent.parent
@@ -25,7 +25,7 @@ class CardNotFoundError(ValueError):
     pass
 
 
-def _substitute(node: Any, values: dict[str, str]) -> Any:
+def _substitute(node: Any, values: dict[str, Any]) -> Any:
     """`{{ key }}` placeholder를 JSON 구조를 유지한 채로 치환한다.
 
     - dict/list는 재귀적으로 내려가며, 리프 문자열만 치환한다.
@@ -48,24 +48,17 @@ def _substitute(node: Any, values: dict[str, str]) -> Any:
     return node
 
 
-def _substitute_string(text: str, values: dict[str, str]) -> Any:
-    stripped = text.strip()
+def _substitute_string(text: str, values: dict[str, Any]) -> Any:
+    # 문자열 전체가 placeholder 하나뿐이면 값의 원래 타입(목록·숫자 등)을 보존한다.
+    whole = _PLACEHOLDER_RE.fullmatch(text)
+    if whole:
+        return values.get(whole.group(1), text)
 
-    # 문자열 전체가 정확히 placeholder 하나뿐이면, 값의 원래 타입을 보존한다.
-    # startswith("{{")/endswith("}}")만 보면, 다른 placeholder나 글이 사이에
-    # 낀 긴 문자열(예: "{{ a }}...{{ b }}")도 "하나뿐"으로 오판해 통째로
-    # 치환 없이 돌려보낸다 — 정규식으로 중괄호가 중첩·반복되지 않는지까지 본다.
-    if _WHOLE_PLACEHOLDER_RE.match(stripped) and text == stripped:
-        key = stripped[2:-2].strip()
-        if key in values:
-            return values[key]
-        return text
-
-    result = text
-    for key, value in values.items():
-        result = result.replace(f"{{{{ {key} }}}}", str(value))
-        result = result.replace(f"{{{{{key}}}}}", str(value))
-    return result
+    # 한 번에 치환한다. 키마다 차례로 바꾸면 먼저 들어간 값 안의 `{{ key }}` 가 다시 치환된다.
+    return _PLACEHOLDER_RE.sub(
+        lambda match: str(values[match.group(1)]) if match.group(1) in values else match.group(0),
+        text,
+    )
 
 
 def load_card_template(card_name: str) -> dict:
@@ -80,7 +73,7 @@ def load_card_template(card_name: str) -> dict:
         return json.load(file)
 
 
-def render_card(card_name: str, values: dict[str, str] | None = None) -> dict:
+def render_card(card_name: str, values: dict[str, Any] | None = None) -> dict:
     """카드 JSON을 읽어 `{{ placeholder }}`를 채운 Kakao 응답 dict를 반환한다.
 
     원본 JSON 파일은 수정하지 않는다 (매번 새로 읽는다).
@@ -90,7 +83,7 @@ def render_card(card_name: str, values: dict[str, str] | None = None) -> dict:
     return substitute_values(template, values or {})
 
 
-def substitute_values(node: Any, values: dict[str, str]) -> Any:
+def substitute_values(node: Any, values: dict[str, Any]) -> Any:
     """카드 JSON의 일부(예: 캐러셀의 item 하나)에도 같은 치환 규칙을
     적용하고 싶을 때 쓰는 공개 함수. `render_card()`도 내부적으로 이걸 쓴다.
     """
