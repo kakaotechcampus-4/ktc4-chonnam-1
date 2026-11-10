@@ -1137,7 +1137,7 @@ def _message_claims_block(result: dict, alert: bool) -> str:
 
     if not lines:
         return ""
-    title = "주의할 점" if alert else "문자에 적힌 내용"
+    title = "⚠️ 주의할 점" if alert else "📩 문자에 적힌 내용"
     return f"{title}\n" + "\n".join(lines) + "\n\n"
 
 
