@@ -7,10 +7,15 @@ be_teammate_card_integration_tasks.md 4~6절 기준.
 캐러셀을 보여주는 구조라, 결과 카드와 캐러셀은 서로 다른 응답이다).
 """
 
+import re
 from typing import Any
 
 from ai.case.types import Conclusion
 from services.chatbot_copy_data import (
+    GUIDANCE_CARD_CONTACT,
+    GUIDANCE_DELIVERY_ACTION,
+    GUIDANCE_DELIVERY_ALL_CONTACTS,
+    GUIDANCE_DELIVERY_CONTACTS,
     get_message_failure_copy,
     get_signal_copy,
     get_unverified_copy,
@@ -105,7 +110,7 @@ _VOICE_UNCHECKED_LABELS = {
     "page_rendered": "페이지 화면 (직접 열어 본 화면)",
 }
 
-_TRANSCRIPT_ACCURACY_LINE = "- 받아 적은 글이 정확한지 (말을 글로 옮겨 틀릴 수 있어요)"
+_TRANSCRIPT_ACCURACY_LINE = "- 받아 적은 글이 정확한지 (틀릴 수 있어요)"
 
 _VOICE_UNCHECKED_REASON_LABELS = {
     "skipped_enough_evidence": "근거가 충분해 더 보지 않았어요",
@@ -132,15 +137,32 @@ _NUMBER_CHECK_UNCHECKED_LINE = "상대가 말한 번호가 {org} 번호인지 (�
 _VOICE_RESPONSE_ACTION_LINES = {
     "contact_gift_card_issuer": "상품권 발행사 고객센터에 사용 정지를 요청하세요.",
     "report_112": "112에 신고하세요.",
-    "request_payment_stop": "송금한 은행 고객센터에 지급정지를 요청하세요.",
+    "request_payment_stop": "송금한 은행에 지급정지를 요청하세요.",
     "contact_card_issuer": "카드사에 분실·정지 신고를 하세요.",
     "change_password": "입력한 비밀번호를 바꾸세요.",
     "register_info_exposure": "금융감독원 개인정보 노출자 사고예방시스템(pd.fss.or.kr)에 노출 사실을 등록하세요.",
-    "isolate_phone": "휴대폰 전원을 끄거나 비행기 모드로 바꾸세요.",
-    "use_other_device": "지급정지 신청과 개인정보 노출 등록은 다른 휴대폰이나 PC로 하세요.",
-    "remove_app_and_check_device": "설치한 앱을 지우거나 휴대폰을 초기화하세요.",
+    "isolate_phone": "휴대폰을 끄거나 비행기 모드로 바꾸세요.",
+    "use_other_device": "지급정지 신청과 개인정보 노출 등록은\n다른 휴대폰이나 PC로 하세요.",
+    "remove_app_and_check_device": "앱을 지우거나 휴대폰을 초기화하세요.",
     "delete_downloaded_file": "받은 파일을 열지 말고 지우세요.",
 }
+
+# 돈을 보내지 않았는데 지급정지가 붙는 경우(앱 설치 — 원격 조종 앱이 돈을 빼 갈 수 있다).
+# "송금한 은행"은 송금을 전제해서 답과 맞지 않으니 내 계좌를 막으라는 문장으로 바꾼다.
+_PAYMENT_STOP_WITHOUT_SENDING_LINE = "거래 은행에 계좌 지급정지를 요청하세요."
+
+
+def _response_action_lines(response_actions: list[str], answers: list[str]) -> list[str]:
+    """K6 대응 줄. 번호는 실제로 쓴 줄 기준으로 매긴다."""
+
+    sent_money = "sent_money" in answers
+    texts = []
+    for action in response_actions:
+        if action == "request_payment_stop" and not sent_money:
+            texts.append(_PAYMENT_STOP_WITHOUT_SENDING_LINE)
+        elif action in _VOICE_RESPONSE_ACTION_LINES:
+            texts.append(_VOICE_RESPONSE_ACTION_LINES[action])
+    return [f"{i}. {text}" for i, text in enumerate(texts, start=1)]
 
 # K6: chatbot-copy.md D17. 누적 답에서 송금 > 정보 제공 > 앱 설치 순서.
 _VOICE_CONSULT_BUTTON = [{"label": "1394 상담", "action": "phone", "phoneNumber": "1394"}]
@@ -202,10 +224,11 @@ def _voice_verify_line(official_contact: dict | None, *, speaker_unknown: bool =
     if official_contact:
         org = official_contact.get("org", "")
         number = official_contact.get("number", "")
-        return f"{org} 대표번호({number})로 직접 전화해 확인하세요."
+        # 실기기 폭에 맞춰 기관 이름·번호 뒤에서 줄을 바꾼다(2026-11-09)
+        return f"{org} 대표번호({number})로\n직접 전화해 확인하세요."
     if speaker_unknown:
-        return "통화에 나온 기관의 대표번호를 직접 찾아 전화해 확인하세요."
-    return "상대가 말한 기관의 대표번호를 직접 찾아 전화해 확인하세요."
+        return "통화에 나온 기관의 대표번호를\n직접 찾아 전화해 확인하세요."
+    return "상대가 말한 기관의 대표번호를\n직접 찾아 전화해 확인하세요."
 
 
 def _voice_call_claims(claims: dict, caution: bool, *, speaker_unknown: bool = False) -> str:
@@ -264,7 +287,7 @@ def _voice_call_claims(claims: dict, caution: bool, *, speaker_unknown: bool = F
                     lines[index] = line.replace(original, replacement, 1)
                     break
 
-    title = "주의할 점" if caution else "통화에서 들은 내용"
+    title = "⚠️ 주의할 점" if caution else "📞 통화에서 들은 내용"
     return f"{title}\n" + "\n".join(lines) + "\n\n"
 
 
@@ -403,6 +426,7 @@ def render_voice_result_card(result: dict, job_id: str | None = None) -> dict:
         "unchecked": unchecked,
     })
 
+    card = _inject_job_id(card, job_id)
     questions = result.get("questions") or []
     if not questions:
         return card
@@ -471,11 +495,7 @@ def render_voice_answer_card(result: dict, answers: list[str]) -> dict:
             "stop_line": _voice_stop_line_excluding_hang_up(result.get("stop_actions") or []),
         })
 
-    lines = [
-        f"{i}. {_VOICE_RESPONSE_ACTION_LINES[action]}"
-        for i, action in enumerate(response_actions, start=1)
-        if action in _VOICE_RESPONSE_ACTION_LINES
-    ]
+    lines = _response_action_lines(response_actions, answers)
     buttons = _voice_d17_buttons(answers)
     # 1394 버튼이 있을 때만 PC 사용자에게도 상담 번호를 보여 준다.
     contact_line = (
@@ -813,7 +833,7 @@ def _message_unverified_line(message: dict) -> str | None:
     않는다)."""
 
     answer = message.get("answer")
-    if answer in _COMPLETE_ANSWERS or answer is None:
+    if answer in _COMPLETE_ANSWERS:
         return None
     failures = ((message.get("details") or {}).get("reason") or {}).get("failures") or []
     return f"문자: {get_message_failure_copy(failures)}"
@@ -826,28 +846,51 @@ def _env_unverified_line(env: dict) -> str | None:
     return f"페이지: {get_unverified_copy(answer)}"
 
 
-def _guidance_description(guidance: Any) -> str:
+def _guidance_description(guidance: Any, brand: str | None = None) -> str:
     """이슈 #69: `kind`에 따라 FE가 정한 두 형식 중 하나로 문장을 만든다.
 
     `procedure`는 "{source}는 ~라고 안내했어요({연도})" 형식이다 — 문자가
     가짜라는 결론이 아니라 공식 기관이 실제로 안내한 절차임을 보여주는
     것이 목적이라, 여기서 "그래서 가짜/진짜"라는 판단을 덧붙이지 않는다.
-    `Guidance.text`는 128자를 넘을 수 있어(이슈 댓글: 택배 고객센터
-    5곳·카드사 9곳 번호 포함) 잘라낸다 — 여러 장으로 쪼개는 규칙은 FE와
-    아직 합의되지 않아, 합의 전까지는 안전하게 자르는 쪽을 택한다.
+    긴 연락처 규칙은 FE가 정한 짧은 문구를 사용한다. 출처 표기가 넘치는
+    NR-0012·0013은 출처·연도와 원문을 두 줄로 배치한다. 그 밖의 긴 자료는
+    기존 길이 제한을 유지하되 전화번호·URL 중간에서 자르지 않는다.
     """
 
     kind = getattr(guidance, "kind", None)
     text = getattr(guidance, "text", None) or ""
+    rule_id = getattr(guidance, "rule_id", None)
+
+    if kind == "verification" and len(text) > _GUIDANCE_TEXT_MAX_LENGTH:
+        if rule_id == "NR-0015":
+            contact = GUIDANCE_DELIVERY_CONTACTS.get(brand)
+            contact_line = (
+                f"{contact[0]} 고객센터 {contact[1]}" if contact
+                else GUIDANCE_DELIVERY_ALL_CONTACTS
+            )
+            return f"{GUIDANCE_DELIVERY_ACTION}\n{contact_line}"
+        if rule_id == "NR-0019":
+            # 현재 분석 결과에는 카드사 식별 필드가 없으므로 추측하지 않는다.
+            return GUIDANCE_CARD_CONTACT
 
     if kind == "procedure":
         source = getattr(guidance, "source", None) or "관련 기관"
         published_at = getattr(guidance, "published_at", None) or ""
         year = published_at[:4] if published_at else ""
         year_suffix = f"({year})" if year else ""
-        text = f"{source}는 {text}라고 안내했어요{year_suffix}."
+        original_text = text
+        text = f"{source}는 {original_text}라고 안내했어요{year_suffix}."
+        if len(text) > _GUIDANCE_TEXT_MAX_LENGTH and rule_id in ("NR-0012", "NR-0013"):
+            text = f"{source}{year_suffix}\n{original_text}"
 
-    return _truncate_evidence(text, _GUIDANCE_TEXT_MAX_LENGTH)
+    if len(text) <= _GUIDANCE_TEXT_MAX_LENGTH:
+        return text
+    end = _GUIDANCE_TEXT_MAX_LENGTH - 1
+    for token in re.finditer(r"https?://\S+|(?<!\d)\+?\d[\d-]*", text):
+        if token.start() < end < token.end():
+            end = token.start()
+            break
+    return text[:end].rstrip() + "…"
 
 
 def _guidance_items(analysis_result: dict) -> list[dict]:
@@ -872,7 +915,9 @@ def _guidance_items(analysis_result: dict) -> list[dict]:
     item_template = template["template"]["outputs"][0]["carousel"]["items"][0]
 
     return [
-        substitute_values(item_template, {"guidance_text": _guidance_description(guidance)})
+        substitute_values(item_template, {"guidance_text": _guidance_description(
+            guidance, (analysis_result.get("message") or {}).get("brand"),
+        )})
         for guidance in guidance_list[:_MAX_GUIDANCE_ITEMS]
     ]
 
@@ -915,15 +960,26 @@ def render_detail_carousel(analysis_result: dict) -> dict:
     c1_items = []
     for signal in signals[:signal_budget]:
         code = signal.get("code", "")
-        evidence = signal.get("evidence", "")
+        evidence = signal.get("evidence") or ""
         signal_title, reason = get_signal_copy(code)
 
+        # Keep the complete reason; only shorten the quoted observation to fit textCard.
+        fixed_description = substitute_values(c1_template, {
+            "signal_title": signal_title,
+            "observed": "문자에 ''라고 적혀 있어요.",
+            "reason": reason,
+        })["description"]
+        evidence_budget = min(_EVIDENCE_MAX_LENGTH, max(0, 128 - len(fixed_description)))
+        observed = (
+            f"문자에 '{_truncate_evidence(evidence, evidence_budget)}'라고 적혀 있어요."
+            if evidence.strip() else "인용문이 제공되지 않았어요."
+        )
         c1_items.append(
             substitute_values(
                 c1_template,
                 {
                     "signal_title": signal_title,
-                    "observed": f"문자에 '{_truncate_evidence(evidence)}'라고 적혀 있어요.",
+                    "observed": observed,
                     "reason": reason,
                 },
             )
@@ -933,7 +989,13 @@ def render_detail_carousel(analysis_result: dict) -> dict:
         line for line in (_message_unverified_line(message), _env_unverified_line(env))
         if line
     ]
-    unverified_text = "\n".join(unverified_lines) if unverified_lines else "모두 확인했어요."
+    official = (analysis_result.get("url") or {}).get("official")
+    if official not in ("official", "brand_mismatch"):
+        unverified_lines.insert(0, "공식 주소 여부는 확인하지 못했어요.")
+    unverified_text = (
+        "\n".join(unverified_lines) if unverified_lines
+        else "공식 주소 대조와 문자·페이지 분석을 완료했어요."
+    )
 
     c2_item = substitute_values(c2_template, {"unverified": unverified_text})
 
@@ -1248,11 +1310,7 @@ def render_message_case_card(result: dict, job_id: str | None = None) -> dict:
 
 
 def _message_k6_card(response_actions: list[str], answers: list[str]) -> dict:
-    lines = [
-        f"{i}. {_VOICE_RESPONSE_ACTION_LINES[action]}"
-        for i, action in enumerate(response_actions, start=1)
-        if action in _VOICE_RESPONSE_ACTION_LINES
-    ]
+    lines = _response_action_lines(response_actions, answers)
     buttons = [
         _MESSAGE_K6_PHONE_BUTTONS[action]
         for action in response_actions

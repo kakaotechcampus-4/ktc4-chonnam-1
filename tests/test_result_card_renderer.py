@@ -90,7 +90,7 @@ class TestRenderResultCard:
 
         card = render_result_card(analysis)
 
-        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card = card["template"]["outputs"][0]["basicCard"]
         assert "누리몰" in text_card["description"]
 
     def test_no_job_id_means_no_extra_injected(self):
@@ -718,7 +718,7 @@ class TestRenderDetailCarouselGuidance:
         long_text = "고객센터 " + "0" * 200
         monkeypatch.setattr(
             result_card_renderer, "find_guidance",
-            lambda payload: [_guidance(kind="verification", text=long_text)],
+            lambda payload: [_guidance(kind="verification", text=long_text, rule_id="synthetic")],
         )
 
         carousel = render_detail_carousel(self._analysis())
@@ -818,7 +818,7 @@ class TestRenderDetailCarouselGuidance:
 
         c2 = _c2_text(analysis)
 
-        assert "모두 확인했어요." in c2
+        assert "공식 주소 대조와 문자·페이지 분석을 완료했어요." in c2
         assert "문자:" not in c2
         assert "페이지:" not in c2
 
