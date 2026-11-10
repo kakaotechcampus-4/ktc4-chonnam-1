@@ -47,6 +47,7 @@ MESSAGE_TEMPLATES: dict[EvidenceCode, str] = {
     EvidenceCode.INSTITUTION_CLAIM: "보낸 사람이 기관을 내세웠지만, 문자만으로 실제 기관인지는 확인할 수 없어요.",
     EvidenceCode.ACQUAINTANCE_CLAIM: "보낸 사람이 아는 사람이라고 했지만, 문자만으로 본인인지는 확인할 수 없어요.",
     EvidenceCode.ACCOUNT_LOCK_LURE: "계정이 정지·동결됐다며 링크에서 풀라고 했어요. 자주 쓰이는 사칭 수법이에요.",
+    EvidenceCode.LOTTERY_LURE: "로또 회차·당첨을 내세워 링크로 끌어들였어요. 자주 쓰이는 스팸 수법이에요.",
     EvidenceCode.USER_NOT_PERSON: "원래 알던 번호로 통화해 보니 본인이 아니라고 답해 주셨어요.",
     EvidenceCode.USER_IS_PERSON: "원래 알던 번호로 통화해 보니 본인이 맞다고 답해 주셨어요.",
 }
