@@ -48,7 +48,7 @@ _RISK_DEMANDS = frozenset(
         _E.CALL_REQUEST,
     }
 )
-_ANY_DEMAND = _RISK_DEMANDS | {_E.MESSENGER_MOVE, _E.ACCOUNT_LOCK_LURE}
+_ANY_DEMAND = _RISK_DEMANDS | {_E.MESSENGER_MOVE, _E.ACCOUNT_LOCK_LURE, _E.LOTTERY_LURE}
 _CLAIMS = frozenset({_E.INSTITUTION_CLAIM, _E.ACQUAINTANCE_CLAIM})
 # 개인 메신저 아이디: @handle, "아이디: xxx", 영문·숫자가 섞인 낱말(ck5529, zxf226).
 # 가게 "채널 추가" 광고와 모르는 사람의 아이디 유도를 가른다 (#160)
@@ -239,6 +239,8 @@ def decide_message(
         or (acquaintance and codes & {_E.MESSENGER_MOVE, _E.CONTACT_BLOCKER})
         # 링크로 계정 정지를 풀라는 미끼(#160-4). message.py 가 링크가 있을 때만 근거를 넣는다
         or _E.ACCOUNT_LOCK_LURE in codes
+        # 링크로 끌어들이는 로또 회차·당첨 미끼(#160-2). 역시 링크가 있을 때만 근거가 들어온다
+        or _E.LOTTERY_LURE in codes
         # 모르는 사람이 개인 메신저 아이디로 옮기라는 문자도 주의다 (#160). 통화 게이트는 그대로 둔다
         or any(e.code == _E.MESSENGER_MOVE and e.quote and MESSENGER_HANDLE.search(e.quote) for e in base)
     )

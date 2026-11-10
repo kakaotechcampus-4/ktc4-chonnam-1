@@ -710,3 +710,32 @@ async def test_plain_lock_notice_is_not_a_lure(text):
     r = await analyze_message_case(text, runtime=_runtime({}), has_link=True)
     assert all(e.code != E.ACCOUNT_LOCK_LURE for e in r.evidence)
     assert r.caution is False
+
+
+# ── #160-2: 로또 회차·당첨을 내세운 미끼 + 링크 ─────────────────────────────
+
+LOTTERY = "[Web발신]\n[로)1179회 2,등 발송오류\n(또}1180회 살펴주세요"
+
+
+@pytest.mark.parametrize("reading", [{}, None], ids=["llm", "lexicon"])
+async def test_lottery_lure_with_link_is_caution(reading):
+    r = await analyze_message_case(LOTTERY, runtime=_runtime(reading), has_link=True)
+    assert (r.conclusion, r.caution) == (Conclusion.INCONCLUSIVE, True)
+    assert any(e.code == E.LOTTERY_LURE for e in r.evidence)
+    assert r.stop_actions[0] == StopAction.DONT_CLICK_LINK
+
+
+async def test_lottery_lure_needs_a_link():
+    r = await _analyze(LOTTERY, {})
+    assert all(e.code != E.LOTTERY_LURE for e in r.evidence)
+
+
+@pytest.mark.parametrize("text", [
+    "제23회 정기총회 개최 안내",
+    "회원님 3회 연속 출석 이벤트 당첨을 축하합니다",
+    "제 1024회 동창회 모임 공지",
+])
+async def test_ordinary_round_numbers_are_not_lottery_lure(text):
+    r = await analyze_message_case(text, runtime=_runtime({}), has_link=True)
+    assert all(e.code != E.LOTTERY_LURE for e in r.evidence)
+    assert r.caution is False
