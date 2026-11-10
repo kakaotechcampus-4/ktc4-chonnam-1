@@ -495,7 +495,7 @@ class TestVoiceDetailCarouselTemplate:
 
         card = main.render_detail_carousel(analysis_result)
 
-        assert card["template"]["outputs"][0]["carousel"]["type"] == "basicCard"
+        assert card["template"]["outputs"][0]["carousel"]["type"] == "textCard"
 
 
 class TestTranscribeAndAnalyzeWiring:

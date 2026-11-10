@@ -4,7 +4,13 @@
 렌더러는 `services/kakao_card_renderer.py`. BE가 이 폴더의 `cards/`를 직접 읽는다.
 `backend/src/server/templates/kakao_templates/`는 시험 경로(`/test/kakao/r1-lookalike`)만 쓰는 옛 사본이라 기준이 아니다.
 
-카카오 응답 타입: simpleText / basicCard / itemCard / listCard / quickReplies
+카카오 응답 타입: simpleText / textCard / basicCard / itemCard / listCard / quickReplies
+
+### #157 문자 상세 캐러셀
+
+- 문자 상세 C1~C4는 이미지 없는 `textCard` 캐러셀이다. 본문은 장당 128자,
+  캐러셀은 최대 10장이다. C1은 고정된 의심 이유를 보존하고 인용문 길이만
+  남은 공간에 맞춘다. 음성 캐러셀의 구성과 Job ID 조회는 유지한다.
 
 ## 카드 JSON
 
@@ -74,7 +80,7 @@
   이미지가 준비되면 해당 카드를 `basicCard` + `thumbnail`로 바꾼다.
 - 확정 카드 이미지는 `assets/cards/`에 둔다. `imageUrl`은 `develop` 브랜치의
   `raw.githubusercontent.com` 주소라 **develop에 머지된 뒤에야 보인다.**
-  지금 적용한 카드: W1, B1a, B2, B2a, B2b, R1~R4, 자세히 보기 캐러셀(C1~C3).
+  지금 적용한 카드: W1, B1a, B2, B2a, B2b, R1~R4. 문자 상세 캐러셀(C1~C4)은 이미지 없이 제공한다.
   이미지 파일 이름은 카드 파일 이름을 따른다(R1만 `r1-danger.png`, 캐러셀은 `c1-signal` `c2-scope` `c3-action`).
   B1은 W1 이미지(`w1-welcome.png`)를 같이 쓴다.
 - R5는 `template`이 없어 이미지를 붙일 수 없으므로 그대로 둔다. R5용으로 받은 "분석 중"

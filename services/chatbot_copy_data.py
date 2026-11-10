@@ -93,3 +93,23 @@ def get_message_failure_copy(failures: list[str] | None) -> str:
         failures[0],
         _FALLBACK_MESSAGE_FAILURE,
     )
+
+
+# chatbot-copy.md 4절의 카드용 짧은 문장. 번호는 NR-0015 원문에 있는 값만 사용한다.
+GUIDANCE_DELIVERY_CONTACTS = {
+    "우체국택배": ("우체국", "1588-1300"),
+    "CJ대한통운": ("CJ대한통운", "1588-1255"),
+    "CJ택배": ("CJ대한통운", "1588-1255"),
+    "한진택배": ("한진택배", "1588-0011"),
+    "롯데택배": ("롯데택배", "1588-2121"),
+    "로젠택배": ("로젠택배", "1588-9988"),
+}
+GUIDANCE_DELIVERY_ACTION = "택배 배송·주소 문제는 문자 속 링크나 걸려 온 번호 대신 고객센터에 직접 전화해 확인하세요."
+GUIDANCE_DELIVERY_ALL_CONTACTS = (
+    "우체국 1588-1300, CJ대한통운 1588-1255, 한진 1588-0011, "
+    "롯데 1588-2121, 로젠 1588-9988"
+)
+GUIDANCE_CARD_CONTACT = (
+    "결제·승인 문제는 문자에 적힌 번호 대신 카드사 고객센터에 직접 전화해 확인하세요.\n"
+    "고객센터 번호는 카드 뒷면이나 카드사 공식 앱에서 확인하세요."
+)
