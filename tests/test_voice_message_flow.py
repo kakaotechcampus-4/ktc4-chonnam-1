@@ -21,9 +21,10 @@ import httpx
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi.testclient import TestClient
 
 import main
+from services.result_card_renderer import render_detail_carousel, render_voice_detail_carousel, render_voice_result_card
+from services.kakao_card_renderer import render_card
 from ai.case.types import (
     ClaimView,
     ClaimViewDemand,
@@ -50,17 +51,7 @@ def clean_state(monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("KAKAO_MEDIA_HOSTS", "media.kakao.test")
     monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "bot-api.kakao.com")
-    main.ANALYSIS_JOBS.clear()
-    main.RUNNING_USERS.clear()
     yield
-    main.ANALYSIS_JOBS.clear()
-    main.RUNNING_USERS.clear()
-
-
-@pytest.fixture
-def client():
-    with TestClient(main.app) as test_client:
-        yield test_client
 
 
 SIGNED_CDN_URL = "https://media.kakao.test/rec/abc?token=should-not-leak"
@@ -255,7 +246,7 @@ class TestVoiceMessageIsRoutedBeforeReadMessage:
         )
 
         assert response.status_code == 200
-        assert response.json() == main.render_card("r6-input-required")
+        assert response.json() == render_card("r6-input-required")
         assert [text for text, _ in calls] == ["https://media.kakao.test/page.html"]
 
 
@@ -296,14 +287,14 @@ class TestVoiceMessageSyncPath:
         response = client.post("/kakao/skill", json=_voice_skill_payload())
 
         assert response.status_code == 200
-        assert response.json() == main.render_card("r4-unavailable")
+        assert response.json() == render_card("r4-unavailable")
 
     def test_running_user_duplicate_is_still_enforced(self, client, monkeypatch):
         main.RUNNING_USERS.add("voice-user")
 
         response = client.post("/kakao/skill", json=_voice_skill_payload())
 
-        assert response.json() == main.render_card("k5-duplicate")
+        assert response.json() == render_card("k5-duplicate")
 
     def test_missing_media_url_is_handled_safely(self, client):
         payload = _voice_skill_payload()
@@ -312,7 +303,7 @@ class TestVoiceMessageSyncPath:
         response = client.post("/kakao/skill", json=payload)
 
         assert response.status_code == 200
-        assert response.json() == main.render_card("r4-unavailable")
+        assert response.json() == render_card("r4-unavailable")
 
 
 class TestV1CallClaimsFieldMapping:
@@ -331,7 +322,7 @@ class TestV1CallClaimsFieldMapping:
             ),
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "통화에 나온 기관: '금융감독원 조사국입니다'" in description
@@ -346,7 +337,7 @@ class TestV1CallClaimsFieldMapping:
             ),
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "통화에 나온 말: '지금 바로 입금하세요'" in description
@@ -356,7 +347,7 @@ class TestV1CallClaimsFieldMapping:
             claims=ClaimView(pretexts=["계좌가 범죄에 연루됐습니다"]),
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "통화에 나온 사정: '계좌가 범죄에 연루됐습니다'" in description
@@ -366,7 +357,7 @@ class TestV1CallClaimsFieldMapping:
             claims=ClaimView(blockers=["다른 사람에게 말하지 마세요"], pretexts=["계좌가 범죄에 연루됐습니다"]),
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "통화에 나온 사정: '다른 사람에게 말하지 마세요'" in description
@@ -382,7 +373,7 @@ class TestV1CallClaimsFieldMapping:
             ]),
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "통화에 나온 요구: 송금·입금, 앱 설치, 인증번호 전달" in description
@@ -391,7 +382,7 @@ class TestV1CallClaimsFieldMapping:
     def test_empty_claims_omit_the_whole_block(self):
         result = _voice_result(claims=ClaimView()).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "통화에서 들은 내용" not in description
@@ -405,18 +396,18 @@ class TestVoiceResultConclusionBranching:
     def test_not_analyzable_uses_ve3_unrecognized_card(self):
         result = _voice_result(conclusion=Conclusion.NOT_ANALYZABLE).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
 
-        assert card == main.render_card("ve3-unrecognized")
+        assert card == render_card("ve3-unrecognized")
         text_card = _card_body(card)
         assert text_card["title"] == "🎙️ 녹음 내용을 알아듣지 못했어요"
 
     def test_input_required_uses_ve4_no_claim_card(self):
         result = _voice_result(conclusion=Conclusion.INPUT_REQUIRED).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
 
-        assert card == main.render_card("ve4-no-claim")
+        assert card == render_card("ve4-no-claim")
         text_card = _card_body(card)
         assert text_card["title"] == "🎙️ 녹음에 사칭·요구하는 말이 없어요"
 
@@ -432,7 +423,7 @@ class TestVoiceResultConclusionBranching:
             questions=[AttachedQuestion(question_id=QuestionId.ALREADY_ACTED, option_ids=["sent_money"])],
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result, job_id="some-job")
+        card = render_voice_result_card(result, job_id="some-job")
 
         assert len(card["template"]["outputs"]) == 1
 
@@ -442,7 +433,7 @@ class TestVoiceResultConclusionBranching:
 
         result = _voice_result(conclusion=Conclusion.SUSPECTED).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         text_card = _card_body(card)
         labels = {b["label"] for b in text_card["buttons"]}
 
@@ -462,7 +453,7 @@ class TestVoiceDetailCarouselTemplate:
             caution=False,
         ).model_dump(mode="json")
 
-        card = main.render_voice_detail_carousel(result)
+        card = render_voice_detail_carousel(result)
 
         items = card["template"]["outputs"][0]["carousel"]["items"]
         assert "- 통화에 나온 기관: '금융감독원입니다'" in items[0]["description"]
@@ -478,7 +469,7 @@ class TestVoiceDetailCarouselTemplate:
     def test_detail_carousel_with_no_claims_uses_fallback_text(self):
         result = _voice_result(claims=ClaimView()).model_dump(mode="json")
 
-        card = main.render_voice_detail_carousel(result)
+        card = render_voice_detail_carousel(result)
 
         assert "확인된 의심 근거가 없어요." in card["template"]["outputs"][0]["carousel"]["items"][0]["description"]
 
@@ -492,7 +483,7 @@ class TestVoiceDetailCarouselTemplate:
             "env": {"answer": "no_risk_found", "details": {"signals": []}},
         }
 
-        card = main.render_detail_carousel(analysis_result)
+        card = render_detail_carousel(analysis_result)
 
         assert card["template"]["outputs"][0]["carousel"]["type"] == "textCard"
 
@@ -648,7 +639,7 @@ class TestTranscribeAndAnalyzeWiring:
 
         card = await main.run_voice_analysis(SIGNED_CDN_URL)
 
-        assert card == main.render_card("r4-unavailable")
+        assert card == render_card("r4-unavailable")
         assert len(removed) == 1
 
 
@@ -755,7 +746,7 @@ class TestVoiceInputValidation:
         from fastapi import BackgroundTasks
         response = await main.handle_voice_message({"type": "audio", "url": SIGNED_CDN_URL},
                                                   "voice-user", None, BackgroundTasks())
-        assert response == main.render_card("r4-unavailable")
+        assert response == render_card("r4-unavailable")
         assert "voice-user" not in main.RUNNING_USERS and stopped.is_set()
 
     @pytest.mark.parametrize("data,expected_card,reason", [
@@ -781,7 +772,7 @@ class TestVoiceInputValidation:
         job_id = main.create_analysis_job("voice-user") if with_job else None
         result = await main.run_voice_analysis(SIGNED_CDN_URL, job_id=job_id)
         if reason is None:
-            assert result == main.render_card(expected_card)
+            assert result == render_card(expected_card)
         else:
             description = _card_body(result)["description"]
             assert reason in description and "{{ reason_line }}" not in description
@@ -852,7 +843,7 @@ class TestVoiceInputValidation:
         monkeypatch.setattr(main, "download_voice_media", download)
         monkeypatch.setattr(main, "transcribe_call", transcribe)
         job_id = main.create_analysis_job("voice-user") if with_job else None
-        assert await main.run_voice_analysis(SIGNED_CDN_URL, job_id=job_id) == main.render_card("r4-unavailable")
+        assert await main.run_voice_analysis(SIGNED_CDN_URL, job_id=job_id) == render_card("r4-unavailable")
         assert "signed token must not leak" not in capsys.readouterr().out
         transcribe.assert_not_awaited()
 
@@ -911,7 +902,7 @@ class TestVoiceInputValidation:
         main.RUNNING_USERS.add("voice-user")
         await main.run_analysis_and_callback("", "https://untrusted.example/cb", "voice-user", job_id,
                                              voice_media_url=SIGNED_CDN_URL)
-        assert main.ANALYSIS_JOBS[job_id]["result"] == main.render_card("r4-unavailable")
+        assert main.ANALYSIS_JOBS[job_id]["result"] == render_card("r4-unavailable")
         assert main.ANALYSIS_JOBS[job_id]["status"] == "timeout"
         assert "voice-user" not in main.RUNNING_USERS and stopped.is_set()
 
@@ -929,7 +920,7 @@ class TestVoiceMessageAsyncCallbackPath:
         )
 
         assert response.status_code == 200
-        assert response.json() == main.render_card("r5-analyzing")
+        assert response.json() == render_card("r5-analyzing")
         job, = main.ANALYSIS_JOBS.values()
         assert job["analysis_kind"] == "voice"
 
@@ -945,7 +936,7 @@ class TestVoiceMessageAsyncCallbackPath:
 
         async def fake_voice_analysis(media_url, job_id=None):
             calls.append((media_url, job_id))
-            return main.render_card("r4-unavailable")
+            return render_card("r4-unavailable")
 
         async def unexpected(*args, **kwargs):
             pytest.fail("voice_media_url이 있는데 다른 분석 경로가 호출됨")
@@ -966,7 +957,7 @@ class TestVoiceMessageAsyncCallbackPath:
         """콜백 URL이 만료·불량이어도 기존 콜백 실패 처리로 안전하게 끝난다."""
 
         async def fake_voice_analysis(media_url, job_id=None):
-            return main.render_card("r4-unavailable")
+            return render_card("r4-unavailable")
 
         monkeypatch.setattr(main, "run_voice_analysis", fake_voice_analysis)
 
@@ -1300,7 +1291,7 @@ class TestV1NumberChecksAndSimilarCases:
             number_checks=[NumberCheck(number="1332", org="금융감독원", result="official")],
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "상대가 말한 번호(1332): 금융감독원 대표번호와 같아요" in description
@@ -1315,7 +1306,7 @@ class TestV1NumberChecksAndSimilarCases:
             number_checks=[NumberCheck(number="010-1234-5678", org="금융감독원", result="not_official")],
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "상대가 말한 번호(010-1234-5678): 금융감독원 대표번호가 아니에요" in description
@@ -1331,7 +1322,7 @@ class TestV1NumberChecksAndSimilarCases:
             number_checks=[NumberCheck(number="02-1234-5678", org="알 수 없는 기관", result="org_not_listed")],
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "공식 번호가 아니에요" not in description
@@ -1348,7 +1339,7 @@ class TestV1NumberChecksAndSimilarCases:
 
         result = _voice_result(checked=[CheckItem.PHONE_NUMBER]).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "- 상대가 말한 전화번호" in description
@@ -1367,11 +1358,11 @@ class TestV1NumberChecksAndSimilarCases:
         # 분석 결과 데이터 자체는 유지된다 — payload에는 그대로 남아 있다.
         assert result["similar_cases"]["matches"][0]["case_id"] == "c1"
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "- 비슷한 사례" in description
-        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        items = render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
         assert items[1]["title"] == "📚 비슷한 사례"
         assert "비슷한 예시 통화를 찾았어요" in items[1]["description"]
         assert "결과 판단에는 쓰지 않았어요" in items[1]["description"]
@@ -1398,7 +1389,7 @@ class TestV1NumberChecksAndSimilarCases:
         ])
         result = _voice_result(similar_cases=similar).model_dump(mode="json")
 
-        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        items = render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
 
         assert items[1]["description"] == (
             f"이번 통화는 '{similar_type}' 수법의 예시 통화와 비슷해요.\n{similar_line}\n\n"
@@ -1414,7 +1405,7 @@ class TestV1NumberChecksAndSimilarCases:
         ])
         result = _voice_result(similar_cases=similar).model_dump(mode="json")
 
-        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        items = render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
 
         assert items[1]["description"] == (
             "이번 통화는 '보이스피싱' 수법의 예시 통화와 비슷해요.\n\n"
@@ -1429,7 +1420,7 @@ class TestV1NumberChecksAndSimilarCases:
         ])
         result = _voice_result(similar_cases=similar).model_dump(mode="json")
 
-        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        items = render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
 
         assert "비슷한 예시 통화를 찾았어요" in items[1]["description"]
         assert "new_unlisted_type" not in str(items)
@@ -1454,11 +1445,11 @@ class TestLatestVoice115Contract:
             checked=[CheckItem.SIMILAR_CASES] if status == "completed" else [],
             unchecked=[Unchecked(item="similar_cases", reason=reason)] if reason else [],
         ).model_dump(mode="json")
-        initial = main.render_voice_result_card(result)
+        initial = render_voice_result_card(result)
         description = _card_body(initial)["description"]
         assert f"- 비슷한 사례 ({expected})" in description
         assert description.count("- 비슷한 사례") == 1
-        carousel = main.render_voice_detail_carousel(result)
+        carousel = render_voice_detail_carousel(result)
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
         assert all(item["title"] != "📚 비슷한 사례" for item in items)
         assert f"- 비슷한 사례 ({expected})" in items[1]["description"]
@@ -1467,7 +1458,7 @@ class TestLatestVoice115Contract:
     @pytest.mark.parametrize("caution", [False, True])
     def test_caution_does_not_imply_unknown_speaker(self, caution):
         result = _voice_result(caution=caution).model_dump(mode="json")
-        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        items = render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
         assert "상대가 한 말로 보이는 문장만 근거로 썼어요." in items[0]["description"]
         assert "누가 한 말인지 가리지 못해" not in str(items)
 
@@ -1485,11 +1476,11 @@ class TestLatestVoice115Contract:
             demands=[ClaimViewDemand(kind=DemandKind.MONEY_TRANSFER, quote="돈을 보내세요")],
             blockers=["전화가 안 돼요"],
         )).model_dump(mode="json")
-        without_marker = main.render_voice_result_card(result)
-        carousel_without_marker = main.render_voice_detail_carousel(result)
+        without_marker = render_voice_result_card(result)
+        carousel_without_marker = render_voice_detail_carousel(result)
         result["unchecked"].append({"item": "speaker", "reason": "speaker_unknown"})
-        initial = main.render_voice_result_card(result)
-        carousel = main.render_voice_detail_carousel(result)
+        initial = render_voice_result_card(result)
+        carousel = render_voice_detail_carousel(result)
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
         for label in ("통화에 나온 기관", "통화에 나온 말", "통화에 나온 사정", "통화에 나온 요구"):
             assert label in str(initial)
@@ -1503,7 +1494,7 @@ class TestLatestVoice115Contract:
         assert result["conclusion"] == "suspected"
 
     def test_b2d_uses_only_112_and_1394(self):
-        card = _card_body(main.render_card("b2d-call-acted"))
+        card = _card_body(render_card("b2d-call-acted"))
         assert [b["phoneNumber"] for b in card["buttons"]] == ["112", "1394"]
         assert "1332" not in str(card)
 
@@ -1521,7 +1512,7 @@ class TestExistingTextAndUrlFlowsAreUnaffected:
         )
 
         assert response.status_code == 200
-        assert response.json() == main.render_card("r6-input-required")
+        assert response.json() == render_card("r6-input-required")
         assert [text for text, _ in calls] == ["평범한 문자"]
 
     def test_media_dict_without_audio_type_falls_through_to_normal_flow(self, client):
@@ -1539,7 +1530,7 @@ class TestExistingTextAndUrlFlowsAreUnaffected:
         )
 
         assert response.status_code == 200
-        assert response.json() == main.render_card("r6-input-required")
+        assert response.json() == render_card("r6-input-required")
 
 
 class TestVoiceDownloadCancellation:

@@ -6,16 +6,8 @@ X-Skill-Secret 헤더를 요구하는지 검증한다. local/test 환경은 예�
 tests/test_analysis_job_api.py의 clean_jobs fixture가 이걸 보장한다).
 """
 
-import pytest
-from fastapi.testclient import TestClient
 
 import main
-
-
-@pytest.fixture
-def client():
-    with TestClient(main.app) as test_client:
-        yield test_client
 
 
 SKILL_PAYLOAD = {
@@ -146,17 +138,14 @@ class TestOtherProtectedRoutes:
             "callback_error": None,
         }
 
-        try:
-            response = client.get("/api/analyses/job-1")
-            assert response.status_code == 401
+        response = client.get("/api/analyses/job-1")
+        assert response.status_code == 401
 
-            response = client.get(
-                "/api/analyses/job-1",
-                headers={"X-Skill-Secret": "s3cret"},
-            )
-            assert response.status_code == 200
-        finally:
-            main.ANALYSIS_JOBS.clear()
+        response = client.get(
+            "/api/analyses/job-1",
+            headers={"X-Skill-Secret": "s3cret"},
+        )
+        assert response.status_code == 200
 
     def test_r1_lookalike_test_route_requires_secret_in_production(self, client, monkeypatch):
         monkeypatch.setenv("APP_ENV", "production")

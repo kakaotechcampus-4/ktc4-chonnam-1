@@ -7,9 +7,9 @@
 """
 
 import pytest
-from fastapi.testclient import TestClient
 
 import main
+from services.kakao_card_renderer import render_card
 
 
 @pytest.fixture(autouse=True)
@@ -22,19 +22,7 @@ def clean_jobs(monkeypatch):
     """
     monkeypatch.setenv("APP_ENV", "test")
 
-    main.ANALYSIS_JOBS.clear()
-    main.RUNNING_USERS.clear()
-
     yield
-
-    main.ANALYSIS_JOBS.clear()
-    main.RUNNING_USERS.clear()
-
-
-@pytest.fixture
-def client():
-    with TestClient(main.app) as test_client:
-        yield test_client
 
 
 def _create_job(
@@ -126,7 +114,7 @@ class TestHandleCheckResult:
             "user-without-job"
         )
 
-        expected = main.render_card(
+        expected = render_card(
             "k4-no-result"
         )
 
@@ -143,7 +131,7 @@ class TestHandleCheckResult:
             "user-1"
         )
 
-        expected = main.render_card(
+        expected = render_card(
             "k1-still-running"
         )
 
@@ -222,7 +210,7 @@ class TestHandleCheckResult:
             "user-1"
         )
 
-        expected = main.render_card(
+        expected = render_card(
             "k4-no-result"
         )
 
@@ -246,7 +234,7 @@ class TestHandleCheckResult:
             "user-1"
         )
 
-        expected = main.render_card(
+        expected = render_card(
             "r4-unavailable"
         )
 
@@ -286,7 +274,7 @@ class TestCheckResultSkill:
 
         assert response.status_code == 200
 
-        expected = main.render_card(
+        expected = render_card(
             "k1-still-running"
         )
 
@@ -327,7 +315,7 @@ class TestCheckResultSkill:
 
         assert response.status_code == 200
 
-        expected = main.render_card(
+        expected = render_card(
             "r6-input-required"
         )
 

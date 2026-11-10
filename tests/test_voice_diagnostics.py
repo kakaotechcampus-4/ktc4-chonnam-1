@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 import main
+from services.kakao_card_renderer import render_card
 from ai.case.types import Conclusion, Scenario, Segment, Side, TranscriptResult, VoiceCaseResult
 from ai.types import FailureCode
 
@@ -26,8 +27,6 @@ SECRET = "private-auth-secret"
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch):
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
-    monkeypatch.setattr(main, "RUNNING_USERS", set())
     monkeypatch.setenv("APP_ENV", "staging")
     monkeypatch.setenv("KAKAO_SKILL_SECRET", SECRET)
     monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "callback.example.test")
@@ -162,7 +161,7 @@ async def test_voice_failures_keep_existing_card_and_safe_logs(monkeypatch, pipe
     assert job["callback_status"] == "success"
     assert delivered == [job["result"]]
     if card:
-        assert delivered[0] == main.render_card(card)
+        assert delivered[0] == render_card(card)
         assert f"card={card}" in output
         assert job["status"] == "completed"  # VE3/R4 카드 반환은 Job 예외와 다르다
     else:
@@ -189,7 +188,7 @@ async def test_actual_skill_request_does_not_log_private_data(monkeypatch, pipel
         monkeypatch.setattr(main, "get_http_client", lambda: callback)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="https://skill.example.test") as client:
             response = await client.post("/kakao/skill", headers={"X-Skill-Secret": SECRET}, json={"userRequest": request})
-    assert response.json() == main.render_card("r5-analyzing")
+    assert response.json() == render_card("r5-analyzing")
     output = capsys.readouterr().out
     assert_private(output)
     job_id, job = next(iter(main.ANALYSIS_JOBS.items()))
@@ -225,7 +224,7 @@ async def test_voice_deadline_logs_cancel_and_r4_without_user(monkeypatch, pipel
     assert f"job_id={job_id} stage=download status=cancelled" in output
     assert "card=r4-unavailable" in output
     assert main.ANALYSIS_JOBS[job_id]["status"] == "timeout"
-    assert main.ANALYSIS_JOBS[job_id]["result"] == main.render_card("r4-unavailable")
+    assert main.ANALYSIS_JOBS[job_id]["result"] == render_card("r4-unavailable")
     assert USER not in main.RUNNING_USERS
 
 

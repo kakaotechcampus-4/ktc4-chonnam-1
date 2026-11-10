@@ -12,8 +12,6 @@ NOTICE = "분석 결과를 찾을 수 없어요. 문자나 통화 녹음을 다�
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch):
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
-    monkeypatch.setattr(main, "RUNNING_USERS", set())
     monkeypatch.setenv("APP_ENV", "staging")
     monkeypatch.setenv("KAKAO_SKILL_SECRET", "synthetic-secret")
     monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "callback.example.test")

@@ -64,7 +64,7 @@ def _description(card: dict) -> str:
 async def test_slow_embedding_still_reports_similar_cases(monkeypatch, kb, slow_embedding, caplog):
     _use_search(monkeypatch, lambda text: search.search_cases(text, cases_dir=kb, min_similarity=0.1))
     jobs = {"job-1": {"status": "running"}}
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", jobs)
+    main.ANALYSIS_JOBS.update(jobs)
 
     with caplog.at_level(logging.WARNING):
         card = await main.run_message_case(TEXT, job_id="job-1")

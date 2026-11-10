@@ -27,7 +27,6 @@ async def test_callbacks_reuse_shared_client(monkeypatch):
     monkeypatch.setattr(service.httpx, "AsyncClient", client_factory)
     monkeypatch.setattr(main, "run_analysis", analyze)
     monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "bot-api.kakao.com")
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
     async with service.http_client_lifespan(None):
         for user in ("a", "b"):
             job_id = main.create_analysis_job(user)

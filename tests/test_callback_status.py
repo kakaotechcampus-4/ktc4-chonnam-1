@@ -19,18 +19,6 @@ import pytest
 import main
 
 
-@pytest.fixture(autouse=True)
-def clean_jobs():
-    """테스트마다 Job 저장소와 실행 중 사용자 상태를 초기화한다."""
-    main.ANALYSIS_JOBS.clear()
-    main.RUNNING_USERS.clear()
-
-    yield
-
-    main.ANALYSIS_JOBS.clear()
-    main.RUNNING_USERS.clear()
-
-
 def _create_job(
     job_id: str,
     user_id: str = "test-user",
