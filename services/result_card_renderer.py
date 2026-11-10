@@ -1068,6 +1068,7 @@ _KISA_BUTTON = {
 }
 # 멈출 행동이 하나일 때 쓰는 문장(멈출 행동 표 "한 문장으로 쓸 때")
 _MESSAGE_STOP_SINGLE = {
+    "dont_click_link": "문자 속 링크를 누르지 마세요.",
     "dont_enter_info": "정보를 입력하지 마세요.",
     "dont_install_app": "앱을 설치하지 마세요.",
     "dont_send_money": "돈을 보내지 마세요.",
@@ -1282,6 +1283,64 @@ def render_message_case_card(result: dict, job_id: str | None = None) -> dict:
     if not question_cards:
         return card
     return merge_kakao_responses([card, *question_cards])
+
+
+def link_caution_applies(analysis_result: dict) -> bool:
+    """링크 결과가 판단 보류(R9)이고 주소가 공식이 아닌가 (#89).
+
+    이때만 문자 게이트를 불러 주의 갈래를 고른다. 위험 근거가 있으면 R1, 사칭 패턴이면 R8 로
+    이미 정해졌고, 공식 주소면 진짜 택배사 문자에 경고가 나가지 않게 제외한다("공식 주소 일치를 제외한 이유").
+    """
+
+    official = (analysis_result.get("url") or {}).get("official")
+    return select_result_card(analysis_result) == "r9-uncertain" and official != "official"
+
+
+def render_link_caution_card(analysis_result: dict, case_result: dict | None) -> dict | None:
+    """링크 결과가 판단 보류인데 문자 게이트가 주의라고 하면 R6b 주의 갈래 카드를 만든다 (#89).
+
+    새 카드를 만들지 않고 링크 없는 문자 결과 카드(`r6b-uncertain`)를 그대로 쓴다. 판정은 바꾸지 않고
+    판단 보류 안에서 제목과 첫머리만 고른다. 주의가 아니면 None 을 돌려주고 호출부가 R9 를 쓴다.
+    링크 결과 아래 Q1 은 미구현(chatbot-copy.md D16)이라 질문 카드는 붙이지 않는다.
+    """
+
+    if not case_result or not case_result.get("caution"):
+        return None
+    if case_result.get("conclusion") != Conclusion.INCONCLUSIVE.value:
+        return None
+
+    url = analysis_result.get("url") or {}
+    message = analysis_result.get("message") or {}
+    env = analysis_result.get("env") or {}
+    brand = message.get("brand")
+
+    address_checked, address_unchecked = _r9_address_lines(url.get("official"), brand)
+    env_checked, env_unchecked = _r9_env_lines(
+        env.get("answer"), ((env.get("details") or {}).get("reason") or {}).get("failures") or [],
+    )
+    case_checked, case_unchecked = _message_checked_unchecked(case_result)
+    checked = [line for line in case_checked.splitlines() if line != _R9_NO_LINES]
+    checked += [f"- {line}" for line in (address_checked, env_checked) if line]
+    unchecked = [line for line in case_unchecked.splitlines() if line != _R9_NO_LINES]
+    unchecked += [f"- {line}" for line in (address_unchecked, env_unchecked) if line]
+
+    stop_line = _message_stop_line(case_result.get("stop_actions") or [])
+    values = {
+        "headline": _MESSAGE_HEADLINES["caution"],
+        "stop_line": stop_line,
+        "verify_line": _message_verify_line(case_result, bool(stop_line)),
+        "basis_note": "",
+        "message_claims": _message_claims_block(case_result, True),
+        "checked": "\n".join(checked) or _R9_NO_LINES,
+        "unchecked": "\n".join(unchecked) or _R9_NO_LINES,
+    }
+    card = _tidy_description(render_card("r6b-uncertain", values))
+    if len(card["template"]["outputs"][0]["textCard"]["description"]) > _R9_CARD_MAX_LENGTH:
+        # textCard 설명 상한(400자)을 넘으면 주장 요약을 빼고, 그래도 넘으면 끝을 자른다
+        card = _tidy_description(render_card("r6b-uncertain", {**values, "message_claims": ""}))
+        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card["description"] = _truncate_evidence(text_card["description"], _R9_CARD_MAX_LENGTH)
+    return card
 
 
 def _message_k6_card(response_actions: list[str], answers: list[str]) -> dict:
