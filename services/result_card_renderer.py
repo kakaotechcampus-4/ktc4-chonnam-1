@@ -13,6 +13,7 @@ from typing import Any
 from ai.case.types import Conclusion
 from services.chatbot_copy_data import (
     GUIDANCE_CARD_CONTACT,
+    VOICE_SIMILAR_TYPES,
     GUIDANCE_DELIVERY_ACTION,
     GUIDANCE_DELIVERY_ALL_CONTACTS,
     GUIDANCE_DELIVERY_CONTACTS,
@@ -512,24 +513,31 @@ def render_voice_detail_carousel(result: dict) -> dict:
     _, unchecked = _voice_checked_unchecked(result)
     verify_line = _voice_verify_line(result.get("official_contact"))
 
+    # #109: 가장 닮은 사례 하나(matches[0])의 type 으로 문구를 고른다. 표에 없는 유형이면
+    # 수법을 추측하지 않고 사례를 찾았다는 사실만 알린다.
+    top_type = ((result.get("similar_cases") or {}).get("matches") or [{}])[0].get("type") or ""
+    similar_type, similar_line = VOICE_SIMILAR_TYPES.get(top_type, ("", ""))
+
     card = render_card("c-detail-carousel-voice", {
         "claim_lines": claim_lines,
         "claim_note": "상대가 한 말로 보이는 문장만 근거로 썼어요.",
-        "similar_type": "",
-        "similar_line": "",
+        "similar_type": similar_type,
+        "similar_line": similar_line,
         "unchecked": unchecked,
         "verify_line": verify_line,
     })
     items = card["template"]["outputs"][0]["carousel"]["items"]
-    if _voice_similar_cases_state(result) == "found":
-        # #109: 현재 CaseMatch에는 type이 없다. matched_variant/categories로
-        # 수법을 추측하지 않고, 검색된 사례가 있다는 사실만 알린다.
+    if _voice_similar_cases_state(result) != "found":
+        items.pop(1)
+        return card
+    if top_type in VOICE_SIMILAR_TYPES:
+        # similar_line 이 빈 유형(other)은 남는 빈 줄을 정리한다("남는 빈 줄은 BE가 정리한다")
+        items[1]["description"] = items[1]["description"].replace("\n\n\n", "\n\n")
+    else:
         items[1]["description"] = (
             "이번 통화와 비슷한 예시 통화를 찾았어요.\n\n"
             "비슷하다고 해서 사기라는 뜻은 아니에요.\n결과 판단에는 쓰지 않았어요."
         )
-    else:
-        items.pop(1)
     return card
 
 
