@@ -311,6 +311,7 @@
         "remote_app_mention",
         "call_request",
         "messenger_move",
+        "account_lock_lure",
         "user_not_person",
         "user_is_person"
       ],

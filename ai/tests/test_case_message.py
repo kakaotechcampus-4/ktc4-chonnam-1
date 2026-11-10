@@ -673,3 +673,40 @@ async def test_link_message_without_claims_stays_input_required():
                                    runtime=_runtime({}), has_link=True)
     assert r.caution is False
     assert r.conclusion == Conclusion.INPUT_REQUIRED
+
+
+# ── #160-4: 계정·지갑을 정지·동결했다며 링크로 해지·해제를 요구하는 문자 ──────
+
+LOCK = "[국제발신]\nkyc (Net****pi) 일시동결 되었습니다.고객지원 센터에서 해지해주세요"
+
+
+@pytest.mark.parametrize("reading", [{"pretexts": [{"quote": "kyc (Net****pi) 일시동결 되었습니다"}]}, None],
+                         ids=["llm", "lexicon"])
+async def test_account_lock_lure_with_link_is_caution(reading):
+    r = await analyze_message_case(LOCK, runtime=_runtime(reading), has_link=True)
+    assert (r.conclusion, r.caution) == (Conclusion.INCONCLUSIVE, True)
+    assert any(e.code == E.ACCOUNT_LOCK_LURE for e in r.evidence)
+    assert r.stop_actions[0] == StopAction.DONT_CLICK_LINK
+
+
+async def test_account_lock_lure_survives_answer():
+    r = await analyze_message_case(LOCK, runtime=_runtime({}), has_link=True)
+    after = apply_message_answer(r, "already_acted", "not_yet")
+    assert after.caution is True
+
+
+async def test_account_lock_lure_needs_a_link():
+    # 링크가 없으면 이 근거를 쓰지 않는다(링크로 해지하게 하는 수법). 다른 규칙은 그대로다
+    r = await _analyze(LOCK, {})
+    assert all(e.code != E.ACCOUNT_LOCK_LURE for e in r.evidence)
+
+
+@pytest.mark.parametrize("text", [
+    "카드 분실신고로 사용이 정지되었습니다. 문의는 고객센터로 연락 주세요",
+    "거래정지 해제를 원하시면 가까운 영업점에 방문 바랍니다",
+    "[KB] 해외결제 차단 처리되었습니다. 본인이 아니면 확인 바랍니다",
+])
+async def test_plain_lock_notice_is_not_a_lure(text):
+    r = await analyze_message_case(text, runtime=_runtime({}), has_link=True)
+    assert all(e.code != E.ACCOUNT_LOCK_LURE for e in r.evidence)
+    assert r.caution is False
