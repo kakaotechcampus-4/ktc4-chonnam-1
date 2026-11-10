@@ -198,14 +198,12 @@ def _voice_stop_line_excluding_hang_up(stop_actions: list[str]) -> str:
     return _voice_join_stop_actions(ordered)
 
 
-def _voice_verify_line(official_contact: dict | None, *, speaker_unknown: bool = False) -> str:
+def _voice_verify_line(official_contact: dict | None) -> str:
     if official_contact:
         org = official_contact.get("org", "")
         number = official_contact.get("number", "")
         return f"{org} 대표번호({number})로 직접 전화해 확인하세요."
-    if speaker_unknown:
-        return "통화에 나온 기관의 대표번호를 직접 찾아 전화해 확인하세요."
-    return "상대가 말한 기관의 대표번호를 직접 찾아 전화해 확인하세요."
+    return "통화에 나온 기관의 대표번호를 직접 찾아 전화해 확인하세요."
 
 
 def _voice_call_claims(claims: dict, caution: bool) -> str:
@@ -226,8 +224,9 @@ def _voice_call_claims(claims: dict, caution: bool) -> str:
     있었다 — ADR 0008이 채택되고(2026-11-07) #116이 "화자 분리 코드
     자체가 없어져 speaker/speaker_unknown을 결과에 남길 필요가 없다"며
     닫혀(2026-11-10), 그 분기가 영영 쓰일 수 없다는 게 확정돼 지웠다
-    (이슈 #139). `speaker_unknown`은 `_voice_verify_line()`·`claim_note`
-    에는 여전히 쓰여 `_voice_speaker_unknown()` 자체는 남겨 둔다.
+    (이슈 #139). 같은 이유로 `_voice_verify_line()`·`claim_note`의
+    `speaker_unknown` 분기와 `_voice_speaker_unknown()` 자체도 PR #167
+    리뷰에 따라 함께 지웠다.
     """
 
     identity = claims.get("identity") or []
@@ -285,11 +284,6 @@ def _voice_similar_cases_state(result: dict) -> str:
     if similar.get("status") == "completed" and similar.get("matches"):
         return "found"
     return "empty"
-
-
-def _voice_speaker_unknown(result: dict) -> bool:
-    # #116의 명시적인 표시만 읽는다. caution/claims로 화자 상태를 추측하지 않는다.
-    return any(entry.get("item") == "speaker" for entry in result.get("unchecked") or [])
 
 
 def _voice_checked_unchecked(result: dict) -> tuple[str, str]:
@@ -384,9 +378,7 @@ def render_voice_result_card(result: dict, job_id: str | None = None) -> dict:
     card = render_card("v1-voice-result", {
         "headline": headline,
         "stop_line": _voice_stop_line(result.get("stop_actions") or []),
-        "verify_line": _voice_verify_line(
-            result.get("official_contact"), speaker_unknown=_voice_speaker_unknown(result)
-        ),
+        "verify_line": _voice_verify_line(result.get("official_contact")),
         "call_claims": _voice_call_claims(result.get("claims") or {}, caution),
         "checked": checked,
         "unchecked": unchecked,
@@ -496,20 +488,16 @@ def render_voice_detail_carousel(result: dict) -> dict:
     """
 
     caution = bool(result.get("caution"))
-    speaker_unknown = _voice_speaker_unknown(result)
     claims_block = _voice_call_claims(result.get("claims") or {}, caution).strip()
     claim_lines = (
         "\n".join(claims_block.splitlines()[1:]) if claims_block else "확인된 의심 근거가 없어요."
     )
     _, unchecked = _voice_checked_unchecked(result)
-    verify_line = _voice_verify_line(result.get("official_contact"), speaker_unknown=speaker_unknown)
+    verify_line = _voice_verify_line(result.get("official_contact"))
 
     card = render_card("c-detail-carousel-voice", {
         "claim_lines": claim_lines,
-        "claim_note": (
-            "누가 한 말인지 가리지 못해 통화에 나온 말을 옮겼어요."
-            if speaker_unknown else "상대가 한 말로 보이는 문장만 근거로 썼어요."
-        ),
+        "claim_note": "상대가 한 말로 보이는 문장만 근거로 썼어요.",
         "similar_type": "",
         "similar_line": "",
         "unchecked": unchecked,

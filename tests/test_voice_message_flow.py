@@ -1377,12 +1377,15 @@ class TestLatestVoice115Contract:
         assert "상대가 한 말로 보이는 문장만 근거로 썼어요." in items[0]["description"]
         assert "누가 한 말인지 가리지 못해" not in str(items)
 
-    def test_explicit_future_speaker_marker_changes_only_display(self):
-        # #116's AI schema/propagation is pending. Exercise the documented display
-        # boundary with a dict; do not infer the marker or change the AI model.
-        # Issue #139 made the neutral "통화에 나온 ~" headers the default for every
-        # call, so the marker no longer changes the call_claims labels themselves
-        # (they already read neutral) -- only claim_note still differs when present.
+    def test_speaker_marker_no_longer_changes_call_claims_or_notes(self):
+        # #116's AI schema/propagation is pending (and, per #116's own closing
+        # comment, will never arrive -- diarization was removed outright instead).
+        # Issue #139 + the PR #167 review removed every speaker_unknown wording
+        # branch (ADR 0008 adopted, #116 closed), so an explicit marker in
+        # `unchecked` no longer changes call_claims labels, claim_note, or
+        # verify_line. It still adds its own line to the unchecked list --
+        # that part of `_voice_checked_unchecked()` is unrelated cleanup, out
+        # of this issue's scope, and is asserted here only to document it.
         result = _voice_result(claims=ClaimView(
             identity=[ClaimViewIdentity(kind=IdentityKind.INSTITUTION, name="검찰", quote="검찰입니다", listed_institution=True)],
             demands=[ClaimViewDemand(kind=DemandKind.MONEY_TRANSFER, quote="돈을 보내세요")],
@@ -1394,8 +1397,9 @@ class TestLatestVoice115Contract:
         for label in ("통화에 나온 기관", "통화에 나온 말", "통화에 나온 사정", "통화에 나온 요구"):
             assert label in str(initial)
             assert label in items[0]["description"]
-        assert "누가 한 말인지 가리지 못해 통화에 나온 말을 옮겼어요." in items[0]["description"]
+        assert "상대가 한 말로 보이는 문장만 근거로 썼어요." in items[0]["description"]
         assert "통화에 나온 기관의 대표번호" in items[-1]["description"]
+        assert "누가 한 말인지 (말한 사람을 나누지 못했어요)" in str(initial)
         assert result["conclusion"] == "suspected"
 
     def test_b2d_uses_only_112_and_1394(self):
