@@ -37,8 +37,8 @@ from ai.case.verify import VerifyResult, verify_call
 from ai.kb import search
 from ai.kb.numbers import check_phone_number, find_numbers, official_contact, resolve_org
 from ai.kb.search import search_voice_cases
-from ai.llm.claims import TIMEOUT_SECONDS as READ_BUDGET_S
-from ai.llm.claims import read_claims
+from ai.case.claims import TIMEOUT_SECONDS as READ_BUDGET_S
+from ai.case.claims import read_claims
 from ai.types import CaseSearchResult, FailureCode
 
 LOGGER = logging.getLogger(__name__)

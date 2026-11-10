@@ -5,6 +5,7 @@ LLM 은 읽기만 한다. 위험·안전 판단은 없고, 누가 말했는지�
 """
 
 import asyncio
+from contextlib import AsyncExitStack
 import logging
 import os
 from pathlib import Path
@@ -58,19 +59,22 @@ async def read_claims(
         raise ValueError("read_claims 는 통화(audio)와 문자(text)만 지원합니다")
 
     try:
-        llm = client or create_client(timeout_s)
-        response = await asyncio.wait_for(
-            llm.chat.completions.parse(
-                model=_resolve_model(model),
-                messages=[
-                    {"role": "system", "content": prompt_path.read_text(encoding="utf-8")},
-                    {"role": "user", "content": _render_segments(source)},
-                ],
-                response_format=ClaimReading,
-                temperature=0,
-            ),
-            timeout=timeout_s,
-        )
+        async with AsyncExitStack() as stack:
+            llm = client
+            if llm is None:
+                llm = await stack.enter_async_context(create_client(timeout_s))
+            response = await asyncio.wait_for(
+                llm.chat.completions.parse(
+                    model=_resolve_model(model),
+                    messages=[
+                        {"role": "system", "content": prompt_path.read_text(encoding="utf-8")},
+                        {"role": "user", "content": _render_segments(source)},
+                    ],
+                    response_format=ClaimReading,
+                    temperature=0,
+                ),
+                timeout=timeout_s,
+            )
         message = response.choices[0].message
         if message.refusal:
             return _fallback(source, FailureCode.REFUSED)

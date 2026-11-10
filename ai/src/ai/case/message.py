@@ -38,8 +38,8 @@ from ai.case.types import (
 from ai.case.verify import VerifyResult, verify_call
 from ai.kb.numbers import official_contact
 from ai.kb.search import search_cases
-from ai.llm.claims import TIMEOUT_SECONDS as READ_BUDGET_S
-from ai.llm.claims import read_claims
+from ai.case.claims import TIMEOUT_SECONDS as READ_BUDGET_S
+from ai.case.claims import read_claims
 from ai.types import CaseSearchResult, FailureCode
 
 LOGGER = logging.getLogger(__name__)

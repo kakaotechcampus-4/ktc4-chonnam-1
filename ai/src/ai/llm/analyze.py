@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import AsyncExitStack
 import json
 import logging
 from pathlib import Path
@@ -100,20 +101,23 @@ async def analyze_message(
         timeout_s = TIMEOUT_SECONDS
 
     try:
-        llm = client or create_client(timeout_s)
-        model_name = model or required_env("LLM_MODEL")
-        response = await asyncio.wait_for(
-            llm.chat.completions.parse(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": PROMPT_PATH.read_text(encoding="utf-8")},
-                    {"role": "user", "content": masked_text},
-                ],
-                response_format=ExtractedMessage,
-                temperature=0,
-            ),
-            timeout=timeout_s,
-        )
+        async with AsyncExitStack() as stack:
+            llm = client
+            if llm is None:
+                llm = await stack.enter_async_context(create_client(timeout_s))
+            model_name = model or required_env("LLM_MODEL")
+            response = await asyncio.wait_for(
+                llm.chat.completions.parse(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": PROMPT_PATH.read_text(encoding="utf-8")},
+                        {"role": "user", "content": masked_text},
+                    ],
+                    response_format=ExtractedMessage,
+                    temperature=0,
+                ),
+                timeout=timeout_s,
+            )
         message = response.choices[0].message
         if message.refusal:
             return fallback_analysis(FailureCode.REFUSED)
