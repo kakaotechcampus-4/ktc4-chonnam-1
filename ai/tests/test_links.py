@@ -121,3 +121,17 @@ def test_spoken_link_has_spoken_origin():
     assert spoken_link("Spo-Case.com") == LinkCandidate(
         url="https://spo-case.com/", domain="spo-case.com", origin=LinkOrigin.SPOKEN)
     assert spoken_link("010.1234.5678") is None
+
+
+@pytest.mark.parametrize("text, span, expected", [
+    # #162: 한글 호스트는 퓨니코드로 바꿔 검사한다
+    ("조회 안내 http://앱다운.com 확인", "http://앱다운.com", "http://xn--2j1bu56az1a.com/"),
+    ("https://택배.한국/a 접속", "https://택배.한국/a", "https://xn--2h3b319a.xn--3e0b707e/a"),
+])
+def test_hangul_host_with_scheme_becomes_punycode(text, span, expected):
+    assert urls(text, [span]) == [expected]
+
+
+def test_hangul_host_without_scheme_is_not_a_link():
+    # 스킴 없는 "배송조회.이후" 같은 문장을 주소로 잡지 않는다
+    assert message_links("배송조회.완료 되었습니다", ["배송조회.완료"]) == []

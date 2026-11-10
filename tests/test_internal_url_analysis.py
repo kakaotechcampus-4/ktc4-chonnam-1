@@ -99,3 +99,31 @@ def test_browser_commits_hide_js_target_http_redirect(input_url, domain, officia
     page, failure = to_isolated_page(result)
     assert page.info == risk_html
     assert failure is None
+
+
+HANJIN = "https://www.hanjin.com/"
+
+
+@pytest.mark.parametrize("brand", [None, "unknown"])
+def test_official_domain_without_brand_in_message_is_official(brand):
+    # #164: 문자에 '한진' 이 없어도 목록의 공식 주소면 공식 대조를 한다
+    result = collected(HANJIN, final_url=HANJIN)
+    assert main.build_ai_url_analysis(result, brand, HANJIN).official.value == "official"
+
+
+@pytest.mark.parametrize("brand", [None, "unknown"])
+def test_brand_from_domain_never_becomes_mismatch(brand):
+    # 주소로 찾은 기관은 사칭(brand_mismatch) 근거가 아니다. 목록에 없는 주소는 지금처럼 대조 보류
+    result = collected(EVIL, final_url=EVIL)
+    assert main.build_ai_url_analysis(result, brand, EVIL).official.value == "not_registered"
+
+
+def test_brand_from_domain_still_demotes_on_foreign_redirect():
+    result = collected(HANJIN, final_url=EVIL, redirect_chain=(EVIL,))
+    assert main.build_ai_url_analysis(result, None, HANJIN).official.value == "unresolved"
+
+
+def test_message_brand_still_wins_over_domain():
+    # 문자가 CJ대한통운이라 했는데 주소가 한진이면 지금처럼 사칭 패턴이다
+    result = collected(HANJIN, final_url=HANJIN)
+    assert main.build_ai_url_analysis(result, "CJ대한통운", HANJIN).official.value == "brand_mismatch"

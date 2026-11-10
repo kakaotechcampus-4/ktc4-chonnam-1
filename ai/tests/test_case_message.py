@@ -573,3 +573,64 @@ async def test_sentence_not_from_impersonator_gets_no_caution(sentence, reading,
     r = await _analyze(sentence, reading if path == "llm" else None)
     assert r.caution is False
     assert _q(r) == {}
+
+
+# ── #160: 모르는 사람이 메신저로 옮기라는 문자 ─────────────────
+
+STRANGER_MESSENGER = (
+    "퇴근 후에 좀 쉬고 싶으신가요?\n고르실 사진 보내드릴테니 제 라인 추가해 주세요 : zxf226"
+)
+STRANGER_MESSENGER_READING = {
+    "demands": [{"kind": "move_messenger", "quote": "제 라인 추가해 주세요"}],
+}
+
+
+async def test_stranger_messenger_move_is_caution_without_q2():
+    r = await _analyze(STRANGER_MESSENGER, STRANGER_MESSENGER_READING)
+    assert (r.conclusion, r.caution, r.floors) == (Conclusion.INCONCLUSIVE, True, [])
+    # Q2(원래 번호로 통화)는 지인 주장에만 붙는다
+    assert list(_q(r)) == ["already_acted"]
+
+
+# 가게 광고("채널 추가")는 개인 아이디가 없으니 주의로 올리지 않는다 (#160 수정의 오탐 방지)
+SHOP_AD = "카카오톡 채널 추가하시면 할인 쿠폰을 드려요"
+
+
+async def test_shop_channel_ad_is_not_caution():
+    r = await _analyze(SHOP_AD, {"demands": [{"kind": "move_messenger", "quote": "카카오톡 채널 추가하시면"}]})
+    assert r.caution is False
+
+
+@pytest.mark.parametrize("text", [
+    "[국제발신]\nんな時間に連絡とか、変なタイミングでごめん。…でも今しかなかった。Line : mx5782",
+    '[국제발신]\n은행 여직원 모시겠어요? 추가 후 답장"1" LINE : ck5529',
+    "고수익 부업 안내. 텔레그램 @abc12 로 문의 주세요",
+    "카톡 아이디 happyday 로 친구 추가해 주세요",
+])
+async def test_messenger_handle_spam_is_caution_by_lexicon(text):
+    # LLM 이 실패해도(어휘표) 메신저 아이디로 옮기라는 문자는 주의다
+    r = await _analyze(text, None)
+    assert (r.conclusion, r.caution) == (Conclusion.INCONCLUSIVE, True)
+
+
+async def test_stranger_messenger_caution_survives_q1_answer():
+    # LLM 인용("제 라인 추가해 주세요")에 아이디가 없어도 같은 줄의 아이디를 근거로 남겨 답 뒤에도 주의다
+    r = await _analyze(STRANGER_MESSENGER, STRANGER_MESSENGER_READING)
+    after = apply_message_answer(r, "already_acted", "not_yet")
+    assert (after.conclusion, after.caution) == (Conclusion.INCONCLUSIVE, True)
+
+
+@pytest.mark.parametrize("text", [
+    "내일 회의는 줌으로 진행합니다. 회의 ID: 123 456 7890",
+    "주문하신 상품 영수증 번호 1234-5678-9012-3456 입니다",
+])
+async def test_masked_number_alone_is_not_info_request(text):
+    # 가림 표시(<계좌번호>·<카드번호>)의 글자를 개인정보 요구로 읽지 않는다
+    r = await _analyze(text, None)
+    assert r.caution is False
+    assert all(e.code != E.INFO_REQUEST for e in r.evidence)
+
+
+async def test_real_account_request_with_masked_number_is_still_caution():
+    r = await _analyze("계좌번호 123-456-789012 로 지금 입금해 주세요", None)
+    assert r.caution is True
