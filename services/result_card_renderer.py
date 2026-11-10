@@ -403,6 +403,7 @@ def render_voice_result_card(result: dict, job_id: str | None = None) -> dict:
         "unchecked": unchecked,
     })
 
+    card = _inject_job_id(card, job_id)
     questions = result.get("questions") or []
     if not questions:
         return card
