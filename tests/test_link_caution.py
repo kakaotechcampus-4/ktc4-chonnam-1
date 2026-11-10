@@ -163,3 +163,15 @@ async def test_gate_failure_falls_back_to_r9(stub_read_message, link_flow, monke
     response = await main.run_analysis("원문 https://evil.top/a")
 
     assert _text_card(response)["title"] == "🤔 판단하기 어려워요"
+
+
+def test_same_quote_is_not_repeated_as_institution_and_pretext():
+    # LLM 이 한 문장을 기관과 명분 양쪽으로 읽어도 주의할 점에 같은 인용을 두 번 쓰지 않는다
+    case = _case(True)
+    quote = "kyc (Net****pi) 일시동결 되었습니다"
+    case["claims"]["identity"] = [{"kind": "institution", "name": "kyc", "quote": quote, "listed_institution": False}]
+    case["claims"]["pretexts"] = [quote]
+
+    description = _text_card(render_link_caution_card(_analysis("not_registered"), case))["description"]
+
+    assert description.count(quote) == 1

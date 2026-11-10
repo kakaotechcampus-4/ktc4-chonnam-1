@@ -1137,7 +1137,8 @@ def _message_claims_block(result: dict, alert: bool) -> str:
         lines.append(f"- 내세운 관계: '{_voice_truncate(relation[0])}'")
     if institution:
         lines.append(f"- 내세운 기관: '{_voice_truncate(institution[0])}'")
-    reasons = [*blockers, *pretexts]
+    # LLM 이 한 문장을 기관과 명분 양쪽으로 읽으면 같은 인용이 두 줄 나온다. 앞 줄과 같은 인용은 뺀다
+    reasons = [r for r in [*blockers, *pretexts] if r not in relation[:1] + institution[:1]]
     if reasons:
         title = "내세운 사정" if relation else "내세운 명분"
         lines.append(f"- {title}: '{_voice_truncate(reasons[0])}'")
