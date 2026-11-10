@@ -37,6 +37,8 @@ from services.result_card_renderer import (
     render_message_case_card,
     render_message_answer_card,
     render_message_default_answer_card,
+    link_caution_applies,
+    render_link_caution_card,
 )
 
 # AI 연결
@@ -603,6 +605,8 @@ async def run_analysis(
     message_task = asyncio.create_task(
         analyze_message_part(reading.message, extracted=reading.extracted)
     )
+    # 판단 보류 링크가 처음 나올 때 한 번만 문자 게이트를 부른다(#89). 링크마다 본문은 같다
+    link_case: list[dict | None] = []
     try:
         for candidate in reading.links:
             link = candidate.url
@@ -629,7 +633,12 @@ async def run_analysis(
                     url=url_analysis, message=message_result, page=page, failure=failure,
                 )
                 final_payload = final_result.model_dump(mode="json")
-                cards.append(render_result_card(
+                caution_card = None
+                if link_caution_applies(final_payload):
+                    if not link_case:
+                        link_case.append(await _link_message_case(reading.message, started))
+                    caution_card = render_link_caution_card(final_payload, link_case[0])
+                cards.append(caution_card or render_result_card(
                     final_payload, job_id=job_id, allow_details=(link_count == 1),
                 ))
                 if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
@@ -649,6 +658,25 @@ async def run_analysis(
         outputs[0]["simpleText"]["text"] += "\n\n" + _OMITTED_LINK_RESULTS_TEXT
         response["template"]["outputs"] = outputs[:KAKAO_MAX_OUTPUTS]
     return response
+
+
+async def _link_message_case(message: str, started: float) -> dict | None:
+    """링크 결과가 판단 보류일 때 본문을 문자 게이트로 읽는다(#89). 실패하면 None 이라 R9 를 쓴다.
+
+    결과는 판단 보류 카드의 주의 갈래를 고르는 데만 쓴다. 링크 판정과 Job 저장 값은 바꾸지 않는다.
+    """
+
+    budget = max(MESSAGE_CASE_BUDGET_S - (time.monotonic() - started), 0.0)
+    try:
+        result = await analyze_message_case(message, time_budget_s=budget, has_link=True)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        print(f"[LINK CAUTION ERROR] {type(error).__name__}")
+        return None
+    payload = result.model_dump(mode="json")
+    print(f"[LINK CAUTION] conclusion={payload.get('conclusion')} caution={payload.get('caution')}")
+    return payload
 
 
 # ============================================================
