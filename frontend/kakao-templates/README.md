@@ -4,7 +4,19 @@
 렌더러는 `services/kakao_card_renderer.py`. BE가 이 폴더의 `cards/`를 직접 읽는다.
 `backend/src/server/templates/kakao_templates/`는 시험 경로(`/test/kakao/r1-lookalike`)만 쓰는 옛 사본이라 기준이 아니다.
 
-카카오 응답 타입: simpleText / basicCard / itemCard / listCard / quickReplies
+카카오 응답 타입: simpleText / textCard / basicCard / itemCard / listCard / quickReplies
+
+### #157·#159 BE 선별 적용
+
+- 문자 상세 C1~C4는 이미지 없는 `textCard` 캐러셀이다. 본문은 장당 128자,
+  캐러셀은 최대 10장이다. C1은 고정된 의심 이유를 보존하고 인용문 길이만
+  남은 공간에 맞춘다. 음성 캐러셀의 구성과 Job ID 조회는 유지한다.
+- R8은 기존 `r1-danger.png`를 사용하는 `basicCard`다.
+- Q1 머리글은 `📌 이미 하신 게 있나요?`이며 `not_yet` 표시값은
+  `아무것도 안 했어요`를 유지한다. FE의 Q1 썸네일 기능은 이미지 4개가
+  `develop` 공개 자산 경로에 배포되기 전까지 보류한다. Q2에는 적용하지 않는다.
+- 음성의 화자 중립적 말머리와 `상대가 한 말로 보이는 문장만 근거로 썼어요.`
+  문구를 유지한다. 아래 과거 문구 예시보다 현재 BE 렌더러가 우선한다.
 
 ## 카드 JSON
 
@@ -35,7 +47,7 @@
 | `response_lines` `contact_line` `buttons` | K6 (`k6-response.json`, 문자·녹음 공용) | `buttons`는 통째 빈칸(버튼 객체 목록, 없으면 빈 목록). 버튼은 `chatbot-copy.md` D17(녹음은 3절 "녹음 결과 버튼 (D17)" 표). `contact_line`은 녹음에서 `1394 상담` 버튼을 달 때만 넣고, 없으면 빈 문자열이고 남는 빈 줄은 BE가 정리한다 |
 | `headline` `stop_line` `verify_line` `call_claims` `checked` `unchecked` | V1 (`v1-voice-result.json`) | `verify_line`은 `official_contact`, `call_claims`는 `claims`. `number_checks`는 `checked`·`unchecked` 줄로 넣는다. 규칙은 `chatbot-copy.md` 3절 V1·"확인한 것·확인하지 못한 것" |
 | `claim_lines` `unchecked` `verify_line` | 녹음 캐러셀 (`c-detail-carousel-voice.json`) | V1과 같은 값. `claim_lines`는 `call_claims`에서 칸 제목을 뺀 줄들 |
-| `claim_note` | 녹음 캐러셀 1번째 장 | 평소 `통화 상대가 한 말만 근거로 썼어요.`, 말한 사람을 가리지 못했으면 다른 문장. 규칙은 `chatbot-copy.md` 4절 "녹음 캐러셀의 비슷한 사례" (2026-10-30) |
+| `claim_note` | 녹음 캐러셀 1번째 장 | 평소 `상대가 한 말로 보이는 문장만 근거로 썼어요.`, 말한 사람을 가리지 못했으면 다른 문장. 화자 중립적 말머리와 최신 BE 문구를 유지한다 |
 | `similar_type` `similar_line` | 녹음 캐러셀 2번째 장 (비슷한 사례) | 가장 닮은 사례의 유형으로 고른다. 사례가 없으면 이 장을 통째로 뺀다. 유형별 문구는 `chatbot-copy.md` 4절 같은 절 (2026-10-30) |
 | `headline` `stop_line` `verify_line` `basis_note` `message_claims` `checked` `unchecked` | R6b (`r6b-warning.json`, `r6b-uncertain.json`) | 결론이 `suspected`면 `r6b-warning`, `inconclusive`면 `r6b-uncertain`. 두 카드는 같은 모양이고 `headline`만 다르다. `basis_note`가 없으면 빈 문자열이고 남는 빈 줄은 BE가 정리한다. `message_claims`는 칸 제목까지 포함하고, 줄이 없으면 빈 문자열이다(R9와 같음). 규칙은 `chatbot-copy.md` 3절 R6b (2026-10-30) |
 | `items` | Q2 (`q2-called-known-number.json`) | Q1과 같은 방식이다. BE가 `{title, action: "block", blockId: block_answer, extra: {case_id, question_id: "called_known_number", option_id}}`를 만든다. 답변 블록은 Q1과 같이 쓴다. 라벨은 `chatbot-copy.md` 3절 Q2 표 (2026-10-30) |
@@ -74,7 +86,7 @@
   이미지가 준비되면 해당 카드를 `basicCard` + `thumbnail`로 바꾼다.
 - 확정 카드 이미지는 `assets/cards/`에 둔다. `imageUrl`은 `develop` 브랜치의
   `raw.githubusercontent.com` 주소라 **develop에 머지된 뒤에야 보인다.**
-  지금 적용한 카드: W1, B1a, B2, B2a, B2b, R1~R4, 자세히 보기 캐러셀(C1~C3).
+  지금 적용한 카드: W1, B1a, B2, B2a, B2b, R1~R4, R8. 문자 상세 캐러셀(C1~C4)은 이미지 없이 제공한다.
   이미지 파일 이름은 카드 파일 이름을 따른다(R1만 `r1-danger.png`, 캐러셀은 `c1-signal` `c2-scope` `c3-action`).
   B1은 W1 이미지(`w1-welcome.png`)를 같이 쓴다.
 - R5는 `template`이 없어 이미지를 붙일 수 없으므로 그대로 둔다. R5용으로 받은 "분석 중"

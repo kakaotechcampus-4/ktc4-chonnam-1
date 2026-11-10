@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -138,6 +139,8 @@ async def _search(
     except asyncio.CancelledError:
         raise
     except TimeoutError:
+        # 검색 예산 전체를 넘겼다(#155). 임베딩 마감 뒤 TF-IDF 폴백과 구분해 남긴다
+        LOGGER.warning("voice case search timed out budget=%.1fs", timeout_s)
         return None, UncheckedReason.TIMEOUT
     except Exception as exc:
         LOGGER.warning("voice case search failed: %s", type(exc).__name__)
@@ -189,6 +192,36 @@ def _check_numbers(
             LOGGER.warning("phone number check failed: %s", type(exc).__name__)
             failed = True
     return checks, failed
+
+
+def _log_reading(
+    reading: ClaimReadingResult, verify: VerifyResult, result: VoiceCaseResult
+) -> None:
+    """읽기가 근거로 이어졌는지 개수·코드만 남긴다. 인용·원문은 남기지 않는다."""
+    r = reading.reading
+    read = (
+        f"identity:{len(r.identity)},pretexts:{len(r.pretexts)},demands:{len(r.demands)},"
+        f"blockers:{len(r.blockers)},hosts:{len(r.spoken_hosts)}"
+        if r is not None
+        else "none"
+    )
+    codes = ",".join(sorted({e.code.value for e in verify.accepted}))
+    rejected = ",".join(
+        f"{reason}:{n}" for reason, n in sorted(Counter(x.reason for x in verify.rejected).items())
+    )
+    unused = ",".join(f"{label}:{n}" for label, n in sorted(Counter(verify.unused).items()))
+    LOGGER.warning(
+        "voice reading status=%s failure=%s read=%s accepted=%d(%s) rejected=%s unused=%s"
+        " conclusion=%s",
+        reading.status,
+        reading.failure.value if reading.failure else "-",
+        read,
+        len(verify.accepted),
+        codes or "-",
+        rejected or "-",
+        unused or "-",
+        result.conclusion.value,
+    )
 
 
 def _official_contact(verify: VerifyResult) -> OfficialContact | None:
@@ -334,6 +367,7 @@ async def _analyze(
         failures=failures,
         reading_status=reading.status,
     )
+    _log_reading(reading, verify, result)
     try:
         result.official_contact = _official_contact(verify)
     except Exception as exc:

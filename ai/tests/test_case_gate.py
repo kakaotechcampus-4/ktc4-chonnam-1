@@ -15,6 +15,7 @@ from ai.case.types import (
     EvidenceCode as E,
     NumberCheck,
     Origin,
+    RejectedClaim,
     ResponseAction as R,
     Scenario,
     StopAction as S,
@@ -142,9 +143,55 @@ def test_u5_nothing_accepted_is_input_required():
     assert r.questions == []
 
 
+def _decide_fallback(verify):
+    return decide_call(
+        transcript_empty=False,
+        verify=verify,
+        number_checks=[],
+        similar=None,
+        failures=[FailureCode.INVALID_OUTPUT],
+        reading_status="fallback",
+    )
+
+
+def test_u5_failed_reading_is_inconclusive_not_input_required():
+    # 읽기가 실패해 어휘표만으로 아무것도 못 찾았다면 "사칭·요구가 없다"고 말할 수 없다.
+    # input_required 는 "녹음에 사칭·요구하는 말이 없어요" 카드라 잘못된 안심을 준다
+    r = _decide_fallback(_verify())
+    assert r.conclusion == Conclusion.INCONCLUSIVE
+    assert r.caution is False
+    assert r.floors == []
+    assert r.questions == []
+    assert r.reading_status == "fallback"
+
+
+def test_u5_failed_reading_with_blocker_only_is_inconclusive():
+    r = _decide_fallback(_verify(E.CONTACT_BLOCKER))
+    assert r.conclusion == Conclusion.INCONCLUSIVE
+    assert r.caution is False
+
+
 def test_u5_ignores_contact_blocker_only():
     r = _decide(_verify(E.CONTACT_BLOCKER))
     assert r.conclusion == Conclusion.INPUT_REQUIRED
+
+
+def test_u5_self_side_rejections_are_not_input_required():
+    # 꼴 때문에 버린 신원·요구가 있으면 "사칭·요구하는 말이 없다"고 단정하지 않는다
+    v = _verify().model_copy(
+        update={"rejected": [RejectedClaim(kind="demand", quote="전화하시라고요", reason="self_side")]}
+    )
+    r = _decide(v)
+    assert r.conclusion == Conclusion.INCONCLUSIVE
+    assert r.caution is False
+    assert r.stop_actions == [S.HANG_UP]
+
+
+def test_u5_not_in_source_rejections_stay_input_required():
+    v = _verify().model_copy(
+        update={"rejected": [RejectedClaim(kind="demand", quote="", reason="not_in_source")]}
+    )
+    assert _decide(v).conclusion == Conclusion.INPUT_REQUIRED
 
 
 def test_u5_spoken_host_counts_as_demand():
@@ -358,7 +405,7 @@ def _similar(status, n=1):
     return CaseSearchResult(
         status=status,
         matches=[
-            CaseMatch(case_id=f"v{i}", similarity=0.9, matched_variant="통째 대본 " * 30)
+            CaseMatch(case_id=f"v{i}", similarity=0.9, matched_variant="통째 대본 " * 30, type="kidnapping")
             for i in range(n)
         ],
     )
@@ -371,6 +418,8 @@ def test_similar_completed_is_checked_and_slimmed():
     assert r.similar_cases.matches[0].case_id == "v0"
     assert r.similar_cases.matches[0].similarity == 0.9
     assert r.similar_cases.matches[0].matched_variant == ""
+    # 대본은 빼도 수법 유형은 카드에 쓰므로 남긴다 (#109)
+    assert r.similar_cases.matches[0].type == "kidnapping"
 
 
 def test_similar_fallback_is_kb_empty():

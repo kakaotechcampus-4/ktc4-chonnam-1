@@ -7,15 +7,21 @@ be_teammate_card_integration_tasks.md 4~6절 기준.
 캐러셀을 보여주는 구조라, 결과 카드와 캐러셀은 서로 다른 응답이다).
 """
 
+import re
 from typing import Any
 
 from ai.case.types import Conclusion
 from services.chatbot_copy_data import (
+    GUIDANCE_CARD_CONTACT,
+    VOICE_SIMILAR_TYPES,
+    GUIDANCE_DELIVERY_ACTION,
+    GUIDANCE_DELIVERY_ALL_CONTACTS,
+    GUIDANCE_DELIVERY_CONTACTS,
     get_message_failure_copy,
     get_signal_copy,
     get_unverified_copy,
 )
-from services.official_domain_service import official_homepage
+from services.official_domain_service import brand_for_domain, official_homepage
 from services.kakao_card_renderer import render_card, substitute_values
 from services.result_card_selector import select_result_card
 
@@ -57,7 +63,7 @@ def _truncate_evidence(evidence: str, max_length: int = _EVIDENCE_MAX_LENGTH) ->
 # ============================================================
 # 통화 녹음(보이스피싱) 결과 — VoiceCaseResult 기준
 # (docs/designs/chatbot-copy.md 3절 "V1 보이스피싱 결과",
-#  docs/designs/voice-phishing-flow.md D17, 이슈 #115)
+#  docs/archive/designs/voice-phishing-flow.md D17, 이슈 #115)
 # ============================================================
 
 _VOICE_STOP_ACTION_JOIN = {
@@ -167,7 +173,7 @@ _VOICE_QA_OPTION_LABELS = {
     "entered_info": "정보를 알려 줬어요",
     "installed_app": "앱을 설치했어요",
     "sent_money": "돈이나 상품권을 보냈어요",
-    "not_yet": "아직 안 했어요",
+    "not_yet": "아무것도 안 했어요",
 }
 
 # Q1 option_id -> 리스트 카드 항목 썸네일(문자·녹음 공용). 없는 답(clicked_link)은 이미지를 달지 않는다.
@@ -232,28 +238,36 @@ def _voice_stop_line_excluding_hang_up(stop_actions: list[str]) -> str:
     return _voice_join_stop_actions(ordered)
 
 
-def _voice_verify_line(official_contact: dict | None, *, speaker_unknown: bool = False) -> str:
+def _voice_verify_line(official_contact: dict | None) -> str:
     if official_contact:
         org = official_contact.get("org", "")
         number = official_contact.get("number", "")
         # 실기기 폭에 맞춰 기관 이름·번호 뒤에서 줄을 바꾼다(2026-11-09)
         return f"{org} 대표번호({number})로\n직접 전화해 확인하세요."
-    if speaker_unknown:
-        return "통화에 나온 기관의 대표번호를\n직접 찾아 전화해 확인하세요."
-    return "상대가 말한 기관의 대표번호를\n직접 찾아 전화해 확인하세요."
+    return "통화에 나온 기관의 대표번호를\n직접 찾아 전화해 확인하세요."
 
 
-def _voice_call_claims(claims: dict, caution: bool, *, speaker_unknown: bool = False) -> str:
+def _voice_call_claims(claims: dict, caution: bool) -> str:
     """"주의할 점"/"통화에서 들은 내용" 블록(이슈 #115 V1 call_claims 매핑).
 
-    기관 = identity[].quote, 상대가 한 말 = 첫 demands[].quote, 내세운
-    사정 = blockers(있으면) 또는 pretexts, 요구한 것 = demands[].kind
-    라벨(최대 3개). 전부 비어 있으면 통째로 빈 문자열("칸 제목 포함, 값
-    없으면 빈 문자열").
+    기관 = identity[].quote, 통화에 나온 말 = 첫 demands[].quote, 통화에
+    나온 사정 = blockers(있으면) 또는 pretexts, 통화에 나온 요구 =
+    demands[].kind 라벨(최대 3개). 전부 비어 있으면 통째로 빈 문자열
+    ("칸 제목 포함, 값 없으면 빈 문자열").
 
     "내세운 사정 = blockers → pretexts"는 이슈 원문 그대로 "blockers가
     있으면 그걸, 없으면 pretexts"로 읽어 구현했다 — 다르게 뜻했다면
     확인 필요(보고 사항).
+
+    말머리는 이슈 #139에 따라 "통화에 나온 ~"로 기본값을 바꿨다(ADR
+    0008로 화자 분리를 아예 없앴으니 "상대가"라고 단정할 근거가 없다).
+    예전에는 `speaker_unknown`일 때만 이 말머리로 바꾸는 치환 루프가
+    있었다 — ADR 0008이 채택되고(2026-11-07) #116이 "화자 분리 코드
+    자체가 없어져 speaker/speaker_unknown을 결과에 남길 필요가 없다"며
+    닫혀(2026-11-10), 그 분기가 영영 쓰일 수 없다는 게 확정돼 지웠다
+    (이슈 #139). 같은 이유로 `_voice_verify_line()`·`claim_note`의
+    `speaker_unknown` 분기와 `_voice_speaker_unknown()` 자체도 PR #167
+    리뷰에 따라 함께 지웠다.
     """
 
     identity = claims.get("identity") or []
@@ -266,32 +280,20 @@ def _voice_call_claims(claims: dict, caution: bool, *, speaker_unknown: bool = F
         quotes = [_voice_truncate(i.get("quote", "")) for i in identity if i.get("quote")]
         if quotes:
             quoted = [f"'{q}'" for q in quotes]
-            lines.append(f"- 상대가 내세운 기관: {', '.join(quoted)}")
+            lines.append(f"- 통화에 나온 기관: {', '.join(quoted)}")
     if demands and demands[0].get("quote"):
-        lines.append(f"- 상대가 한 말: '{_voice_truncate(demands[0]['quote'])}'")
+        lines.append(f"- 통화에 나온 말: '{_voice_truncate(demands[0]['quote'])}'")
     pretext_source = blockers or pretexts
     if pretext_source:
-        lines.append(f"- 내세운 사정: '{_voice_truncate(pretext_source[0])}'")
+        lines.append(f"- 통화에 나온 사정: '{_voice_truncate(pretext_source[0])}'")
     if demands:
         demand_labels = [
             _VOICE_DEMAND_LABELS.get(d.get("kind", ""), "기타 요구") for d in demands[:3]
         ]
-        lines.append(f"- 요구한 것: {', '.join(demand_labels)}")
+        lines.append(f"- 통화에 나온 요구: {', '.join(demand_labels)}")
 
     if not lines:
         return ""
-
-    if speaker_unknown:
-        for index, line in enumerate(lines):
-            for original, replacement in (
-                ("상대가 내세운 기관:", "통화에 나온 기관:"),
-                ("상대가 한 말:", "통화에 나온 말:"),
-                ("내세운 사정:", "통화에 나온 사정:"),
-                ("요구한 것:", "통화에 나온 요구:"),
-            ):
-                if line.startswith(f"- {original}"):
-                    lines[index] = line.replace(original, replacement, 1)
-                    break
 
     title = "⚠️ 주의할 점" if caution else "📞 통화에서 들은 내용"
     return f"{title}\n" + "\n".join(lines) + "\n\n"
@@ -325,11 +327,6 @@ def _voice_similar_cases_state(result: dict) -> str:
     return "empty"
 
 
-def _voice_speaker_unknown(result: dict) -> bool:
-    # #116의 명시적인 표시만 읽는다. caution/claims로 화자 상태를 추측하지 않는다.
-    return any(entry.get("item") == "speaker" for entry in result.get("unchecked") or [])
-
-
 def _voice_checked_unchecked(result: dict) -> tuple[str, str]:
     number_checks = result.get("number_checks") or []
     nc_checked, nc_unchecked = _voice_number_check_entries(number_checks)
@@ -347,9 +344,6 @@ def _voice_checked_unchecked(result: dict) -> tuple[str, str]:
     has_transcript_accuracy = False
     for entry in result.get("unchecked") or []:
         item, reason = entry.get("item"), entry.get("reason")
-        if item == "speaker":
-            unchecked_lines.append("- 누가 한 말인지 (말한 사람을 나누지 못했어요)")
-            continue
         if item == "similar_cases" or (item == "phone_number" and skip_phone_number):
             continue
         if item == "transcript_accuracy":
@@ -422,16 +416,13 @@ def render_voice_result_card(result: dict, job_id: str | None = None) -> dict:
     card = render_card("v1-voice-result", {
         "headline": headline,
         "stop_line": _voice_stop_line(result.get("stop_actions") or []),
-        "verify_line": _voice_verify_line(
-            result.get("official_contact"), speaker_unknown=_voice_speaker_unknown(result)
-        ),
-        "call_claims": _voice_call_claims(
-            result.get("claims") or {}, caution, speaker_unknown=_voice_speaker_unknown(result)
-        ),
+        "verify_line": _voice_verify_line(result.get("official_contact")),
+        "call_claims": _voice_call_claims(result.get("claims") or {}, caution),
         "checked": checked,
         "unchecked": unchecked,
     })
 
+    card = _inject_job_id(card, job_id)
     questions = result.get("questions") or []
     if not questions:
         return card
@@ -532,37 +523,38 @@ def render_voice_detail_carousel(result: dict) -> dict:
     """
 
     caution = bool(result.get("caution"))
-    speaker_unknown = _voice_speaker_unknown(result)
-    claims_block = _voice_call_claims(
-        result.get("claims") or {}, caution, speaker_unknown=speaker_unknown
-    ).strip()
+    claims_block = _voice_call_claims(result.get("claims") or {}, caution).strip()
     claim_lines = (
         "\n".join(claims_block.splitlines()[1:]) if claims_block else "확인된 의심 근거가 없어요."
     )
     _, unchecked = _voice_checked_unchecked(result)
-    verify_line = _voice_verify_line(result.get("official_contact"), speaker_unknown=speaker_unknown)
+    verify_line = _voice_verify_line(result.get("official_contact"))
+
+    # #109: 가장 닮은 사례 하나(matches[0])의 type 으로 문구를 고른다. 표에 없는 유형이면
+    # 수법을 추측하지 않고 사례를 찾았다는 사실만 알린다.
+    top_type = ((result.get("similar_cases") or {}).get("matches") or [{}])[0].get("type") or ""
+    similar_type, similar_line = VOICE_SIMILAR_TYPES.get(top_type, ("", ""))
 
     card = render_card("c-detail-carousel-voice", {
         "claim_lines": claim_lines,
-        "claim_note": (
-            "누가 한 말인지 가리지 못해 통화에 나온 말을 옮겼어요."
-            if speaker_unknown else "통화 상대가 한 말만 근거로 썼어요."
-        ),
-        "similar_type": "",
-        "similar_line": "",
+        "claim_note": "상대가 한 말로 보이는 문장만 근거로 썼어요.",
+        "similar_type": similar_type,
+        "similar_line": similar_line,
         "unchecked": unchecked,
         "verify_line": verify_line,
     })
     items = card["template"]["outputs"][0]["carousel"]["items"]
-    if _voice_similar_cases_state(result) == "found":
-        # #109: 현재 CaseMatch에는 type이 없다. matched_variant/categories로
-        # 수법을 추측하지 않고, 검색된 사례가 있다는 사실만 알린다.
+    if _voice_similar_cases_state(result) != "found":
+        items.pop(1)
+        return card
+    if top_type in VOICE_SIMILAR_TYPES:
+        # similar_line 이 빈 유형(other)은 남는 빈 줄을 정리한다("남는 빈 줄은 BE가 정리한다")
+        items[1]["description"] = items[1]["description"].replace("\n\n\n", "\n\n")
+    else:
         items[1]["description"] = (
             "이번 통화와 비슷한 예시 통화를 찾았어요.\n\n"
             "비슷하다고 해서 사기라는 뜻은 아니에요.\n결과 판단에는 쓰지 않았어요."
         )
-    else:
-        items.pop(1)
     return card
 
 
@@ -753,6 +745,9 @@ def _result_card_values(analysis_result: dict, card_name: str) -> dict[str, str]
     url = analysis_result.get("url") or {}
     message = analysis_result.get("message") or {}
     brand = message.get("brand")
+    if card_name == "r2-official" and (not brand or brand == _UNKNOWN):
+        # #164: 문자에 기관 이름이 없으면 공식 대조에 쓴 주소의 기관을 쓴다
+        brand = brand_for_domain(url.get("domain"))
 
     values: dict[str, str] = {}
 
@@ -802,10 +797,11 @@ def render_result_card(
 def merge_kakao_responses(responses: list[dict]) -> dict:
     """링크가 여러 개여서 카드가 여러 장 나왔을 때 하나의 응답으로 합친다.
 
-    지금 범위는 "링크 1개"를 전제하므로(`r7-multiple-urls` 라우팅은 이번
-    담당 범위 밖이다) 평소에는 입력이 1개뿐이다. 그래도 run_analysis()의
-    for 루프가 여러 장을 만들 가능성을 남겨두므로, 응답 형식이 깨지지
-    않도록 outputs를 이어 붙인다.
+    `r7-multiple-urls` 전용 카드는 `feature/final-fe`에서 지워졌다(이슈
+    #139). 링크가 여럿이면 `render_result_card(..., allow_details=...)`가
+    "자세히 보기" 버튼만 제거할 뿐 카드 자체는 링크마다 그대로 나오므로,
+    `run_analysis()`의 for 루프가 만드는 여러 장을 여기서 하나의 응답으로
+    이어 붙인다(개수 제한은 호출부가 담당).
     """
 
     if not responses:
@@ -837,7 +833,7 @@ def _message_unverified_line(message: dict) -> str | None:
     않는다)."""
 
     answer = message.get("answer")
-    if answer in _COMPLETE_ANSWERS or answer is None:
+    if answer in _COMPLETE_ANSWERS:
         return None
     failures = ((message.get("details") or {}).get("reason") or {}).get("failures") or []
     return f"문자: {get_message_failure_copy(failures)}"
@@ -850,28 +846,51 @@ def _env_unverified_line(env: dict) -> str | None:
     return f"페이지: {get_unverified_copy(answer)}"
 
 
-def _guidance_description(guidance: Any) -> str:
+def _guidance_description(guidance: Any, brand: str | None = None) -> str:
     """이슈 #69: `kind`에 따라 FE가 정한 두 형식 중 하나로 문장을 만든다.
 
     `procedure`는 "{source}는 ~라고 안내했어요({연도})" 형식이다 — 문자가
     가짜라는 결론이 아니라 공식 기관이 실제로 안내한 절차임을 보여주는
     것이 목적이라, 여기서 "그래서 가짜/진짜"라는 판단을 덧붙이지 않는다.
-    `Guidance.text`는 128자를 넘을 수 있어(이슈 댓글: 택배 고객센터
-    5곳·카드사 9곳 번호 포함) 잘라낸다 — 여러 장으로 쪼개는 규칙은 FE와
-    아직 합의되지 않아, 합의 전까지는 안전하게 자르는 쪽을 택한다.
+    긴 연락처 규칙은 FE가 정한 짧은 문구를 사용한다. 출처 표기가 넘치는
+    NR-0012·0013은 출처·연도와 원문을 두 줄로 배치한다. 그 밖의 긴 자료는
+    기존 길이 제한을 유지하되 전화번호·URL 중간에서 자르지 않는다.
     """
 
     kind = getattr(guidance, "kind", None)
     text = getattr(guidance, "text", None) or ""
+    rule_id = getattr(guidance, "rule_id", None)
+
+    if kind == "verification" and len(text) > _GUIDANCE_TEXT_MAX_LENGTH:
+        if rule_id == "NR-0015":
+            contact = GUIDANCE_DELIVERY_CONTACTS.get(brand)
+            contact_line = (
+                f"{contact[0]} 고객센터 {contact[1]}" if contact
+                else GUIDANCE_DELIVERY_ALL_CONTACTS
+            )
+            return f"{GUIDANCE_DELIVERY_ACTION}\n{contact_line}"
+        if rule_id == "NR-0019":
+            # 현재 분석 결과에는 카드사 식별 필드가 없으므로 추측하지 않는다.
+            return GUIDANCE_CARD_CONTACT
 
     if kind == "procedure":
         source = getattr(guidance, "source", None) or "관련 기관"
         published_at = getattr(guidance, "published_at", None) or ""
         year = published_at[:4] if published_at else ""
         year_suffix = f"({year})" if year else ""
-        text = f"{source}는 {text}라고 안내했어요{year_suffix}."
+        original_text = text
+        text = f"{source}는 {original_text}라고 안내했어요{year_suffix}."
+        if len(text) > _GUIDANCE_TEXT_MAX_LENGTH and rule_id in ("NR-0012", "NR-0013"):
+            text = f"{source}{year_suffix}\n{original_text}"
 
-    return _truncate_evidence(text, _GUIDANCE_TEXT_MAX_LENGTH)
+    if len(text) <= _GUIDANCE_TEXT_MAX_LENGTH:
+        return text
+    end = _GUIDANCE_TEXT_MAX_LENGTH - 1
+    for token in re.finditer(r"https?://\S+|(?<!\d)\+?\d[\d-]*", text):
+        if token.start() < end < token.end():
+            end = token.start()
+            break
+    return text[:end].rstrip() + "…"
 
 
 def _guidance_items(analysis_result: dict) -> list[dict]:
@@ -896,7 +915,9 @@ def _guidance_items(analysis_result: dict) -> list[dict]:
     item_template = template["template"]["outputs"][0]["carousel"]["items"][0]
 
     return [
-        substitute_values(item_template, {"guidance_text": _guidance_description(guidance)})
+        substitute_values(item_template, {"guidance_text": _guidance_description(
+            guidance, (analysis_result.get("message") or {}).get("brand"),
+        )})
         for guidance in guidance_list[:_MAX_GUIDANCE_ITEMS]
     ]
 
@@ -939,15 +960,26 @@ def render_detail_carousel(analysis_result: dict) -> dict:
     c1_items = []
     for signal in signals[:signal_budget]:
         code = signal.get("code", "")
-        evidence = signal.get("evidence", "")
+        evidence = signal.get("evidence") or ""
         signal_title, reason = get_signal_copy(code)
 
+        # Keep the complete reason; only shorten the quoted observation to fit textCard.
+        fixed_description = substitute_values(c1_template, {
+            "signal_title": signal_title,
+            "observed": "문자에 ''라고 적혀 있어요.",
+            "reason": reason,
+        })["description"]
+        evidence_budget = min(_EVIDENCE_MAX_LENGTH, max(0, 128 - len(fixed_description)))
+        observed = (
+            f"문자에 '{_truncate_evidence(evidence, evidence_budget)}'라고 적혀 있어요."
+            if evidence.strip() else "인용문이 제공되지 않았어요."
+        )
         c1_items.append(
             substitute_values(
                 c1_template,
                 {
                     "signal_title": signal_title,
-                    "observed": f"문자에 '{_truncate_evidence(evidence)}'라고 적혀 있어요.",
+                    "observed": observed,
                     "reason": reason,
                 },
             )
@@ -957,7 +989,13 @@ def render_detail_carousel(analysis_result: dict) -> dict:
         line for line in (_message_unverified_line(message), _env_unverified_line(env))
         if line
     ]
-    unverified_text = "\n".join(unverified_lines) if unverified_lines else "모두 확인했어요."
+    official = (analysis_result.get("url") or {}).get("official")
+    if official not in ("official", "brand_mismatch"):
+        unverified_lines.insert(0, "공식 주소 여부는 확인하지 못했어요.")
+    unverified_text = (
+        "\n".join(unverified_lines) if unverified_lines
+        else "공식 주소 대조와 문자·페이지 분석을 완료했어요."
+    )
 
     c2_item = substitute_values(c2_template, {"unverified": unverified_text})
 
@@ -979,7 +1017,7 @@ def render_detail_carousel(analysis_result: dict) -> dict:
 # ============================================================
 # 링크 없는 문자(가족·지인·기관 사칭) 결과 — MessageCaseResult 기준
 # (docs/designs/chatbot-copy.md 3절 "R6b 링크 없는 문자 결과"·"Q2"·"K6"·"A2",
-#  docs/designs/agent-loop-plan-v3.md §10 B5)
+#  docs/archive/designs/agent-loop-plan-v3.md §10 B5)
 # ============================================================
 
 # 문자는 통화가 아니라서 번호 줄은 "문자 속 번호" 로 쓴다(멈출 행동 표)
@@ -1030,7 +1068,7 @@ _MESSAGE_Q1_LABELS = {
     "entered_info": "정보를 입력했어요",
     "installed_app": "앱을 설치했어요",
     "sent_money": "돈이나 상품권을 보냈어요",
-    "not_yet": "아직 안 했어요",
+    "not_yet": "아무것도 안 했어요",
 }
 _MESSAGE_Q2_LABELS = {
     "not_person": "본인이 아니래요",
@@ -1055,6 +1093,7 @@ _KISA_BUTTON = {
 }
 # 멈출 행동이 하나일 때 쓰는 문장(멈출 행동 표 "한 문장으로 쓸 때")
 _MESSAGE_STOP_SINGLE = {
+    "dont_click_link": "문자 속 링크를 누르지 마세요.",
     "dont_enter_info": "정보를 입력하지 마세요.",
     "dont_install_app": "앱을 설치하지 마세요.",
     "dont_send_money": "돈을 보내지 마세요.",
@@ -1123,7 +1162,8 @@ def _message_claims_block(result: dict, alert: bool) -> str:
         lines.append(f"- 내세운 관계: '{_voice_truncate(relation[0])}'")
     if institution:
         lines.append(f"- 내세운 기관: '{_voice_truncate(institution[0])}'")
-    reasons = [*blockers, *pretexts]
+    # LLM 이 한 문장을 기관과 명분 양쪽으로 읽으면 같은 인용이 두 줄 나온다. 앞 줄과 같은 인용은 뺀다
+    reasons = [r for r in [*blockers, *pretexts] if r not in relation[:1] + institution[:1]]
     if reasons:
         title = "내세운 사정" if relation else "내세운 명분"
         lines.append(f"- {title}: '{_voice_truncate(reasons[0])}'")
@@ -1271,6 +1311,64 @@ def render_message_case_card(result: dict, job_id: str | None = None) -> dict:
     if not question_cards:
         return card
     return merge_kakao_responses([card, *question_cards])
+
+
+def link_caution_applies(analysis_result: dict) -> bool:
+    """링크 결과가 판단 보류(R9)이고 주소가 공식이 아닌가 (#89).
+
+    이때만 문자 게이트를 불러 주의 갈래를 고른다. 위험 근거가 있으면 R1, 사칭 패턴이면 R8 로
+    이미 정해졌고, 공식 주소면 진짜 택배사 문자에 경고가 나가지 않게 제외한다("공식 주소 일치를 제외한 이유").
+    """
+
+    official = (analysis_result.get("url") or {}).get("official")
+    return select_result_card(analysis_result) == "r9-uncertain" and official != "official"
+
+
+def render_link_caution_card(analysis_result: dict, case_result: dict | None) -> dict | None:
+    """링크 결과가 판단 보류인데 문자 게이트가 주의라고 하면 R6b 주의 갈래 카드를 만든다 (#89).
+
+    새 카드를 만들지 않고 링크 없는 문자 결과 카드(`r6b-uncertain`)를 그대로 쓴다. 판정은 바꾸지 않고
+    판단 보류 안에서 제목과 첫머리만 고른다. 주의가 아니면 None 을 돌려주고 호출부가 R9 를 쓴다.
+    링크 결과 아래 Q1 은 미구현(chatbot-copy.md D16)이라 질문 카드는 붙이지 않는다.
+    """
+
+    if not case_result or not case_result.get("caution"):
+        return None
+    if case_result.get("conclusion") != Conclusion.INCONCLUSIVE.value:
+        return None
+
+    url = analysis_result.get("url") or {}
+    message = analysis_result.get("message") or {}
+    env = analysis_result.get("env") or {}
+    brand = message.get("brand")
+
+    address_checked, address_unchecked = _r9_address_lines(url.get("official"), brand)
+    env_checked, env_unchecked = _r9_env_lines(
+        env.get("answer"), ((env.get("details") or {}).get("reason") or {}).get("failures") or [],
+    )
+    case_checked, case_unchecked = _message_checked_unchecked(case_result)
+    checked = [line for line in case_checked.splitlines() if line != _R9_NO_LINES]
+    checked += [f"- {line}" for line in (address_checked, env_checked) if line]
+    unchecked = [line for line in case_unchecked.splitlines() if line != _R9_NO_LINES]
+    unchecked += [f"- {line}" for line in (address_unchecked, env_unchecked) if line]
+
+    stop_line = _message_stop_line(case_result.get("stop_actions") or [])
+    values = {
+        "headline": _MESSAGE_HEADLINES["caution"],
+        "stop_line": stop_line,
+        "verify_line": _message_verify_line(case_result, bool(stop_line)),
+        "basis_note": "",
+        "message_claims": _message_claims_block(case_result, True),
+        "checked": "\n".join(checked) or _R9_NO_LINES,
+        "unchecked": "\n".join(unchecked) or _R9_NO_LINES,
+    }
+    card = _tidy_description(render_card("r6b-uncertain", values))
+    if len(card["template"]["outputs"][0]["textCard"]["description"]) > _R9_CARD_MAX_LENGTH:
+        # textCard 설명 상한(400자)을 넘으면 주장 요약을 빼고, 그래도 넘으면 끝을 자른다
+        card = _tidy_description(render_card("r6b-uncertain", {**values, "message_claims": ""}))
+        text_card = card["template"]["outputs"][0]["textCard"]
+        text_card["description"] = _truncate_evidence(text_card["description"], _R9_CARD_MAX_LENGTH)
+    return card
 
 
 def _message_k6_card(response_actions: list[str], answers: list[str]) -> dict:

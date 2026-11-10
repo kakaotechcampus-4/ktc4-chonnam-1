@@ -1,6 +1,7 @@
 """backend ↔ ai 사이에 오가는 타입. 호출당하는 쪽이 소유합니다."""
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -166,6 +167,41 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# 로그에 남길 칸 이름. 이름도 LLM 이 지어낸 글자라 영문·숫자·밑줄만 남기고 줄인다
+_UNSAFE_NAME_CHAR = re.compile(r"[^A-Za-z0-9_]")
+_MAX_LOGGED_NAMES = 5
+
+
+def drop_undeclared_keys(model: type[BaseModel], data: object) -> tuple[object, list[str]]:
+    """LLM 답에서 스키마에 없는 최상위 칸을 뺀다. 칸 하나 때문에 답 전체를 버리지 않으려는 것이다.
+
+    게이트웨이를 거치면 strict 스키마가 강제되지 않아 모델이 칸을 지어내 붙이기도 한다(#145).
+    선언한 칸의 규칙과 중첩 칸 검증은 그대로 둔다. 돌려주는 이름은 로그용으로 다듬은 것이다.
+    """
+    if not isinstance(data, dict):
+        return data, []
+    extra = [key for key in data if key not in model.model_fields]
+    if not extra:
+        return data, []
+    kept = {key: value for key, value in data.items() if key in model.model_fields}
+    names = [_UNSAFE_NAME_CHAR.sub("?", str(key))[:40] for key in extra[:_MAX_LOGGED_NAMES]]
+    if len(extra) > _MAX_LOGGED_NAMES:
+        names.append(f"+{len(extra) - _MAX_LOGGED_NAMES}")
+    return kept, names
+
+
+class LLMAnswer(StrictModel):
+    """LLM 답을 그대로 받는 타입. 스키마에 없는 최상위 칸만 버리고 나머지는 StrictModel 규칙 그대로다."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_undeclared(cls, data: object) -> object:
+        data, names = drop_undeclared_keys(cls, data)
+        if names:
+            LOGGER.warning("llm answer repaired: model=%s undeclared=%s", cls.__name__, "|".join(names))
+        return data
+
+
 class EvidenceField(StrictModel):
     value: str | None = None
     evidence: str | None = None
@@ -205,8 +241,9 @@ def _repair_llm_output(data: dict) -> tuple[dict, list[str]]:
 
     인용이 없는 값은 어차피 쓰지 않으니 근거가 약해지지 않는다. 고친 내용은 칸 이름과 규칙만 돌려준다.
     """
-    repaired = dict(data)
-    notes: list[str] = []
+    kept, undeclared = drop_undeclared_keys(ExtractedMessage, data)
+    repaired = dict(kept)
+    notes: list[str] = [f"undeclared={'|'.join(undeclared)}"] if undeclared else []
 
     for name in ("claimed_sender", "claimed_purpose"):
         if name not in repaired:
@@ -452,7 +489,7 @@ class RiskSignal(StrictModel):
     evidence_ref: str
 
 
-class SignalProposal(StrictModel):
+class SignalProposal(LLMAnswer):
     signals: list[RiskSignal] = Field(default_factory=list)
 
 
@@ -578,7 +615,7 @@ class SignalAnalysis(StrictModel):
         return self
 
 
-class PageProposal(StrictModel):
+class PageProposal(LLMAnswer):
     brand: EvidenceField = Field(default_factory=EvidenceField)
     category: EvidenceField = Field(default_factory=EvidenceField)
     signals: list[RiskSignal] = Field(default_factory=list)
@@ -606,6 +643,8 @@ class CaseMatch(StrictModel):
     similarity: float
     matched_variant: str
     categories: list[CategoryCode] = Field(default_factory=list)
+    # 사례 레코드의 수법 유형(예: kidnapping). 통화 카드의 "비슷한 사례" 문구에 쓴다(#109). 판정에는 쓰지 않는다
+    type: str = ""
 
 
 class CaseSearchResult(StrictModel):

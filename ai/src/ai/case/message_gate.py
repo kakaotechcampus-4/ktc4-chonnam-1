@@ -6,6 +6,7 @@ L-3(기관 사칭)은 통화에만 쓴다(v3 §13 열린 항목 7). 문자 기�
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from ai.case.actions import response_actions_for
@@ -47,8 +48,16 @@ _RISK_DEMANDS = frozenset(
         _E.CALL_REQUEST,
     }
 )
-_ANY_DEMAND = _RISK_DEMANDS | {_E.MESSENGER_MOVE}
+_ANY_DEMAND = _RISK_DEMANDS | {_E.MESSENGER_MOVE, _E.ACCOUNT_LOCK_LURE, _E.LOTTERY_LURE}
 _CLAIMS = frozenset({_E.INSTITUTION_CLAIM, _E.ACQUAINTANCE_CLAIM})
+# 개인 메신저 아이디: @handle, "아이디: xxx", 영문·숫자가 섞인 낱말(ck5529, zxf226).
+# 가게 "채널 추가" 광고와 모르는 사람의 아이디 유도를 가른다 (#160)
+MESSENGER_HANDLE = re.compile(
+    r"@[A-Za-z0-9_.]{3,}"
+    r"|(?<![A-Za-z])(?:아이디|ID)\s*[:：]?\s*[A-Za-z][A-Za-z0-9_.]{2,}"
+    r"|(?<![A-Za-z0-9])(?=[A-Za-z0-9_]*[A-Za-z])(?=[A-Za-z0-9_]*\d)[A-Za-z0-9_]{4,20}(?![A-Za-z0-9])",
+    re.I,
+)
 # L-4 지인 사칭의 요구 짝
 _L4_DEMANDS = frozenset({_E.MONEY_REQUEST, _E.GIFT_CARD_REQUEST, _E.AUTH_CODE_REQUEST})
 
@@ -95,12 +104,14 @@ def _answer_evidence(answers: MessageAnswers) -> list[Evidence]:
     ]
 
 
-def _stop_actions(codes: set[EvidenceCode]) -> list[StopAction]:
-    return [action for trigger, action in _STOP_TABLE if codes & trigger][:_MAX_STOP]
+def _stop_actions(codes: set[EvidenceCode], *, has_link: bool = False) -> list[StopAction]:
+    # 링크가 있는 문자는 "링크를 누르지 마세요" 를 맨 앞에 둔다 (#89, chatbot-copy.md R9 멈출 행동)
+    head = [StopAction.DONT_CLICK_LINK] if has_link else []
+    return [*head, *(action for trigger, action in _STOP_TABLE if codes & trigger)][:_MAX_STOP]
 
 
 def _slim(similar: CaseSearchResult | None) -> CaseSearchResult | None:
-    """matched_variant 는 사례 본문이라 결과에 싣지 않는다. id·유사도만 남긴다."""
+    """matched_variant 는 사례 본문이라 결과에 싣지 않는다. id·유사도·유형만 남긴다."""
     if similar is None:
         return None
     return CaseSearchResult(
@@ -156,8 +167,13 @@ def decide_message(
     answers: MessageAnswers | None = None,
     failures: list[FailureCode] | None = None,
     reading_status: Literal["ok", "fallback"] = "ok",
+    has_link: bool = False,
 ) -> MessageCaseResult:
-    """accepted 가 None 이면 문자를 읽지 못한 것이다(not_analyzable)."""
+    """accepted 가 None 이면 문자를 읽지 못한 것이다(not_analyzable).
+
+    has_link: 링크가 있는 문자다(#89). 결론·주의 규칙은 같고, 시나리오와 멈출 행동만 다르다.
+    링크 판정은 공식 주소 대조가 따로 한다. 이 결과는 BE 가 판단 보류 카드의 갈래를 고르는 데만 쓴다.
+    """
     answers = answers or MessageAnswers()
     read_ran = accepted is not None
     q2 = answers.called_known_number
@@ -221,6 +237,12 @@ def decide_message(
         codes & _RISK_DEMANDS
         or _E.INSTITUTION_CLAIM in codes
         or (acquaintance and codes & {_E.MESSENGER_MOVE, _E.CONTACT_BLOCKER})
+        # 링크로 계정 정지를 풀라는 미끼(#160-4). message.py 가 링크가 있을 때만 근거를 넣는다
+        or _E.ACCOUNT_LOCK_LURE in codes
+        # 링크로 끌어들이는 로또 회차·당첨 미끼(#160-2). 역시 링크가 있을 때만 근거가 들어온다
+        or _E.LOTTERY_LURE in codes
+        # 모르는 사람이 개인 메신저 아이디로 옮기라는 문자도 주의다 (#160). 통화 게이트는 그대로 둔다
+        or any(e.code == _E.MESSENGER_MOVE and e.quote and MESSENGER_HANDLE.search(e.quote) for e in base)
     )
     if floors:
         conclusion, caution = Conclusion.SUSPECTED, False
@@ -258,12 +280,12 @@ def decide_message(
     )
 
     return MessageCaseResult(
-        scenario=Scenario.IMPERSONATION_NO_LINK,
+        scenario=Scenario.LINK_SMISHING if has_link else Scenario.IMPERSONATION_NO_LINK,
         conclusion=conclusion,
         caution=caution,
         floors=floors,
         evidence=evidence,
-        stop_actions=_stop_actions(codes),
+        stop_actions=_stop_actions(codes, has_link=has_link),
         response_actions=response_actions_for(answers.already_acted, base, call=False),
         verify_actions=verify_actions,
         questions=questions,

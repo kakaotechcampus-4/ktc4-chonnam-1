@@ -54,6 +54,11 @@
           },
           "title": "Categories",
           "type": "array"
+        },
+        "type": {
+          "default": "",
+          "title": "Type",
+          "type": "string"
         }
       },
       "required": [
@@ -306,6 +311,8 @@
         "remote_app_mention",
         "call_request",
         "messenger_move",
+        "account_lock_lure",
+        "lottery_lure",
         "user_not_person",
         "user_is_person"
       ],

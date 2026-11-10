@@ -1,9 +1,8 @@
 # contracts
 
-카카오 payload 스키마. 외부(카카오)와의 실제 계약만 둡니다.
+BE↔AI 결과 스키마(`message-case-result`, `voice-case-result`)를 둡니다. 카카오 payload 스키마는 아직 없습니다. 변경 절차는 `docs/contracts.md`.
 
-BE↔AI 타입은 여기 없습니다 — `ai/src/ai/types.py` 가 소유합니다.
-(호출당하는 쪽이 입력 타입을 정의한다.)
+타입의 원본은 `ai/` 가 소유합니다(호출당하는 쪽이 정의한다). 여기 있는 것은 BE 가 참고하도록 내보낸 사본입니다.
 
 ## 스키마
 

@@ -10,7 +10,14 @@ import re
 from collections.abc import Callable
 from typing import TypeVar
 
-from ai.case.forms import asserts_acquaintance, asserts_institution, is_recipient_side, is_request
+from ai.case.forms import (
+    MONEY_WORD,
+    asserts_acquaintance,
+    asserts_institution,
+    is_quotation,
+    is_recipient_side,
+    is_request,
+)
 from ai.case.types import (
     BlockerClaim,
     ClaimReading,
@@ -61,6 +68,14 @@ PUBLIC_INSTITUTION_PATTERN = re.compile(
     r"국세청|세무서|관세청|국민건강보험|건강보험\s*(?:공단|센터)|건보공단|국민연금|노동부|우체국|출입국"
 )
 
+
+def introduces_institution(sentence: str) -> bool:
+    """수사·금융 기관이나 공공기관 자기소개 꼴인가. 하한(L-3) 판단은 INSTITUTION_PATTERN 으로 따로 한다."""
+    return asserts_institution(sentence, INSTITUTION_PATTERN) or asserts_institution(
+        sentence, PUBLIC_INSTITUTION_PATTERN
+    )
+
+
 # 호칭 뒤에 한글이 더 붙으면 다른 낱말이다(이모티콘, 엄마손파이, 어머니회). 조사·서술어는 허용한다.
 _KIN_TAIL = (
     r"(?:께서|이랑|하고|한테|에게|이에요|입니다|인데|이야|예요|이다|은|는|이|가|을|를|의|도|만|랑|와|과|야|아|인|다)?"
@@ -93,6 +108,42 @@ def _sentences(text: str) -> list[str]:
     return [p for p in parts if p]
 
 
+# 폴백 읽기에서만 쓰는 송금 표현. DEMAND_LEXICON 은 사례 첨부 관문의 입력이라 고치면 모델을 다시
+# 학습해야 하므로 따로 둔다(feature_hash). "보낼" 은 상대에게 묻는 꼴일 때만 요구로 본다.
+# 돈을 집어 말할 때만 본다("문자 보낼 수 있어요?", "우산 좀 빌려줄래?" 는 아니다)
+_READING_MONEY_PATTERN = re.compile(
+    rf"(?:{MONEY_WORD}).*(?:보낼\s*(?:수\s*있\S*|래요?)[?？]$|(?:빌려|(?<![가-힣])꿔)\s*(?:줘|주|줄))"
+)
+
+
+# 폴백 읽기에서만 쓰는 메신저 아이디 안내("Line : mx5782", "카톡ID: abc12"). 외국어 문장이라도
+# 메신저 이름 뒤에 아이디를 적어 두면 옮겨 오라는 뜻이다. DEMAND_LEXICON 은 관문 학습 입력이라 따로 둔다
+_READING_MESSENGER_PATTERN = re.compile(
+    r"(?<![A-Za-z])(?:line|라인|카톡|카카오톡|텔레그램|telegram|위챗|wechat|whatsapp|왓츠앱)"
+    r"\s*(?:id|아이디)?\s*[:：]\s*@?[A-Za-z0-9_.]{3,}",
+    re.I,
+)
+
+
+# ai.case.privacy.mask_pii 가 넣는 가림 표시
+_MASK_TOKEN = re.compile(r"<(?:주민번호|카드번호|계좌번호)>")
+
+
+# 계정·지갑 정지 미끼(#160): 같은 줄에 "정지·동결됐다" 와 "해지·해제해 주세요" 가 함께 있어야 한다.
+# 분실신고 정지 안내, 영업점 해제 안내, 해외결제 차단 알림처럼 한쪽만 있는 정상 안내는 걸리지 않는다
+ACCOUNT_LOCK_PATTERN = re.compile(
+    r"(?:동결|정지|잠금|잠김|잠겼|제한|중지|차단|휴면|비활성)\s*(?:되었|됐|되어|처리|조치|예정|중|상태)"
+    r"[^\n]{0,80}?"
+    r"(?:해지|해제|복구|풀어|재인증|인증|활성화)\s*(?:해\s*주세요|하세요|하십시오|해\s*주시기|바랍니다|요망|하시기)"
+)
+
+# 로또 회차·당첨 미끼(#160-2): "1179회 2,등 발송오류", "1180회 1등 당첨번호". 세 자리 이상 회차 뒤 가까이에
+# 등수·당첨·발송오류·미수령·번호 발송이 와야 한다. "제23회 정기총회", "3회 연속 출석 당첨" 은 걸리지 않는다
+LOTTERY_PATTERN = re.compile(
+    r"\d{3,4}\s*회(?:차)?[^\n]{0,20}?(?:\d\s*,?\s*등|당첨|발송\s*오류|미수령|번호\s*(?:발송|확인|안내))"
+)
+
+
 def classify_demand(sentence: str) -> DemandKind | None:
     for kind, pattern in DEMAND_LEXICON:
         if pattern.search(sentence):
@@ -114,8 +165,11 @@ def read_with_lexicon(
     blockers: list[BlockerClaim] = []
     for seg in source.segments:
         for sentence in _sentences(seg.text):
-            if is_recipient_side(sentence):
-                # 받는 사람 말로 보이는 문장은 상한(3·6개)을 차지하지 않게 미리 뺀다
+            # 받는 사람 말로 보이는 문장은 상한(3·6개)을 차지하지 않게 미리 뺀다.
+            # "저는 국세청 직원입니다" 같은 기관 자기소개는 "저는" 이 있어도 남긴다
+            if is_recipient_side(sentence) and (
+                is_quotation(sentence) or not introduces_institution(sentence)
+            ):
                 continue
             if (m := INSTITUTION_PATTERN.search(sentence) or PUBLIC_INSTITUTION_PATTERN.search(sentence)):
                 identity.append(
@@ -125,7 +179,14 @@ def read_with_lexicon(
                 identity.append(
                     IdentityClaim(kind=IdentityKind.ACQUAINTANCE, name=m.group(0), quote=sentence)
                 )
-            if (kind := classify_demand(sentence)) is not None:
+            # 가림 표시(<계좌번호> 등)는 우리가 넣은 글자라 요구 어휘로 읽지 않는다 (회의 ID 오탐)
+            bare = _MASK_TOKEN.sub(" ", sentence)
+            kind = classify_demand(bare)
+            if kind is None and _READING_MONEY_PATTERN.search(sentence):
+                kind = DemandKind.MONEY_TRANSFER
+            if kind is None and _READING_MESSENGER_PATTERN.search(sentence):
+                kind = DemandKind.MOVE_MESSENGER
+            if kind is not None:
                 demands.append(DemandClaim(kind=kind, quote=sentence))
             if BLOCKER_PATTERN.search(sentence):
                 blockers.append(BlockerClaim(quote=sentence))

@@ -1,6 +1,6 @@
 """services.result_card_selector 테스트.
 
-docs/designs/result-meaning-cases.md 4절의 S1~S5 상태표를 기준 사례로
+docs/archive/designs/result-meaning-cases.md 4절의 S1~S5 상태표를 기준 사례로
 삼는다. "정상 조건"은 아직 팀 미확정(6절 항목 9)이므로, 여기 기대값은
 select_result_card()의 임시 규칙을 고정하기 위한 것이지 최종 합의가
 아니다.
@@ -42,7 +42,7 @@ def _analysis(official: str, message: dict, env: dict) -> dict:
 
 class TestSelectResultCard:
     def test_official_and_both_no_risk_is_official_card(self):
-        # S2 — docs/designs/result-meaning-cases.md 4절
+        # S2 — docs/archive/designs/result-meaning-cases.md 4절
         analysis = _analysis(
             "official",
             _part("no_risk_found", brand="CJ대한통운"),
@@ -119,7 +119,7 @@ class TestSelectResultCard:
 
     def test_signals_in_message_override_official_state(self):
         """검증된 위험 근거는 다른 상태보다 먼저 본다
-        (PR #39 멘토 피드백, result-meaning-cases.md 4절)."""
+        (PR #39 멘토 피드백, docs/archive/designs/result-meaning-cases.md 4절)."""
         analysis = _analysis(
             "official",
             _part("risk_found", brand="CJ대한통운", signals=[_signal()]),

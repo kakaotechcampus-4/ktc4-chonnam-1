@@ -165,7 +165,7 @@ def _checked_unchecked(
 
 
 def _slim(similar: CaseSearchResult | None) -> CaseSearchResult | None:
-    """matched_variant 는 대본 통째라 결과에 싣지 않는다. id·유사도만 남긴다."""
+    """matched_variant 는 대본 통째라 결과에 싣지 않는다. id·유사도·유형만 남긴다."""
     if similar is None:
         return None
     return CaseSearchResult(
@@ -228,11 +228,19 @@ def decide_call(
             ),
         ]
 
-    # U-5: 통화에는 링크 후보 조건이 없지만 말로 부른 링크는 요구로 센다
+    # U-5: 통화에는 링크 후보 조건이 없지만 말로 부른 링크는 요구로 센다.
+    # 읽기가 실패해 어휘표로 떨어졌으면 "주장이 없다"고 단정할 수 없으므로
+    # 입력 요청 대신 아래의 판단 보류(INCONCLUSIVE)로 보낸다
     if (
-        not link_spoken
+        reading_status != "fallback"
+        and not link_spoken
         and not (codes & _ANY_DEMAND)
         and not (codes & {_E.INSTITUTION_CLAIM, _E.ACQUAINTANCE_CLAIM})
+        # 꼴 때문에 버린 신원·요구가 있으면 "말이 없다"고 단정하지 않는다
+        and not any(
+            r.reason == "self_side" and r.kind in ("identity", "demand")
+            for r in verify.rejected
+        )
     ):
         return VoiceCaseResult(
             conclusion=Conclusion.INPUT_REQUIRED,

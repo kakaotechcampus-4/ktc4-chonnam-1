@@ -262,3 +262,62 @@ async def test_parser_called(valid_payload):
 
     assert received == [(TEST_URL, valid_payload)]
     assert result.input_url == TEST_URL
+
+
+@pytest.mark.asyncio
+async def test_asks_for_uncompressed_body(valid_payload):
+    def handler(request):
+        assert request.headers["Accept-Encoding"] == "identity"
+        return httpx.Response(200, json=valid_payload)
+
+    async with make_client(handler) as client:
+        await collect_url_isolated(TEST_URL, parse_response=fake_parser, client=client)
+
+
+@pytest.mark.asyncio
+async def test_compressed_response_is_rejected_before_decoding():
+    import gzip
+
+    bomb = gzip.compress(b" " * 4_000_000)
+
+    def handler(request):
+        return httpx.Response(200, headers={"Content-Encoding": "gzip"}, content=bomb)
+
+    async with make_client(handler) as client:
+        with pytest.raises(IsolationClientError):
+            await collect_url_isolated(TEST_URL, client=client)
+
+
+@pytest.mark.asyncio
+async def test_slow_drip_response_stops_at_total_deadline(monkeypatch):
+    import asyncio
+    import time
+
+    import scanner.isolation_client as isolation_client
+
+    monkeypatch.setattr(isolation_client, "ISOLATION_TIMEOUT_SECONDS", 0.3)
+
+    async def drip():
+        for _ in range(20):
+            await asyncio.sleep(0.1)
+            yield b" "
+
+    def handler(request):
+        return httpx.Response(200, content=drip())
+
+    start = time.monotonic()
+    async with make_client(handler) as client:
+        with pytest.raises(IsolationClientError):
+            await collect_url_isolated(TEST_URL, client=client)
+    assert time.monotonic() - start < 1.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [b"[" * 100_000, b"1" * 5000], ids=["deep_nesting", "long_number"])
+async def test_hostile_json_is_a_client_error(body):
+    def handler(request):
+        return httpx.Response(200, content=body)
+
+    async with make_client(handler) as client:
+        with pytest.raises(IsolationClientError):
+            await collect_url_isolated(TEST_URL, client=client)

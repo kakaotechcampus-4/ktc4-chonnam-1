@@ -40,7 +40,7 @@ def get_signal_copy(code: str) -> tuple[str, str]:
 
 
 # env.answer -> C2 "unverified" 문장.
-# result-meaning-cases.md 4절 "페이지 확인 범위 문장" 표.
+# docs/archive/designs/result-meaning-cases.md 4절 "페이지 확인 범위 문장" 표.
 # risk_found는 그 표에 명시된 문장이 없어, 같은 절의 취지(확인했다는
 # 사실 자체를 말한다)를 따른 잠정 문구다 — FE 확정 전까지 임시값.
 UNVERIFIED_COPY: dict[str, str] = {
@@ -93,3 +93,41 @@ def get_message_failure_copy(failures: list[str] | None) -> str:
         failures[0],
         _FALLBACK_MESSAGE_FAILURE,
     )
+
+
+# chatbot-copy.md 4절의 카드용 짧은 문장. 번호는 NR-0015 원문에 있는 값만 사용한다.
+GUIDANCE_DELIVERY_CONTACTS = {
+    "우체국택배": ("우체국", "1588-1300"),
+    "CJ대한통운": ("CJ대한통운", "1588-1255"),
+    "CJ택배": ("CJ대한통운", "1588-1255"),
+    "한진택배": ("한진택배", "1588-0011"),
+    "롯데택배": ("롯데택배", "1588-2121"),
+    "로젠택배": ("로젠택배", "1588-9988"),
+}
+GUIDANCE_DELIVERY_ACTION = "택배 배송·주소 문제는 문자 속 링크나 걸려 온 번호 대신 고객센터에 직접 전화해 확인하세요."
+GUIDANCE_DELIVERY_ALL_CONTACTS = (
+    "우체국 1588-1300, CJ대한통운 1588-1255, 한진 1588-0011, "
+    "롯데 1588-2121, 로젠 1588-9988"
+)
+GUIDANCE_CARD_CONTACT = (
+    "결제·승인 문제는 문자에 적힌 번호 대신 카드사 고객센터에 직접 전화해 확인하세요.\n"
+    "고객센터 번호는 카드 뒷면이나 카드사 공식 앱에서 확인하세요."
+)
+
+# 녹음 캐러셀 "비슷한 사례" 장의 수법 문구(docs/designs/chatbot-copy.md 4절 "녹음 캐러셀의 비슷한 사례", #109).
+# 키는 통화 사례 KB 의 type(`similar_cases.matches[].type`). 값은 (similar_type, similar_line)
+VOICE_SIMILAR_TYPES: dict[str, tuple[str, str]] = {
+    "institution_impersonation": (
+        "기관 사칭",
+        "검찰, 경찰, 금융감독원이라며 사건에 연루됐다고 겁을 주고 돈이나 정보를 요구하는 수법이에요.",
+    ),
+    "loan_fraud": ("대출 빙자", "낮은 금리로 대출해 준다며 수수료나 기존 대출 상환을 요구하는 수법이에요."),
+    "family_impersonation": ("가족, 지인 사칭", "가족이나 지인인 척 급한 사정을 대며 송금을 부탁하는 수법이에요."),
+    "kidnapping": ("납치 빙자", "가족을 데리고 있다며 겁을 주고 바로 돈을 보내라고 하는 수법이에요."),
+    "account_recruitment": ("통장 모집", "일자리나 대가를 내세워 통장이나 체크카드를 빌려 달라고 하는 수법이에요."),
+    "other_impersonation": (
+        "그 밖의 사칭",
+        "택배사나 출입국사무소 같은 곳인 척하며 돈이나 개인정보를 요구하는 수법이에요.",
+    ),
+    "other": ("보이스피싱", ""),
+}

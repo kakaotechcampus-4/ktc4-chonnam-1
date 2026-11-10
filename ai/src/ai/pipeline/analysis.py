@@ -11,7 +11,7 @@ from dataclasses import replace
 from openai import APITimeoutError, AsyncOpenAI
 
 from ai.kb.search import search_cases
-from ai.links import has_link_mark, message_links, remove_spans
+from ai.links import has_link_mark, looks_like_link, message_links, remove_spans
 from ai.llm._client import create_client
 from ai.llm.analyze import TIMEOUT_SECONDS as EXTRACTION_TIMEOUT_SECONDS
 from ai.llm.analyze import analyze_message, fallback_analysis, ground_analysis
@@ -100,8 +100,10 @@ async def read_message(
     message = remove_spans(text, [span for span, _ in found])
     # A span the model changed or cut short stays out of `links`, and a link it
     # skipped leaves its mark in the body. Neither may read as "no link".
+    # A span with no address shape (a messenger id the model listed) is not a link.
     unverified = (
-        any(span not in text or span in message for span in extracted.urls)
+        any(looks_like_link(span) and (span not in text or span in message)
+            for span in extracted.urls)
         or has_link_mark(message)
     )
     # Links now live in `links`; later steps read only the body without them.
@@ -167,6 +169,8 @@ async def analyze_message_part(
                 if isinstance(result, asyncio.CancelledError):
                     raise result
             if isinstance(search_result, Exception):
+                # 검색 예산 초과·실패를 사례 없음과 구분해 남긴다(#155)
+                LOGGER.warning("message part case search failed: %s", type(search_result).__name__)
                 failure = _failure_code(search_result)
             else:
                 cases = search_result
