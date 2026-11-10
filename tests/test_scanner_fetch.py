@@ -152,6 +152,23 @@ class TestInvalidUrl:
         assert result.failures == ("invalid_scheme",)
         assert seen == []
 
+    def test_overlong_host_label_is_reported_not_raised(self):
+        """63자를 넘는 호스트 조각은 이름 풀이가 UnicodeError 를 올린다. 예외가 새면 안 된다."""
+
+        async def go() -> CollectResult:
+            transport = httpx.MockTransport(lambda request: httpx.Response(200))
+            async with httpx.AsyncClient(transport=transport) as client:
+                # 기본 resolver 를 쓴다. 인코딩 단계에서 실패하므로 네트워크에 나가지 않는다
+                return await collect_url("https://" + "a" * 64 + ".com/", client=client, timeout=5.0)
+
+        assert asyncio.run(go()).failures == ("invalid_url",)
+
+    def test_control_character_in_url_is_reported_not_raised(self):
+        result, seen = run("https://ok.example/a\x01b", {})
+
+        assert result.failures == ("invalid_url",)
+        assert seen == []
+
     def test_unreachable_host_is_connection_failed(self):
         result, _ = run("https://down.example/", {})
 

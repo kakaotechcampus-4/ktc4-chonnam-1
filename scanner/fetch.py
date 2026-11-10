@@ -353,6 +353,9 @@ async def _collect(
             )
     except (TimeoutError, httpx.TimeoutException):
         return _result(url, chain, final_url=current, elapsed_start=start, failures=("timeout",))
+    except (httpx.InvalidURL, UnicodeError):
+        # 이름 풀이나 요청 생성이 주소를 인코딩하지 못한 경우다. HTTPError 하위가 아니라 따로 잡는다
+        return _result(url, chain, final_url=current, elapsed_start=start, failures=("invalid_url",))
     except httpx.HTTPError as e:
         failure = "tls_cert_verify_failed" if _is_cert_verify_failure(e) else "connection_failed"
         return _result(url, chain, final_url=current, elapsed_start=start, failures=(failure,))
