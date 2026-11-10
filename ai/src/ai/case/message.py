@@ -28,6 +28,7 @@ from ai.case.types import (
     Origin,
     QuestionId,
     ReadingSource,
+    Scenario,
     Segment,
     Side,
     UncheckedItem,
@@ -115,14 +116,18 @@ async def analyze_message_case(
     *,
     runtime: MessageRuntime | None = None,
     time_budget_s: float = DEFAULT_TIME_BUDGET_S,
+    has_link: bool = False,
 ) -> MessageCaseResult:
     """링크 없는 문자를 분석한다. 질문으로 멈추지 않고 늘 결과를 낸다.
+
+    has_link=True 면 링크가 있는 문자의 본문을 같은 규칙으로 읽는다(#89). BE 는 링크 결과가 판단
+    보류일 때만 부르며, 이 결과로 판단 보류 카드의 주의 갈래를 고른다. 링크 판정은 바꾸지 않는다.
 
     BE 는 링크가 없다고 확인된 문자(read_message 가 성공했고 links·unverified_links 가 비었음)만
     넘긴다. 예기치 못한 오류가 나도 예외 대신 분석 불가 결과를 돌려준다(CancelledError 만 올린다).
     """
     try:
-        return await _analyze(text, runtime or MessageRuntime(), time_budget_s)
+        return await _analyze(text, runtime or MessageRuntime(), time_budget_s, has_link)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -131,7 +136,7 @@ async def analyze_message_case(
 
 
 async def _analyze(
-    text: str, runtime: MessageRuntime, time_budget_s: float
+    text: str, runtime: MessageRuntime, time_budget_s: float, has_link: bool = False
 ) -> MessageCaseResult:
     started = time.monotonic()
 
@@ -204,6 +209,7 @@ async def _analyze(
         official_contact=contact,
         failures=failures,
         reading_status=reading.status,
+        has_link=has_link,
     )
 
 
@@ -280,4 +286,5 @@ def apply_message_answer(
         answers=answers,
         failures=result.failures,
         reading_status=result.reading_status,
+        has_link=result.scenario == Scenario.LINK_SMISHING,
     )

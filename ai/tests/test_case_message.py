@@ -634,3 +634,42 @@ async def test_masked_number_alone_is_not_info_request(text):
 async def test_real_account_request_with_masked_number_is_still_caution():
     r = await _analyze("계좌번호 123-456-789012 로 지금 입금해 주세요", None)
     assert r.caution is True
+
+
+# ── #89: 링크가 있는 문자도 같은 게이트로 주의 갈래를 고른다 ─────────────
+
+LINK_INFO = "[Web발신] 청소행정과입니다. 쓰레기 무단투기 신고가 접수되었습니다. 아래 링크에서 정보를 입력해 주세요"
+LINK_INFO_READING = {
+    "identity": [{"kind": "institution", "name": "청소행정과", "quote": "청소행정과입니다"}],
+    "pretexts": [{"quote": "쓰레기 무단투기 신고가 접수되었습니다"}],
+    "demands": [{"kind": "personal_info", "quote": "아래 링크에서 정보를 입력해 주세요"}],
+}
+
+
+async def test_link_message_puts_dont_click_link_first():
+    r = await analyze_message_case(LINK_INFO, runtime=_runtime(LINK_INFO_READING), has_link=True)
+    assert r.scenario == Scenario.LINK_SMISHING
+    assert r.caution is True
+    assert r.stop_actions[0] == StopAction.DONT_CLICK_LINK
+    assert StopAction.DONT_ENTER_INFO in r.stop_actions
+
+
+async def test_link_message_keeps_link_after_answer():
+    r = await analyze_message_case(LINK_INFO, runtime=_runtime(LINK_INFO_READING), has_link=True)
+    after = apply_message_answer(r, "already_acted", "not_yet")
+    assert after.scenario == Scenario.LINK_SMISHING
+    assert after.stop_actions[0] == StopAction.DONT_CLICK_LINK
+
+
+async def test_no_link_message_never_says_dont_click_link():
+    r = await _analyze(LINK_INFO, LINK_INFO_READING)
+    assert r.scenario == Scenario.IMPERSONATION_NO_LINK
+    assert StopAction.DONT_CLICK_LINK not in r.stop_actions
+
+
+async def test_link_message_without_claims_stays_input_required():
+    # 정상 택배 안내처럼 주장·요구가 없으면 주의로 올리지 않는다
+    r = await analyze_message_case("[CJ대한통운] 오늘 배송 예정입니다. 아래 링크에서 조회하세요",
+                                   runtime=_runtime({}), has_link=True)
+    assert r.caution is False
+    assert r.conclusion == Conclusion.INPUT_REQUIRED
