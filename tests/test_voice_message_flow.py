@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import backend.src.server.voice_flow as voice_flow
 import main
 from services.result_card_renderer import render_detail_carousel, render_voice_detail_carousel, render_voice_result_card
 from services.kakao_card_renderer import render_card
@@ -151,9 +152,9 @@ def _patch_pipeline(monkeypatch, *, download=None, transcript=None, analysis=Non
         outcome = analysis(transcript_result, time_budget_s=time_budget_s)
         return await outcome if asyncio.iscoroutine(outcome) else outcome
 
-    monkeypatch.setattr(main, "download_voice_media", fake_download)
-    monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-    monkeypatch.setattr(main, "analyze_call", fake_analyze)
+    monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+    monkeypatch.setattr(voice_flow, "transcribe_call", fake_transcribe)
+    monkeypatch.setattr(voice_flow, "analyze_call", fake_analyze)
 
 
 class TestVoiceMessageIsRoutedBeforeReadMessage:
@@ -216,7 +217,7 @@ class TestVoiceMessageIsRoutedBeforeReadMessage:
             raise RuntimeError("boom")
 
         _patch_pipeline(monkeypatch, transcript=failing_transcribe)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow.os, "remove", lambda path: None)
 
         client.post("/kakao/skill", json=_voice_skill_payload())
 
@@ -232,7 +233,7 @@ class TestVoiceMessageIsRoutedBeforeReadMessage:
         def unexpected_download(url):
             pytest.fail("오디오가 아닌 링크가 음성 다운로드로 감")
 
-        monkeypatch.setattr(main, "download_voice_media", unexpected_download)
+        monkeypatch.setattr(voice_flow, "download_voice_media", unexpected_download)
         calls = stub_read_message()
 
         response = client.post(
@@ -267,7 +268,7 @@ class TestVoiceMessageSyncPath:
 
         removed = []
         _patch_pipeline(monkeypatch, analysis=lambda t, time_budget_s=40.0: result)
-        monkeypatch.setattr(main.os, "remove", lambda path: removed.append(path))
+        monkeypatch.setattr(voice_flow.os, "remove", lambda path: removed.append(path))
 
         response = client.post("/kakao/skill", json=_voice_skill_payload())
 
@@ -282,7 +283,7 @@ class TestVoiceMessageSyncPath:
         async def failing_download(url):
             raise MediaDownloadBlocked("허용되지 않은 주소로 해석됨")
 
-        monkeypatch.setattr(main, "download_voice_media", failing_download)
+        monkeypatch.setattr(voice_flow, "download_voice_media", failing_download)
 
         response = client.post("/kakao/skill", json=_voice_skill_payload())
 
@@ -508,17 +509,17 @@ class TestTranscribeAndAnalyzeWiring:
             captured["time_budget_s"] = time_budget_s
             return _voice_result()
 
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-        monkeypatch.setattr(main, "analyze_call", fake_analyze)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", fake_transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", fake_analyze)
+        monkeypatch.setattr(voice_flow.os, "remove", lambda path: None)
 
         await main.run_voice_analysis(SIGNED_CDN_URL)
 
         assert captured["transcript"] is transcript
         # CALLBACK_DEADLINE_SECONDS(45) - 5 = 40초에서 경과 시간을 뺀 값이라
         # 40초보다 작아야 하고, 거의 즉시 끝났으니 0에 아주 가깝게 작지는 않다.
-        assert 0 < captured["time_budget_s"] <= main.VOICE_ANALYZE_BUDGET_S
+        assert 0 < captured["time_budget_s"] <= voice_flow.VOICE_ANALYZE_BUDGET_S
 
     async def test_insufficient_remaining_budget_skips_real_analysis_budget(self, monkeypatch):
         """남은 예산이 5초 미만이면 analyze_call()에 0초를 줘 실제 분석
@@ -530,8 +531,8 @@ class TestTranscribeAndAnalyzeWiring:
         해서 "경과 시간이 예산을 넘겼다"를 실제로 재현한다.
         """
 
-        monkeypatch.setattr(main, "VOICE_ANALYZE_BUDGET_S", 0.05)
-        monkeypatch.setattr(main, "VOICE_MIN_ANALYZE_BUDGET_S", 0.05)
+        monkeypatch.setattr(voice_flow, "VOICE_ANALYZE_BUDGET_S", 0.05)
+        monkeypatch.setattr(voice_flow, "VOICE_MIN_ANALYZE_BUDGET_S", 0.05)
 
         captured = {}
 
@@ -546,10 +547,10 @@ class TestTranscribeAndAnalyzeWiring:
             captured["time_budget_s"] = time_budget_s
             return _voice_result(conclusion=Conclusion.NOT_ANALYZABLE)
 
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-        monkeypatch.setattr(main, "analyze_call", fake_analyze)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", fake_transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", fake_analyze)
+        monkeypatch.setattr(voice_flow.os, "remove", lambda path: None)
 
         await main.run_voice_analysis(SIGNED_CDN_URL)
 
@@ -577,10 +578,10 @@ class TestTranscribeAndAnalyzeWiring:
                 unchecked=[Unchecked(item=UncheckedItem.TRANSCRIPT, reason=UncheckedReason.FAILED)],
             )
 
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-        monkeypatch.setattr(main, "analyze_call", fake_analyze)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", fake_transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", fake_analyze)
+        monkeypatch.setattr(voice_flow.os, "remove", lambda path: None)
 
         card = await main.run_voice_analysis(SIGNED_CDN_URL)
 
@@ -595,9 +596,9 @@ class TestTranscribeAndAnalyzeWiring:
         async def cancelling_transcribe(audio, filename):
             raise asyncio.CancelledError()
 
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", cancelling_transcribe)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", cancelling_transcribe)
+        monkeypatch.setattr(voice_flow.os, "remove", lambda path: None)
 
         with pytest.raises(asyncio.CancelledError):
             await main.run_voice_analysis(SIGNED_CDN_URL)
@@ -612,10 +613,10 @@ class TestTranscribeAndAnalyzeWiring:
         async def cancelling_analyze(transcript_result, *, time_budget_s):
             raise asyncio.CancelledError()
 
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-        monkeypatch.setattr(main, "analyze_call", cancelling_analyze)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", fake_transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", cancelling_analyze)
+        monkeypatch.setattr(voice_flow.os, "remove", lambda path: None)
 
         with pytest.raises(asyncio.CancelledError):
             await main.run_voice_analysis(SIGNED_CDN_URL)
@@ -632,10 +633,10 @@ class TestTranscribeAndAnalyzeWiring:
         async def failing_analyze(transcript_result, *, time_budget_s):
             raise RuntimeError("boom")
 
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-        monkeypatch.setattr(main, "analyze_call", failing_analyze)
-        monkeypatch.setattr(main.os, "remove", lambda path: removed.append(path))
+        monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", fake_transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", failing_analyze)
+        monkeypatch.setattr(voice_flow.os, "remove", lambda path: removed.append(path))
 
         card = await main.run_voice_analysis(SIGNED_CDN_URL)
 
@@ -672,7 +673,8 @@ class TestDownloadVoiceMediaCleansUpOnCancellation:
                 return FakeStream()
 
         monkeypatch.setattr(main, "get_http_client", lambda: FakeHttpClient())
-        monkeypatch.setattr(main, "assert_resolves_to_public_ip", lambda host: _noop())
+        monkeypatch.setattr(voice_flow, "get_http_client", lambda: FakeHttpClient())
+        monkeypatch.setattr(voice_flow, "assert_resolves_to_public_ip", lambda host: _noop())
 
         created_paths = []
         import tempfile as tempfile_module
@@ -683,10 +685,10 @@ class TestDownloadVoiceMediaCleansUpOnCancellation:
             created_paths.append(path)
             return fd, path
 
-        monkeypatch.setattr(main.tempfile, "mkstemp", tracking_mkstemp)
+        monkeypatch.setattr(voice_flow.tempfile, "mkstemp", tracking_mkstemp)
 
         with pytest.raises(asyncio.CancelledError):
-            await main.download_voice_media(SIGNED_CDN_URL)
+            await voice_flow.download_voice_media(SIGNED_CDN_URL)
 
         assert len(created_paths) == 1
         assert not os.path.exists(created_paths[0])
@@ -713,8 +715,8 @@ class TestVoiceInputValidation:
     @pytest.mark.parametrize("extra_byte", [False, True])
     async def test_actual_wav_at_25mib_reaches_stt_but_one_extra_byte_does_not(self, monkeypatch, tmp_path, extra_byte):
         # PCM header is 44 bytes; keep the full original production size boundary.
-        data = _wav_bytes((main.MAX_VOICE_FILE_BYTES - 44) // 2, rate=1)
-        assert len(data) == main.MAX_VOICE_FILE_BYTES
+        data = _wav_bytes((voice_flow.MAX_VOICE_FILE_BYTES - 44) // 2, rate=1)
+        assert len(data) == voice_flow.MAX_VOICE_FILE_BYTES
         if extra_byte:
             data += b"x"
         path = tmp_path / "download"
@@ -722,9 +724,9 @@ class TestVoiceInputValidation:
         async def download(url):
             return str(path), len(data)
         transcribe = AsyncMock(return_value=_transcript())
-        monkeypatch.setattr(main, "download_voice_media", download)
-        monkeypatch.setattr(main, "transcribe_call", transcribe)
-        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", AsyncMock(return_value=_voice_result()))
         result = await main.run_voice_analysis(SIGNED_CDN_URL)
         if extra_byte:
             assert "25MB보다 커요" in str(result)
@@ -741,7 +743,7 @@ class TestVoiceInputValidation:
                 await asyncio.Event().wait()
             finally:
                 stopped.set()
-        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
         monkeypatch.setattr(main, "VOICE_SYNC_TIMEOUT_SECONDS", 0.01)
         from fastapi import BackgroundTasks
         response = await main.handle_voice_message({"type": "audio", "url": SIGNED_CDN_URL},
@@ -766,9 +768,9 @@ class TestVoiceInputValidation:
         async def download(url):
             return str(path), len(data)
         transcribe, analyze = AsyncMock(), AsyncMock()
-        monkeypatch.setattr(main, "download_voice_media", download)
-        monkeypatch.setattr(main, "transcribe_call", transcribe)
-        monkeypatch.setattr(main, "analyze_call", analyze)
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", analyze)
         job_id = main.create_analysis_job("voice-user") if with_job else None
         result = await main.run_voice_analysis(SIGNED_CDN_URL, job_id=job_id)
         if reason is None:
@@ -792,9 +794,9 @@ class TestVoiceInputValidation:
         async def download(url):
             return str(path), len(data)
         transcribe = AsyncMock(return_value=_transcript())
-        monkeypatch.setattr(main, "download_voice_media", download)
-        monkeypatch.setattr(main, "transcribe_call", transcribe)
-        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", AsyncMock(return_value=_voice_result()))
         result = await main.run_voice_analysis(SIGNED_CDN_URL)
         assert "보이스피싱이 의심" in str(result)
         transcribe.assert_awaited_once_with(data, filename)
@@ -808,10 +810,10 @@ class TestVoiceInputValidation:
         async def download(url):
             return str(path), len(data)
         transcribe = AsyncMock(return_value=_transcript())
-        monkeypatch.setattr(main, "download_voice_media", download)
-        monkeypatch.setattr(main, "MAX_VOICE_DURATION_SECONDS", limit)
-        monkeypatch.setattr(main, "transcribe_call", transcribe)
-        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "MAX_VOICE_DURATION_SECONDS", limit)
+        monkeypatch.setattr(voice_flow, "transcribe_call", transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", AsyncMock(return_value=_voice_result()))
         result = await main.run_voice_analysis(SIGNED_CDN_URL)
         if reason:
             assert reason in str(result)
@@ -827,9 +829,9 @@ class TestVoiceInputValidation:
         async def download(url):
             return str(path), path.stat().st_size
         transcribe = AsyncMock()
-        monkeypatch.setattr(main, "download_voice_media", download)
-        monkeypatch.setattr(main, "MAX_VOICE_DURATION_SECONDS", 60)
-        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "MAX_VOICE_DURATION_SECONDS", 60)
+        monkeypatch.setattr(voice_flow, "transcribe_call", transcribe)
         result = await main.run_voice_analysis(SIGNED_CDN_URL)
         assert "녹음 길이를 확인할 수 없어요" in str(result)
         transcribe.assert_not_awaited()
@@ -840,8 +842,8 @@ class TestVoiceInputValidation:
     async def test_network_errors_and_timeouts_are_r4_in_both_paths(self, monkeypatch, failure, with_job, capsys):
         download = AsyncMock(side_effect=failure)
         transcribe = AsyncMock()
-        monkeypatch.setattr(main, "download_voice_media", download)
-        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", transcribe)
         job_id = main.create_analysis_job("voice-user") if with_job else None
         assert await main.run_voice_analysis(SIGNED_CDN_URL, job_id=job_id) == render_card("r4-unavailable")
         assert "signed token must not leak" not in capsys.readouterr().out
@@ -849,7 +851,7 @@ class TestVoiceInputValidation:
 
     @pytest.mark.parametrize("extra_byte", [False, True])
     async def test_real_download_25mib_boundary_is_streamed_and_cleaned(self, monkeypatch, tmp_path, extra_byte):
-        assert main.MAX_VOICE_FILE_BYTES == 25 * 1024 * 1024
+        assert voice_flow.MAX_VOICE_FILE_BYTES == 25 * 1024 * 1024
         class Stream(httpx.AsyncByteStream):
             async def __aiter__(self):
                 for _ in range(25):
@@ -858,18 +860,19 @@ class TestVoiceInputValidation:
                     yield b"x"
         def respond(request):
             return httpx.Response(200, stream=Stream(), headers={"Content-Type": "audio/mp4"})
-        original = main.tempfile.mkstemp
-        monkeypatch.setattr(main.tempfile, "mkstemp", lambda **kwargs: original(dir=tmp_path, **kwargs))
-        monkeypatch.setattr(main, "assert_resolves_to_public_ip", AsyncMock())
+        original = voice_flow.tempfile.mkstemp
+        monkeypatch.setattr(voice_flow.tempfile, "mkstemp", lambda **kwargs: original(dir=tmp_path, **kwargs))
+        monkeypatch.setattr(voice_flow, "assert_resolves_to_public_ip", AsyncMock())
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             monkeypatch.setattr(main, "get_http_client", lambda: client)
+            monkeypatch.setattr(voice_flow, "get_http_client", lambda: client)
             if extra_byte:
                 result = await main.run_voice_analysis(SIGNED_CDN_URL)
                 assert "25MB보다 커요" in str(result)
                 assert not list(tmp_path.iterdir())
             else:
-                path, size = await main.download_voice_media(SIGNED_CDN_URL)
-                assert size == main.MAX_VOICE_FILE_BYTES
+                path, size = await voice_flow.download_voice_media(SIGNED_CDN_URL)
+                assert size == voice_flow.MAX_VOICE_FILE_BYTES
                 assert os.path.getsize(path) == size
                 os.remove(path)
 
@@ -881,11 +884,12 @@ class TestVoiceInputValidation:
     async def test_real_download_mime_does_not_override_content(self, monkeypatch, data, mime, expected):
         def respond(request):
             return httpx.Response(200, content=data, headers={"Content-Type": mime})
-        monkeypatch.setattr(main, "assert_resolves_to_public_ip", AsyncMock())
-        monkeypatch.setattr(main, "transcribe_call", AsyncMock(return_value=_transcript()))
-        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        monkeypatch.setattr(voice_flow, "assert_resolves_to_public_ip", AsyncMock())
+        monkeypatch.setattr(voice_flow, "transcribe_call", AsyncMock(return_value=_transcript()))
+        monkeypatch.setattr(voice_flow, "analyze_call", AsyncMock(return_value=_voice_result()))
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             monkeypatch.setattr(main, "get_http_client", lambda: client)
+            monkeypatch.setattr(voice_flow, "get_http_client", lambda: client)
             result = await main.run_voice_analysis(SIGNED_CDN_URL)
         assert _card_body(result)["title"] == expected
 
@@ -896,7 +900,7 @@ class TestVoiceInputValidation:
                 await asyncio.Event().wait()
             finally:
                 stopped.set()
-        monkeypatch.setattr(main, "download_voice_media", wait_for_download)
+        monkeypatch.setattr(voice_flow, "download_voice_media", wait_for_download)
         monkeypatch.setattr(main, "CALLBACK_DEADLINE_SECONDS", 0.01)
         job_id = main.create_analysis_job("voice-user")
         main.RUNNING_USERS.add("voice-user")
@@ -979,7 +983,7 @@ class TestVoiceMessageAsyncCallbackPath:
         result = _voice_result(conclusion=Conclusion.SUSPECTED)
 
         _patch_pipeline(monkeypatch, analysis=lambda t, time_budget_s=40.0: result)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow.os, "remove", lambda path: None)
 
         job_id = main.create_analysis_job("voice-user")
         main.ANALYSIS_JOBS[job_id]["analysis_kind"] = "voice"
@@ -1242,7 +1246,7 @@ class TestVoiceAnswerFlow:
             questions=[AttachedQuestion(question_id=QuestionId.ALREADY_ACTED, option_ids=["sent_money", "not_yet"])],
         )
         _patch_pipeline(monkeypatch, analysis=lambda t, time_budget_s=40.0: result)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow.os, "remove", lambda path: None)
 
         job_id = main.create_analysis_job("voice-user")
 
@@ -1270,7 +1274,7 @@ class TestVoiceAnswerFlow:
             questions=[AttachedQuestion(question_id=QuestionId.ALREADY_ACTED, option_ids=["sent_money"])],
         )
         _patch_pipeline(monkeypatch, analysis=lambda t, time_budget_s=40.0: result)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow.os, "remove", lambda path: None)
 
         card = await main.run_voice_analysis(SIGNED_CDN_URL, job_id=None)
 
@@ -1553,7 +1557,7 @@ class TestVoiceDownloadCancellation:
             return httpx.Response(200, content=slow_body())
 
         created = []
-        real_mkstemp = main.tempfile.mkstemp
+        real_mkstemp = voice_flow.tempfile.mkstemp
 
         def tracking_mkstemp(*args, **kwargs):
             fd, path = real_mkstemp(*args, **kwargs)
@@ -1565,10 +1569,11 @@ class TestVoiceDownloadCancellation:
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         monkeypatch.setattr(main, "get_http_client", lambda: client)
-        monkeypatch.setattr(main, "assert_resolves_to_public_ip", public_ip)
-        monkeypatch.setattr(main.tempfile, "mkstemp", tracking_mkstemp)
+        monkeypatch.setattr(voice_flow, "get_http_client", lambda: client)
+        monkeypatch.setattr(voice_flow, "assert_resolves_to_public_ip", public_ip)
+        monkeypatch.setattr(voice_flow.tempfile, "mkstemp", tracking_mkstemp)
 
-        task = asyncio.create_task(main.download_voice_media(SIGNED_CDN_URL))
+        task = asyncio.create_task(voice_flow.download_voice_media(SIGNED_CDN_URL))
         await asyncio.wait_for(second_chunk_started.wait(), timeout=5)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

@@ -11,6 +11,7 @@ import wave
 import httpx
 import pytest
 
+import backend.src.server.voice_flow as voice_flow
 import main
 from services.kakao_card_renderer import render_card
 from ai.case.types import Conclusion, Scenario, Segment, Side, TranscriptResult, VoiceCaseResult
@@ -53,9 +54,9 @@ def pipeline(monkeypatch, tmp_path):
     download_mock = AsyncMock(side_effect=download)
     stt = AsyncMock(return_value=transcript)
     analyze = AsyncMock(return_value=result)
-    monkeypatch.setattr(main, "download_voice_media", download_mock)
-    monkeypatch.setattr(main, "transcribe_call", stt)
-    monkeypatch.setattr(main, "analyze_call", analyze)
+    monkeypatch.setattr(voice_flow, "download_voice_media", download_mock)
+    monkeypatch.setattr(voice_flow, "transcribe_call", stt)
+    monkeypatch.setattr(voice_flow, "analyze_call", analyze)
     return SimpleNamespace(download=download_mock, stt=stt, analyze=analyze, path=path)
 
 
@@ -76,6 +77,7 @@ async def deliver(monkeypatch, job_id, *, voice=True, callback_body=None, callba
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         monkeypatch.setattr(main, "get_http_client", lambda: client)
+        monkeypatch.setattr(voice_flow, "get_http_client", lambda: client)
         await main.run_analysis_and_callback(
             TEXT, CALLBACK, USER, job_id, voice_media_url=MEDIA if voice else None,
         )
@@ -85,6 +87,7 @@ async def deliver(monkeypatch, job_id, *, voice=True, callback_body=None, callba
 async def test_voice_stage_times_and_remaining_budget(monkeypatch, pipeline, capsys):
     clock = [0.0]
     monkeypatch.setattr(main, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(voice_flow, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     download, stt, analyze = pipeline.download.side_effect, pipeline.stt.return_value, pipeline.analyze.return_value
 
     async def timed_download(url):
@@ -186,6 +189,7 @@ async def test_actual_skill_request_does_not_log_private_data(monkeypatch, pipel
         request["params"] = {"media": {"type": "audio", "url": MEDIA}}
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as callback:
         monkeypatch.setattr(main, "get_http_client", lambda: callback)
+        monkeypatch.setattr(voice_flow, "get_http_client", lambda: callback)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="https://skill.example.test") as client:
             response = await client.post("/kakao/skill", headers={"X-Skill-Secret": SECRET}, json={"userRequest": request})
     assert response.json() == render_card("r5-analyzing")

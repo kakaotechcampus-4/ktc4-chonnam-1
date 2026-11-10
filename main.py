@@ -1,11 +1,9 @@
 import asyncio
 import hmac
 import os
-import tempfile
 import time
 
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from pydantic import ValidationError
@@ -13,6 +11,7 @@ from pydantic import ValidationError
 from backend.src.server.http_client import get_http_client
 from backend.src.server.lifespan import app_lifespan
 from backend.src.server.log import get_logger
+from backend.src.server.budgets import ANALYSIS_DEADLINE_SECONDS, CASE_ANALYZE_BUDGET_S
 from backend.src.server.callback import send_callback
 from backend.src.server.callback_guard import callback_host, is_allowed_callback_url
 from backend.src.server.jobs import (
@@ -24,19 +23,15 @@ from backend.src.server.jobs import (
     now_iso,
 )
 from backend.src.server.media_guard import (
-    MediaDownloadBlocked,
-    assert_resolves_to_public_ip,
     is_allowed_media_url,
-    media_host,
 )
-from backend.src.server.voice_input import VoiceInputRejected, inspect_voice_audio, invalid_audio
+from backend.src.server.voice_flow import log_voice_stage, run_voice_analysis
 from services.official_url_analysis import build_ai_url_analysis
 from services.kakao_card_renderer import render_card
 from services.result_card_renderer import (
     render_result_card,
     merge_kakao_responses,
     render_detail_carousel,
-    render_voice_result_card,
     render_voice_detail_carousel,
     render_voice_answer_card,
     render_message_case_card,
@@ -51,7 +46,7 @@ from ai.pipeline import analyze_message_part, finalize_analysis, read_message
 from ai.types import AnalysisStatus, FailureCode, MessageReading
 
 # 통화(음성) 분석 연결. ai.case 는 카카오 payload를 모른다 (CLAUDE.md 의존 방향).
-from ai.case import transcribe_call, analyze_call, apply_call_answers
+from ai.case import apply_call_answers
 from ai.case.types import VoiceCaseResult
 
 # 링크 없는 문자(가족·지인·기관 사칭) 분석 연결. 답 처리는 LLM 없이 결과만 다시 정한다.
@@ -118,7 +113,7 @@ def verify_skill_secret(request: Request) -> None:
 
 
 # 콜백 URL 유효 시간을 고려한 안전 마진
-CALLBACK_DEADLINE_SECONDS = 45.0
+CALLBACK_DEADLINE_SECONDS = ANALYSIS_DEADLINE_SECONDS
 
 # 링크는 요구 분석 LLM 이 찾고(ADR 0007) 수집은 그 뒤에 시작한다. 추출 기본 상한 30초를
 # 다 쓰면 45초 안에 수집(17초)·페이지 분석·카드 여유가 남지 않는다 (docs/latency-budget.md)
@@ -599,7 +594,7 @@ async def _link_message_case(message: str, started: float) -> dict | None:
 
 # analyze_message_case()에 줄 예산. 녹음과 같이 전체 분석 45초에서 카드·저장 여유
 # 5초를 빼고, 이미 쓴 read_message() 시간을 뺀다(docs/latency-budget.md).
-MESSAGE_CASE_BUDGET_S = CALLBACK_DEADLINE_SECONDS - 5.0
+MESSAGE_CASE_BUDGET_S = CASE_ANALYZE_BUDGET_S
 
 _CASE_NOT_FOUND_TEXT = "분석 결과를 찾을 수 없어요. 문자나 통화 녹음을 다시 보내 주세요."
 
@@ -747,214 +742,10 @@ def handle_message_answer(
 # 출처로 쓰지 않는다).
 # ============================================================
 
-MAX_VOICE_FILE_BYTES = 25 * 1024 * 1024  # 25MB (whisper 한도)
-VOICE_DOWNLOAD_CHUNK_BYTES = 1024 * 1024  # 1MB
-VOICE_DOWNLOAD_TIMEOUT_SECONDS = 15.0
 # callbackUrl 없는 동기 경로(개발용) 예산. 실제 STT(최대 30초)+
 # 다운로드(최대 15초)+분석을 콜백 상한 없이 넉넉하게 담는다 — 운영 경로(콜백)는
 # CALLBACK_DEADLINE_SECONDS를 따로 쓴다.
 VOICE_SYNC_TIMEOUT_SECONDS = 90.0
-# #115 Q-7 is not decided. No arbitrary recording-length policy is enabled.
-# A configured limit is checked only against measured duration (currently WAV).
-MAX_VOICE_DURATION_SECONDS: float | None = None
-
-# analyze_call()에 줄 예산(v3 B3, latency-budget.md). 전체 분석 상한
-# (CALLBACK_DEADLINE_SECONDS=45초)에서 카드 렌더링·콜백 전송 여유 5초를 뺀
-# 값에서, 이미 쓴 다운로드·STT 시간을 뺀다. `CALLBACK_DEADLINE_SECONDS`
-# 그대로 넘기면 분석이 45초를 다 써서 카드를 만들기 전에 바깥 wait_for가
-# 작업을 취소해 결과가 시간 초과로 바뀐다.
-VOICE_ANALYZE_BUDGET_S = CALLBACK_DEADLINE_SECONDS - 5.0
-# 이보다 적게 남으면 analyze_call()의 읽기·검색(LLM 호출)을 사실상 건너뛴다.
-VOICE_MIN_ANALYZE_BUDGET_S = 5.0
-
-
-async def download_voice_media(url: str) -> tuple[str, int]:
-    """카카오 음성 CDN URL에서 파일을 내려받아 임시 파일에 저장한다.
-
-    청크 단위로 받으며 누적 크기를 그 자리에서 검증한다. 우리 서버가
-    외부 주소로 직접 요청을 보내는 것이라, `media_guard`로 호스트 허용
-    목록 검사와 DNS 재검증까지 거친 뒤에만 접속한다(SSRF 방어).
-    """
-
-    host = media_host(media_url := url)
-
-    if not is_allowed_media_url(url):
-        _log.warning("[VOICE DOWNLOAD REJECTED] reason=not_allowed")
-        raise MediaDownloadBlocked("허용되지 않은 다운로드 주소")
-
-    await assert_resolves_to_public_ip(host)
-
-    fd, path = tempfile.mkstemp(suffix="_voice_download")
-    total = 0
-    try:
-        with os.fdopen(fd, "wb") as destination:
-            async with get_http_client().stream(
-                "GET", media_url,
-                timeout=VOICE_DOWNLOAD_TIMEOUT_SECONDS,
-                follow_redirects=False,
-            ) as response:
-                if response.status_code != 200:
-                    raise MediaDownloadBlocked(
-                        f"다운로드 실패 status={response.status_code}"
-                    )
-                # Content-Type and URL extensions are advisory only (Kakao also
-                # sends nonstandard MIME). Validate actual bytes before STT.
-                async for chunk in response.aiter_bytes(VOICE_DOWNLOAD_CHUNK_BYTES):
-                    total += len(chunk)
-                    if total > MAX_VOICE_FILE_BYTES:
-                        raise invalid_audio("25MB보다 커요")
-                    destination.write(chunk)
-    except BaseException:
-        # asyncio.CancelledError는 Exception이 아니라 BaseException만
-        # 상속한다(3.8+) — except Exception만 쓰면 다운로드 도중 취소됐을
-        # 때 이 임시 파일이 지워지지 않고 남는다.
-        os.remove(path)
-        raise
-
-    if total == 0:
-        os.remove(path)
-        raise invalid_audio("녹음 파일이 비어 있어요")
-
-    _log.info(f"[VOICE DOWNLOAD OK] size={total}")
-    return path, total
-
-
-def _log_voice_stage(job_id: str | None, stage: str, status: str, started: float, **summary) -> None:
-    """호출부에서 고른 고정 코드·숫자만 기록한다. 원문·예외 메시지는 넘기지 않는다."""
-    details = " ".join(f"{key}={value}" for key, value in summary.items())
-    _log.info(
-        f"[VOICE STAGE] job_id={job_id or 'none'} stage={stage} status={status} "
-        f"elapsed_s={time.monotonic() - started:.3f}" + (f" {details}" if details else "")
-    )
-
-
-def _voice_failure_card(job_id: str | None, card: str, started: float, reason_line: str = "") -> dict:
-    result = render_card(card, {"reason_line": reason_line})
-    _log_voice_stage(job_id, "card", "completed", started, card=card)
-    return result
-
-
-async def run_voice_analysis(media_url: str, job_id: str | None = None) -> dict:
-    """음성 메시지 카드 생성: 다운로드 -> STT -> 통화 분석 -> 카드.
-
-    입력 오류와 다운로드 실패는 콜백·동기 모두 VE1/VE2/R4로 안내한다.
-    STT·분석의 예외는 기존 공용 실패 처리로 넘긴다(job_id가 없는 동기
-    경로는 여기서 안전한 카드로 끝낸다). 다운로드한 파일은 성공·실패·취소와 무관하게
-    분석 전에 바로 지운다 — 녹음 원본은 저장하지 않는다(개인정보 정책).
-    대본(segments)도 저장하지 않는다 — `job["final_payload"]`에는
-    `VoiceCaseResult`(결과)만 남고 대본은 이 함수 지역 변수로만 존재한다.
-    """
-
-    started = time.monotonic()
-
-    try:
-        path, _size = await download_voice_media(media_url)
-    except VoiceInputRejected as error:
-        _log_voice_stage(job_id, "download", "rejected", started)
-        return _voice_failure_card(job_id, error.card, started, error.reason_line)
-    except asyncio.CancelledError:
-        _log_voice_stage(job_id, "download", "cancelled", started)
-        raise
-    except Exception as error:
-        _log_voice_stage(job_id, "download", "failed", started, error=type(error).__name__)
-        _log.warning(f"[VOICE ANALYSIS ERROR] download failed: {type(error).__name__}")
-        # Download failures have a user-facing R4 result even for callback Jobs.
-        # Never forward a network exception containing the signed media URL.
-        return _voice_failure_card(job_id, "r4-unavailable", started)
-
-    _log_voice_stage(job_id, "download", "completed", started, bytes=_size)
-
-    try:
-        try:
-            audio_bytes = await asyncio.to_thread(Path(path).read_bytes)
-        except asyncio.CancelledError:
-            raise
-        except OSError as error:
-            _log.warning(f"[VOICE ANALYSIS ERROR] read failed: {type(error).__name__}")
-            if job_id is not None:
-                raise RuntimeError("음성 파일 읽기 실패") from error
-            return _voice_failure_card(job_id, "r4-unavailable", started)
-    finally:
-        # 녹음 원본은 바이트로 읽은 즉시 지운다(분석 단계로 넘기지 않는다).
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-
-    try:
-        filename = inspect_voice_audio(
-            audio_bytes, max_bytes=MAX_VOICE_FILE_BYTES,
-            max_seconds=MAX_VOICE_DURATION_SECONDS,
-        )
-    except VoiceInputRejected as error:
-        _log_voice_stage(job_id, "validation", "rejected", started)
-        return _voice_failure_card(job_id, error.card, started, error.reason_line)
-
-    # transcribe_call()·analyze_call()은 계약상 CancelledError만 올리고
-    # 그 외 실패는 예외 대신 실패 결과로 돌려준다(ai.case) — 외부 함수라
-    # 그래도 방어적으로 감싼다.
-    stt_started = time.monotonic()
-    try:
-        transcript = await transcribe_call(audio_bytes, filename)
-    except asyncio.CancelledError:
-        _log_voice_stage(job_id, "stt", "cancelled", stt_started)
-        raise
-    except Exception as error:
-        _log_voice_stage(job_id, "stt", "failed", stt_started, error=type(error).__name__)
-        _log.warning(f"[VOICE ANALYSIS ERROR] transcribe failed: {type(error).__name__}")
-        if job_id is not None:
-            raise RuntimeError("음성 받아쓰기 실패") from error
-        return _voice_failure_card(job_id, "r4-unavailable", started)
-
-    _log_voice_stage(
-        job_id, "stt", "failed" if transcript.failure else "completed", stt_started,
-        failure=transcript.failure.value if transcript.failure else "none",
-        segments=len(transcript.segments), chars=sum(len(segment.text) for segment in transcript.segments),
-    )
-
-    elapsed = time.monotonic() - started
-    remaining_budget = VOICE_ANALYZE_BUDGET_S - elapsed
-
-    # 남은 예산이 5초 미만이면 analyze_call()에 0초 예산을 줘 실제 분석
-    # (읽기·검색 LLM 호출)을 사실상 건너뛰게 한다 — analyze_call()은 예산이
-    # 바닥이면 자체적으로 즉시 시간 초과 처리해 안전한 미확인 결과를 낸다.
-    analyze_budget = (
-        remaining_budget if remaining_budget >= VOICE_MIN_ANALYZE_BUDGET_S else 0.0
-    )
-
-    analysis_started = time.monotonic()
-    try:
-        result = await analyze_call(transcript, time_budget_s=analyze_budget)
-    except asyncio.CancelledError:
-        _log_voice_stage(job_id, "analysis", "cancelled", analysis_started)
-        raise
-    except Exception as error:
-        _log_voice_stage(job_id, "analysis", "failed", analysis_started, error=type(error).__name__)
-        _log.warning(f"[VOICE ANALYSIS ERROR] analyze failed: {type(error).__name__}")
-        if job_id is not None:
-            raise RuntimeError("통화 분석 실패") from error
-        return _voice_failure_card(job_id, "r4-unavailable", started)
-
-    _log_voice_stage(
-        job_id, "analysis",
-        "unavailable" if result.conclusion.value == "not_analyzable" else "completed", analysis_started,
-        conclusion=result.conclusion.value, reading_status=result.reading_status,
-        failures=len(result.failures), evidence=len(result.evidence), rejected=len(result.rejected),
-        failure_codes=",".join(sorted({failure.value for failure in result.failures})) or "none",
-        budget_s=f"{analyze_budget:.3f}",
-    )
-
-    payload = result.model_dump(mode="json")
-
-    if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
-        job["final_payload"] = payload
-
-    card = render_voice_result_card(payload, job_id)
-    card_name = {"not_analyzable": "ve3-unrecognized", "input_required": "ve4-no-claim"}.get(
-        result.conclusion.value, "v1-voice-result",
-    )
-    _log_voice_stage(job_id, "card", "completed", started, card=card_name)
-    return card
 
 
 async def handle_voice_message(
@@ -1080,14 +871,14 @@ async def _analyze_for_job(utterance: str, job_id: str, voice_media_url: str | N
         _log.warning(f"[ANALYSIS TIMEOUT] job_id={job_id}")
         result = render_card("r4-unavailable") if is_voice else kakao_response(_ANALYSIS_TIMEOUT_TEXT)
         if is_voice:
-            _log_voice_stage(job_id, "card", "completed", started, card="r4-unavailable")
+            log_voice_stage(job_id, "card", "completed", started, card="r4-unavailable")
         finish_job(job_id, "timeout", result, error="analysis_timeout")
         _log.warning(f"[JOB TIMEOUT] job_id={job_id}")
     except Exception as error:
         _log.warning(f"[ANALYSIS ERROR] job_id={job_id} {type(error).__name__}")
         result = kakao_response(_ANALYSIS_ERROR_TEXT)
         if is_voice:
-            _log_voice_stage(job_id, "card", "completed", started, card="analysis-error-message")
+            log_voice_stage(job_id, "card", "completed", started, card="analysis-error-message")
         finish_job(job_id, "failed", result, error=type(error).__name__)
         _log.warning(f"[JOB FAILED] job_id={job_id}")
     else:
