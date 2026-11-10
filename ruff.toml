@@ -34,15 +34,7 @@ ignore = [
 # ── 아직 정리하지 못한 파일 ─────────────────────────────────────────
 # 새 파일에는 규칙이 그대로 적용된다. 아래 파일은 고친 뒤 이 목록에서 뺀다.
 "services/result_card_renderer.py" = ["BLE001"]
-"ai/src/ai/page.py" = ["BLE001"]
 "ai/src/ai/case/claims.py" = ["BLE001"]
-"ai/src/ai/case/message.py" = ["BLE001"]
-"ai/src/ai/case/transcript.py" = ["BLE001"]
-"ai/src/ai/case/voice.py" = ["BLE001"]
-"ai/src/ai/kb/guidance.py" = ["BLE001"]
-"ai/src/ai/kb/search.py" = ["BLE001"]
-"ai/src/ai/kb/semantic.py" = ["BLE001"]
 "ai/src/ai/llm/analyze.py" = ["BLE001"]
 "ai/src/ai/llm/page.py" = ["BLE001"]
 "ai/src/ai/llm/signals.py" = ["BLE001"]
-"ai/src/ai/pipeline/analysis.py" = ["BLE001"]

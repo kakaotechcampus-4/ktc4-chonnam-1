@@ -115,7 +115,7 @@ def _build_and_store(key: tuple[Path, str], cases, kind: str) -> EmbeddingIndex 
     """락 밖에서 만든다. 만드는 동안(최대 BUILD_TIMEOUT_S) 다른 검색이 락에서 기다리면 안 된다."""
     try:
         index = _build(cases, kind)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — 색인을 못 만들면 TF-IDF 만으로 검색하고 나중에 다시 시도한다
         LOGGER.warning("case embedding build failed: %s", type(exc).__name__)
         index = None
     with _index_lock:

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from ai.diagnostics import where
 from ai.case.privacy import mask_pii
 from ai.case.types import Segment, Side, TranscriptResult
 from ai.llm import transcribe as transcribe_llm
@@ -72,7 +73,7 @@ def _wav_seconds(audio: bytes) -> float | None:
     try:
         with wave.open(io.BytesIO(audio)) as w:
             return round(w.getnframes() / w.getframerate(), 1)
-    except Exception:  # 깨진 헤더(struct.error 등)여도 길이 계산 때문에 분석이 멈추면 안 된다
+    except Exception:  # noqa: BLE001 — 깨진 헤더(struct.error 등)여도 길이 계산 때문에 분석이 멈추면 안 된다
         return None
 
 
@@ -102,8 +103,8 @@ async def transcribe_call(
         )
     except asyncio.CancelledError:
         raise
-    except Exception as exc:
-        LOGGER.warning("stt failed: %s", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 — STT 실패는 대본 없음 결과로 돌려준다
+        LOGGER.warning("stt failed: %s", where(exc))
         return TranscriptResult(segments=[], failure=_failure_code(exc), **meta)
 
     # LLM 에 보내기 전에 가린다(스펙 D2). 세그먼트 텍스트도 가린 문장을 쓴다

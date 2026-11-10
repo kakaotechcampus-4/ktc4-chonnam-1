@@ -14,6 +14,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from ai.diagnostics import where
 from ai.case.actions import response_actions_for
 from ai.case.lexicon import ACCOUNT_LOCK_PATTERN, LOTTERY_PATTERN, read_with_lexicon
 from ai.case.message_gate import MESSENGER_HANDLE, Q1_ACCEPTED, Q2_OPTIONS, Q2_SETTLED, decide_message
@@ -105,8 +106,8 @@ async def analyze_message_case(
         return await _analyze(text, runtime or MessageRuntime(), time_budget_s, has_link)
     except asyncio.CancelledError:
         raise
-    except Exception as exc:
-        LOGGER.warning("message analysis failed: %s", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 — 분석의 맨 바깥이다. 예외 대신 분석 불가 결과를 돌려준다 (원칙 3)
+        LOGGER.warning("message analysis failed: %s", where(exc))
         return decide_message(accepted=None, failures=[FailureCode.MISSING_RESULT])
 
 
@@ -129,9 +130,9 @@ async def _analyze(
 
     try:
         source = message_source(text)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — 가리지 못한 글은 읽기·검색에 넘기지 않고 분석 불가로 끝낸다
         # 가리지 못한 문자는 읽기·검색에 넘기지 않는다
-        LOGGER.warning("message masking failed: %s", type(exc).__name__)
+        LOGGER.warning("message masking failed: %s", where(exc))
         return decide_message(accepted=None, failures=[FailureCode.MISSING_RESULT])
 
     failures: list[FailureCode] = []
@@ -161,8 +162,8 @@ async def _analyze(
             derived_by="lexicon" if reading.status == "fallback" else "llm",
             origin=Origin.MESSAGE,
         )
-    except Exception as exc:
-        LOGGER.warning("message claims verification failed: %s", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 — 검증이 깨지면 읽은 주장을 쓰지 않고 분석 불가로 끝낸다
+        LOGGER.warning("message claims verification failed: %s", where(exc))
         return decide_message(
             accepted=None,
             similar=similar,
@@ -172,9 +173,9 @@ async def _analyze(
 
     try:
         contact = official_contact_for(verify)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — 확인 안내는 부가 정보다. 못 찾아도 결론은 낸다
         # 확인 안내는 부가 정보다. 못 찾으면 FE 가 일반 문장을 쓴다
-        LOGGER.warning("official contact lookup failed: %s", type(exc).__name__)
+        LOGGER.warning("official contact lookup failed: %s", where(exc))
         contact = None
 
     return decide_message(
