@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from ai.case.actions import response_actions_for
-from ai.case.lexicon import ACCOUNT_LOCK_PATTERN, read_with_lexicon
+from ai.case.lexicon import ACCOUNT_LOCK_PATTERN, LOTTERY_PATTERN, read_with_lexicon
 from ai.case.message_gate import MESSENGER_HANDLE, Q1_ACCEPTED, Q2_OPTIONS, Q2_SETTLED, decide_message
 from ai.case.privacy import mask_pii
 from ai.case.types import (
@@ -235,23 +235,34 @@ async def _analyze(
     )
 
 
+# 링크가 있는 문자에서만 쓰는 미끼 어휘표와 근거 코드 (#160)
+_LINK_LURES = (
+    (ACCOUNT_LOCK_PATTERN, EvidenceCode.ACCOUNT_LOCK_LURE),
+    (LOTTERY_PATTERN, EvidenceCode.LOTTERY_LURE),
+)
+
+
 def _with_lock_lure(
     source: ReadingSource, accepted: list[Evidence], has_link: bool
 ) -> list[Evidence]:
-    """링크가 있는 문자에서 계정 정지 미끼 줄을 어휘표로 찾아 근거로 덧붙인다 (#160-4).
+    """링크가 있는 문자에서 미끼 줄을 어휘표로 찾아 근거로 덧붙인다 (#160-2·4).
 
-    LLM 은 "일시동결 되었습니다" 를 명분으로만 읽고 "해지해주세요" 를 요구로 읽지 않는다.
-    판정은 이 근거를 보고 게이트가 한다. 링크가 없으면 쓰지 않는다(링크에서 풀게 하는 수법이다).
+    LLM 은 "일시동결 되었습니다" 를 명분으로만 읽고 "해지해주세요" 를 요구로 읽지 않으며,
+    "[로)1179회 2,등 발송오류" 같은 로또 미끼는 주장·요구가 없어 아무것도 읽지 않는다.
+    판정은 이 근거를 보고 게이트가 한다. 링크가 없으면 쓰지 않는다(링크로 끌어들이는 수법이다).
+    미끼 종류마다 첫 줄 하나만 근거로 남긴다.
     """
     if not has_link:
         return accepted
-    for seg in source.segments:
-        if ACCOUNT_LOCK_PATTERN.search(seg.text):
-            return [*accepted, Evidence(
-                code=EvidenceCode.ACCOUNT_LOCK_LURE, origin=Origin.MESSAGE, quote=seg.text,
+    found = []
+    for pattern, code in _LINK_LURES:
+        line = next((seg.text for seg in source.segments if pattern.search(seg.text)), None)
+        if line is not None:
+            found.append(Evidence(
+                code=code, origin=Origin.MESSAGE, quote=line,
                 derived_by="lexicon", counts_for_floor=False,
-            )]
-    return accepted
+            ))
+    return [*accepted, *found]
 
 
 def _with_handle_line(source: ReadingSource, accepted: list[Evidence]) -> list[Evidence]:

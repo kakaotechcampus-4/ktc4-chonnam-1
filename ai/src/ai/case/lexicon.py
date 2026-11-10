@@ -137,6 +137,12 @@ ACCOUNT_LOCK_PATTERN = re.compile(
     r"(?:해지|해제|복구|풀어|재인증|인증|활성화)\s*(?:해\s*주세요|하세요|하십시오|해\s*주시기|바랍니다|요망|하시기)"
 )
 
+# 로또 회차·당첨 미끼(#160-2): "1179회 2,등 발송오류", "1180회 1등 당첨번호". 세 자리 이상 회차 뒤 가까이에
+# 등수·당첨·발송오류·미수령·번호 발송이 와야 한다. "제23회 정기총회", "3회 연속 출석 당첨" 은 걸리지 않는다
+LOTTERY_PATTERN = re.compile(
+    r"\d{3,4}\s*회(?:차)?[^\n]{0,20}?(?:\d\s*,?\s*등|당첨|발송\s*오류|미수령|번호\s*(?:발송|확인|안내))"
+)
+
 
 def classify_demand(sentence: str) -> DemandKind | None:
     for kind, pattern in DEMAND_LEXICON:
