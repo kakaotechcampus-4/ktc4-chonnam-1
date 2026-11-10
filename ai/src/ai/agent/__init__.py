@@ -2,5 +2,9 @@
 
 from ai.agent.board import Board, Obs, Step, Tool, Trace
 from ai.agent.loop import investigation
+from ai.agent.tools import case_search_tool, official_number_tool
 
-__all__ = ["Board", "Obs", "Step", "Tool", "Trace", "investigation"]
+__all__ = [
+    "Board", "Obs", "Step", "Tool", "Trace",
+    "case_search_tool", "investigation", "official_number_tool",
+]

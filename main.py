@@ -9,6 +9,7 @@ import time
 
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import asdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import NamedTuple
@@ -47,8 +48,10 @@ from services.result_card_renderer import (
 from ai.pipeline import analyze_message_part, finalize_analysis, read_message
 from ai.types import AnalysisStatus, FailureCode, MessagePart, MessageReading, UrlAnalysis
 
-# 분석 장부. 카드가 읽는 분석을 요청마다 한 번씩만 돌린다
-from ai.agent import Board, Obs, Tool, investigation
+# 분석 장부와 에이전트 루프. 에이전트는 돌릴 분석을 고르기만 하고 카드는 코드가 만든다
+from ai.agent import (
+    Board, Obs, Tool, Trace, case_search_tool, investigation, official_number_tool,
+)
 
 # 통화(음성) 분석 연결. ai.case 는 카카오 payload를 모른다 (CLAUDE.md 의존 방향).
 from ai.case import transcribe_call, analyze_call, apply_call_answers
@@ -185,6 +188,8 @@ def create_analysis_job(
         # 분석 결과가 필요하다. 다중 링크는 마지막 결과만 저장하므로
         # 잘못 연결되지 않도록 상세 버튼과 직접 상세 조회를 차단한다.
         "final_payload": None,
+        # 어떤 분석을 누가 불렀는지(도구 이름·상태·시간). 문자·주소는 담지 않는다
+        "investigation": None,
         "error": None,
         "callback_status": "pending",
         "callback_error": None
@@ -662,17 +667,36 @@ def _analysis_tools(
             return await _claims(reading.message, started, has_link=True)
         return await _claims(utterance, started)
 
+    # 설명은 에이전트가 읽는다. 언제 필요한 분석인지까지 적는다
     need = _Need(
-        Tool("collect_link", "링크를 격리 환경에서 열어 이동 경로와 페이지를 수집한다", True,
-             collect, _see_collection),
-        Tool("analyze_message_signals", "문자 본문의 위험 신호와 내세운 기관 이름을 읽는다", False,
-             signals, _see_signals),
-        Tool("check_official_domain", "수집한 링크 주소를 공식 도메인 목록과 대조한다", True,
-             official, _see_official),
-        Tool("analyze_claims", "문자가 내세운 사칭 주장과 요구를 읽는다", False,
-             claims, _see_claims),
+        Tool("collect_link",
+             "링크를 격리 환경에서 열어 이동 경로와 페이지를 수집한다. 링크가 있으면 링크마다 필요하다",
+             True, collect, _see_collection),
+        Tool("analyze_message_signals",
+             "문자 본문의 위험 신호와 내세운 기관 이름을 읽는다. 링크가 있으면 필요하다",
+             False, signals, _see_signals),
+        Tool("check_official_domain",
+             "수집한 링크 주소를 공식 도메인 목록과 대조한다. 링크가 있으면 링크마다 필요하다",
+             True, official, _see_official),
+        Tool("analyze_claims",
+             "문자가 내세운 사칭 주장과 요구를 읽는다. 링크가 없으면 필요하다. "
+             "링크가 있어도 기관·지인을 내세우거나 무언가를 요구하는 문자면 쓸모가 있다",
+             False, claims, _see_claims),
     )
-    return need, tuple(need)
+    return need, (*need, case_search_tool(reading.message), official_number_tool(utterance))
+
+
+def _record_trace(job_id: str | None, trace: Trace) -> None:
+    """어떤 분석을 누가 불렀는지 남긴다. 도구 이름·링크 번호·상태·시간뿐이다."""
+
+    if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
+        job["investigation"] = asdict(trace)
+    steps = ",".join(
+        f"{step.tool}{f'#{step.link}' if step.link else ''}"
+        f"/{'+'.join(step.askers)}/{step.status}/{step.elapsed_ms}"
+        for step in trace.steps
+    )
+    print(f"[AGENT] stop={trace.stop} turns={trace.turns} steps={steps}")
 
 
 async def run_analysis(
@@ -696,10 +720,13 @@ async def run_analysis(
     # 여기서는 카드 종류만 고른다. 어떤 분석이 도는지는 카드가 board 에서 꺼내는 것으로 정해진다
     async with investigation(reading, tools) as board:
         if reading.links:
-            return await _link_cards(board, need, reading, job_id)
-        return await run_message_case(
-            utterance, job_id=job_id, started=started, claims=lambda: board.get(need.claims),
-        )
+            response = await _link_cards(board, need, reading, job_id)
+        else:
+            response = await run_message_case(
+                utterance, job_id=job_id, started=started, claims=lambda: board.get(need.claims),
+            )
+    _record_trace(job_id, board.trace())
+    return response
 
 
 async def _link_cards(
