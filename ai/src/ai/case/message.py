@@ -100,6 +100,8 @@ async def _search(
     except asyncio.CancelledError:
         raise
     except TimeoutError:
+        # 검색 예산 전체를 넘겼다(#155). 임베딩 마감 뒤 TF-IDF 폴백과 구분해 남긴다
+        LOGGER.warning("message case search timed out budget=%.1fs", timeout_s)
         return None, UncheckedReason.TIMEOUT
     except Exception as exc:
         LOGGER.warning("message case search failed: %s", type(exc).__name__)

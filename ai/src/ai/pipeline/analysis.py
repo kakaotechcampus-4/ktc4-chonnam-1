@@ -169,6 +169,8 @@ async def analyze_message_part(
                 if isinstance(result, asyncio.CancelledError):
                     raise result
             if isinstance(search_result, Exception):
+                # 검색 예산 초과·실패를 사례 없음과 구분해 남긴다(#155)
+                LOGGER.warning("message part case search failed: %s", type(search_result).__name__)
                 failure = _failure_code(search_result)
             else:
                 cases = search_result
