@@ -1037,7 +1037,7 @@ class TestVoiceAnswerFlow:
         job_id = self._seed_voice_job()
         original = main.ANALYSIS_JOBS[job_id]["final_payload"]
         for answer in answers:
-            card = main.handle_voice_answer(job_id, answer)
+            card = main.handle_voice_answer(job_id, answer, "voice-user")
         job = main.ANALYSIS_JOBS[job_id]
         text_card = _card_body(card)
         assert text_card["title"] == "🚨 지금 먼저 하세요"
@@ -1163,8 +1163,8 @@ class TestVoiceAnswerFlow:
 
         job_id = self._seed_voice_job()
 
-        main.handle_voice_answer(job_id, "not_yet")
-        card = main.handle_voice_answer(job_id, "sent_money")
+        main.handle_voice_answer(job_id, "not_yet", "voice-user")
+        card = main.handle_voice_answer(job_id, "sent_money", "voice-user")
 
         text_card = _card_body(card)
         assert text_card["title"] == "🚨 지금 먼저 하세요"
@@ -1177,14 +1177,43 @@ class TestVoiceAnswerFlow:
 
         job_id = self._seed_voice_job()
 
-        first = main.handle_voice_answer(job_id, "installed_app")
+        first = main.handle_voice_answer(job_id, "installed_app", "voice-user")
         assert _card_body(first)["buttons"] == []
 
-        second = main.handle_voice_answer(job_id, "sent_money")
+        second = main.handle_voice_answer(job_id, "sent_money", "voice-user")
         labels = {b["label"] for b in _card_body(second)["buttons"]}
         assert labels == {"112 신고"}
         assert "상담:" not in str(second)
         assert "1332" not in str(second)
+
+    def test_answer_from_other_user_does_not_touch_case(self, client):
+        """다른 사용자가 case_id 를 알아도 남의 통화 결과에 답을 쌓지 못한다."""
+
+        job_id = self._seed_voice_job()
+        original = main.ANALYSIS_JOBS[job_id]["final_payload"]
+
+        response = client.post(
+            "/kakao/skill",
+            json={
+                "userRequest": {"utterance": "", "user": {"id": "someone-else"}},
+                "action": {"clientExtra": {
+                    "case_id": job_id, "question_id": "already_acted", "option_id": "sent_money",
+                }},
+            },
+        )
+
+        assert response.json() == main.kakao_response(main._CASE_NOT_FOUND_TEXT)
+        job = main.ANALYSIS_JOBS[job_id]
+        assert "qa_answers" not in job
+        assert job["final_payload"] == original
+
+    def test_same_answer_clicked_twice_is_kept_once(self):
+        job_id = self._seed_voice_job()
+
+        main.handle_voice_answer(job_id, "sent_money", "voice-user")
+        main.handle_voice_answer(job_id, "sent_money", "voice-user")
+
+        assert main.ANALYSIS_JOBS[job_id]["qa_answers"] == ["sent_money"]
 
     def test_answer_for_unknown_job_is_handled_safely(self, client):
         response = client.post(

@@ -12,6 +12,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from pydantic import ValidationError
 
 from backend.src.server.http_client import get_http_client
 from backend.src.server.lifespan import app_lifespan
@@ -756,7 +757,7 @@ def handle_case_answer(
 
     if not is_message:
         if question_id == "already_acted":
-            return handle_voice_answer(case_id, option_id)
+            return handle_voice_answer(case_id, option_id, user_id)
         return kakao_response(_CASE_NOT_FOUND_TEXT)
 
     if option_id not in _MESSAGE_QUESTION_OPTIONS.get(question_id, ()):
@@ -794,7 +795,7 @@ def handle_message_answer(
     ):
         try:
             result = MessageCaseResult.model_validate(final_payload)
-        except Exception as error:
+        except ValidationError as error:
             print(f"[MESSAGE ANSWER ERROR] {type(error).__name__}")
 
     if result is None:
@@ -1104,29 +1105,37 @@ async def handle_voice_message(
     return render_card("r5-analyzing")
 
 
-def handle_voice_answer(job_id: str, option_id: str) -> dict:
+def handle_voice_answer(job_id: str, option_id: str, user_id: str | None) -> dict:
     """Q1 "이미 하신 게 있나요?" 리스트 카드 항목 클릭을 처리한다.
 
     `apply_call_answers()`는 LLM·네트워크를 쓰지 않는 순수 함수라 콜백 없이
     바로 답한다(설계 문서 D11). 답은 쌓인다 — 같은 case(job)에 여러 번
-    답해도 지금까지 고른 답 전부로 다시 안내를 고른다(D16). 결론·멈출
-    행동은 `apply_call_answers()`가 바꾸지 않는다(`response_actions`만).
+    답해도 지금까지 고른 답 전부로 다시 안내를 고른다(D16). 같은 답은 한 번만
+    남긴다. 결론·멈출 행동은 `apply_call_answers()`가 바꾸지 않는다(`response_actions`만).
+    다른 사용자의 Job 이면 문자 답 처리와 같이 건드리지 않고 안내만 한다.
     """
 
     job = ANALYSIS_JOBS.get(job_id)
     final_payload = job.get("final_payload") if job else None
+    owner = job.get("user_id") if job else None
 
-    if job is None or job.get("analysis_kind") != "voice" or not final_payload:
+    if (
+        job is None
+        or job.get("analysis_kind") != "voice"
+        or not final_payload
+        or (owner and owner != user_id)
+    ):
         return kakao_response(_CASE_NOT_FOUND_TEXT)
 
     try:
         result = VoiceCaseResult.model_validate(final_payload)
-    except Exception as error:
+    except ValidationError as error:
         print(f"[VOICE ANSWER ERROR] {type(error).__name__}")
         return kakao_response(_CASE_NOT_FOUND_TEXT)
 
     answers: list[str] = job.setdefault("qa_answers", [])
-    answers.append(option_id)
+    if option_id not in answers:
+        answers.append(option_id)
 
     updated = apply_call_answers(result, answers)
     job["final_payload"] = updated.model_dump(mode="json")

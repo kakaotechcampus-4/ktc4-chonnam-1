@@ -27,10 +27,10 @@ def test_missing_result_notice_accepts_text_or_recording(kind):
         main.ANALYSIS_JOBS["empty"] = {"final_payload": None}
         response = main.handle_detail_carousel("empty")
     elif kind == "missing-voice":
-        response = main.handle_voice_answer("missing", "not_yet")
+        response = main.handle_voice_answer("missing", "not_yet", None)
     else:
         main.ANALYSIS_JOBS["invalid"] = {"analysis_kind": "voice", "final_payload": {"invalid": True}}
-        response = main.handle_voice_answer("invalid", "not_yet")
+        response = main.handle_voice_answer("invalid", "not_yet", None)
     assert response == main.kakao_response(NOTICE)
 
 
