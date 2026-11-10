@@ -710,3 +710,37 @@ async def test_plain_lock_notice_is_not_a_lure(text):
     r = await analyze_message_case(text, runtime=_runtime({}), has_link=True)
     assert all(e.code != E.ACCOUNT_LOCK_LURE for e in r.evidence)
     assert r.caution is False
+
+
+# ── #143: "~라고 왔는데 ~맞을까?" 처럼 받은 문자를 문장 안에 넣어 보내도 같은 결과 ──────
+
+REPORTED_QUOTED = '이런 문자 왔는데 사기야?\n"엄마 나야 폰 고장나서 50만원만 보내줘"'
+REPORTED_INLINE = "엄마 나야 폰 고장나서 50만원만 보내줘 라고 왔는데 우리 딸 맞을까?"
+REPORTED_READING = {
+    "identity": [{"kind": "acquaintance", "name": "자녀", "quote": "엄마 나야"}],
+    "blockers": [{"quote": "폰 고장나서"}],
+    "demands": [{"kind": "money_transfer", "quote": "50만원만 보내줘"}],
+}
+
+
+@pytest.mark.parametrize("reading", [REPORTED_READING, None], ids=["llm", "lexicon"])
+@pytest.mark.parametrize("text", [
+    REPORTED_INLINE,
+    "엄마 나야 폰 고장나서 50만원만 보내줘라고 문자 왔는데 진짜일까요?",
+    "엄마 나야 폰 고장나서 50만원만 보내줘 이렇게 문자가 왔어요. 우리 딸 맞나요?",
+])
+async def test_inline_reported_message_matches_quoted(text, reading):
+    quoted = await _analyze(REPORTED_QUOTED, reading)
+    inline = await _analyze(text, reading)
+    assert (quoted.conclusion, quoted.caution) == (Conclusion.INCONCLUSIVE, True)
+    assert (inline.conclusion, inline.caution) == (quoted.conclusion, quoted.caution)
+    assert list(_q(inline)) == list(_q(quoted)) == ["already_acted", "called_known_number"]
+
+
+@pytest.mark.parametrize("text", [
+    "엄마가 오늘 늦는다고 했어",
+    "보내라고요? 제가 왜요",
+])
+async def test_ordinary_saying_is_not_split_as_reported_message(text):
+    from ai.case.message import message_source
+    assert [s.text for s in message_source(text).segments] == [text]
