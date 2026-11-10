@@ -14,6 +14,8 @@ SHORTENER_HOSTS: frozenset[str] = frozenset({
     "kko.to",
     "tinyurl.com",
     "is.gd",
+    # 쿠팡 문자 링크(#161). 쿠팡 소유라는 공식 근거가 없어 공식 목록에 넣지 않고 도착 주소로 대조한다
+    "coupa.ng",
 })
 
 def _host(url: str) -> str | None:
