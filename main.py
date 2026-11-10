@@ -4,7 +4,6 @@ import os
 import time
 
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict
 from datetime import datetime, timezone, timedelta
 from typing import NamedTuple
 
@@ -28,6 +27,13 @@ from backend.src.server.jobs import (
 from backend.src.server.media_guard import (
     is_allowed_media_url,
 )
+from backend.src.server.investigation import (
+    record_trace,
+    see_claims,
+    see_collection,
+    see_official,
+    see_signals,
+)
 from backend.src.server.voice_flow import log_voice_stage, run_voice_analysis
 from services.official_url_analysis import build_ai_url_analysis
 from services.kakao_card_renderer import kakao_response, render_card
@@ -50,7 +56,7 @@ from ai.types import AnalysisStatus, FailureCode, MessagePart, MessageReading, U
 
 # 분석 장부와 에이전트 루프. 에이전트는 돌릴 분석을 고르기만 하고 카드는 코드가 만든다
 from ai.agent import (
-    Board, Obs, Tool, Trace, case_search_tool, investigation, official_number_tool,
+    Board, Tool, case_search_tool, investigation, official_number_tool,
 )
 
 # 통화(음성) 분석 연결. ai.case 는 카카오 payload를 모른다 (CLAUDE.md 의존 방향).
@@ -515,41 +521,6 @@ class _Need(NamedTuple):
     claims: Tool[MessageCaseResult]
 
 
-def _see_collection(collected: CollectResult) -> Obs:
-    browser = collected.browser
-    return {
-        "reached": collected.status_code is not None,
-        "redirects": len(collected.redirect_chain),
-        "has_page": bool(collected.html),
-        "browser_used": browser is not None,
-        "downloads": len(browser.downloads) if browser else 0,
-        "failed": bool(collected.failures),
-    }
-
-
-def _see_signals(part: MessagePart | None) -> Obs:
-    if part is None:
-        return {"answer": None, "brand_named": False, "signals": 0}
-    return {
-        "answer": part.answer,
-        "brand_named": bool(part.brand) and part.brand != "unknown",
-        "signals": len(part.details.signals),
-    }
-
-
-def _see_official(url: UrlAnalysis) -> Obs:
-    return {"official": url.official}
-
-
-def _see_claims(case: MessageCaseResult) -> Obs:
-    return {
-        "conclusion": case.conclusion,
-        "caution": case.caution,
-        "institution_claimed": any(claim.kind == "institution" for claim in case.claims.identity),
-        "demands": len(case.claims.demands),
-    }
-
-
 def _analysis_tools(
     utterance: str, reading: MessageReading, started: float,
 ) -> tuple[_Need, tuple[Tool, ...]]:
@@ -560,16 +531,16 @@ def _analysis_tools(
     # ponytail: 격리 수집기의 동시 처리량을 재지 않아 한 번에 하나만 수집한다. 재고 나면 링크별 병렬로 푼다
     one_collection = asyncio.Lock()
 
-    async def collect(board: Board, n: int) -> CollectResult:
+    async def collect(_board: Board, n: int) -> CollectResult:
         # 주소는 여기서만 정해진다. 부르는 쪽은 번호만 낸다
         async with one_collection:
             return await _collect_link(reading.links[n - 1].url)
 
-    async def signals(board: Board, _: None) -> MessagePart | None:
+    async def signals(_board: Board, _: None) -> MessagePart | None:
         try:
             # 같은 읽기를 넘겨 추출 LLM 을 다시 부르지 않는다
             return await analyze_message_part(reading.message, extracted=reading.extracted)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 — LLM 이 실패해도 응답은 나가야 한다 (원칙 3)
             _log.warning(f"[AI MESSAGE ERROR] {type(error).__name__}")
             return None
 
@@ -578,7 +549,7 @@ def _analysis_tools(
         brand = part.brand if part is not None else None
         return build_ai_url_analysis(collected, brand, reading.links[n - 1].url)
 
-    async def claims(board: Board, _: None) -> MessageCaseResult:
+    async def claims(_board: Board, _: None) -> MessageCaseResult:
         if reading.links:
             return await _claims(reading.message, started, has_link=True)
         return await _claims(utterance, started)
@@ -587,32 +558,19 @@ def _analysis_tools(
     need = _Need(
         Tool("collect_link",
              "링크를 격리 환경에서 열어 이동 경로와 페이지를 수집한다. 링크가 있으면 링크마다 필요하다",
-             True, collect, _see_collection),
+             True, collect, see_collection),
         Tool("analyze_message_signals",
              "문자 본문의 위험 신호와 내세운 기관 이름을 읽는다. 링크가 있으면 필요하다",
-             False, signals, _see_signals),
+             False, signals, see_signals),
         Tool("check_official_domain",
              "수집한 링크 주소를 공식 도메인 목록과 대조한다. 링크가 있으면 링크마다 필요하다",
-             True, official, _see_official),
+             True, official, see_official),
         Tool("analyze_claims",
              "문자가 내세운 사칭 주장과 요구를 읽는다. 링크가 없으면 필요하다. "
              "링크가 있어도 기관·지인을 내세우거나 무언가를 요구하는 문자면 쓸모가 있다",
-             False, claims, _see_claims),
+             False, claims, see_claims),
     )
     return need, (*need, case_search_tool(reading.message), official_number_tool(reading.message))
-
-
-def _record_trace(job_id: str | None, trace: Trace) -> None:
-    """어떤 분석을 누가 불렀는지 남긴다. 도구 이름·링크 번호·상태·시간뿐이다."""
-
-    if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
-        job["investigation"] = asdict(trace)
-    steps = ",".join(
-        f"{step.tool}{f'#{step.link}' if step.link else ''}"
-        f"/{'+'.join(step.askers)}/{step.status}/{step.elapsed_ms}"
-        for step in trace.steps
-    )
-    _log.info(f"[AGENT] stop={trace.stop} turns={trace.turns} steps={steps}")
 
 
 async def run_analysis(
@@ -644,7 +602,7 @@ async def run_analysis(
             response = await run_message_case(
                 utterance, job_id=job_id, started=started, claims=lambda: board.get(need.claims),
             )
-    _record_trace(job_id, board.trace())
+    record_trace(job_id, board.trace())
     return response
 
 
@@ -661,30 +619,10 @@ async def _link_cards(
     # 미검사 안내를 먼저 확보한다. 분석은 모두 수행하고 마지막에 표시 개수만 제한한다.
     if reading.unverified_links:
         cards.append(kakao_response(_PARTLY_READ_LINKS_TEXT))
-    # 판단 보류 링크가 처음 나올 때 한 번만 문자 게이트를 부른다(#89). 링크마다 본문은 같다
-    link_case: list[dict | None] = []
     for n in range(1, link_count + 1):
         try:
-            # 공식 대조가 이 링크의 수집과 문자 분석을 함께 시작한다
-            url_analysis = await board.get(need.official, n)
-            collected = await board.get(need.collect, n)
-            message_result = await board.get(need.signals)
-            page, failure = to_isolated_page(collected)
-            final_result = await finalize_analysis(
-                url=url_analysis, message=message_result, page=page, failure=failure,
-            )
-            final_payload = final_result.model_dump(mode="json")
-            caution_card = None
-            if link_caution_applies(final_payload):
-                if not link_case:
-                    link_case.append(await _link_caution_payload(board, need))
-                caution_card = render_link_caution_card(final_payload, link_case[0])
-            cards.append(caution_card or render_result_card(
-                final_payload, job_id=job_id, allow_details=(link_count == 1),
-            ))
-            if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
-                job["final_payload"] = final_payload
-        except Exception as error:
+            cards.append(await _link_card(board, need, n, job_id))
+        except Exception as error:  # noqa: BLE001 — 링크 하나가 실패해도 나머지 링크 결과는 보낸다
             _log.warning(f"[ANALYSIS ERROR] {type(error).__name__}")
             cards.append(render_card("r4-unavailable"))
     response = merge_kakao_responses(cards)
@@ -697,6 +635,29 @@ async def _link_cards(
     return response
 
 
+async def _link_card(board: Board, need: _Need, n: int, job_id: str | None) -> dict:
+    """링크 하나의 결과 카드. 판단 보류면 문자 게이트를 읽는다. 게이트는 board 에서 한 번만 돈다(#89)."""
+
+    # 공식 대조가 이 링크의 수집과 문자 분석을 함께 시작한다
+    url_analysis = await board.get(need.official, n)
+    collected = await board.get(need.collect, n)
+    message_result = await board.get(need.signals)
+    page, failure = to_isolated_page(collected)
+    final_result = await finalize_analysis(
+        url=url_analysis, message=message_result, page=page, failure=failure,
+    )
+    final_payload = final_result.model_dump(mode="json")
+    caution_card = None
+    if link_caution_applies(final_payload):
+        caution_card = render_link_caution_card(final_payload, await _link_caution_payload(board, need))
+    card = caution_card or render_result_card(
+        final_payload, job_id=job_id, allow_details=(board.link_count == 1),
+    )
+    if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
+        job["final_payload"] = final_payload
+    return card
+
+
 async def _link_caution_payload(board: Board, need: _Need) -> dict | None:
     """링크 결과가 판단 보류일 때 본문을 문자 게이트로 읽는다(#89). 실패하면 None 이라 R9 를 쓴다.
 
@@ -705,7 +666,7 @@ async def _link_caution_payload(board: Board, need: _Need) -> dict | None:
 
     try:
         result = await board.get(need.claims)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 — 주의 갈래를 고르는 부가 정보다. 실패하면 R9 로 간다
         _log.warning(f"[LINK CAUTION ERROR] {type(error).__name__}")
         return None
     payload = result.model_dump(mode="json")
@@ -750,7 +711,7 @@ async def run_message_case(
 
     try:
         result = await (claims() if claims else _claims(utterance, started))
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 — 분석이 실패해도 분석 불가 카드는 나간다 (원칙 3)
         _log.warning(f"[MESSAGE CASE ERROR] {type(error).__name__}")
         return render_card("r4-unavailable")
 

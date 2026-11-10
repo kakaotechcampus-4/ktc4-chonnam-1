@@ -13,7 +13,7 @@ import pytest
 
 from ai.agent import Board, Tool, case_search_tool, investigation, official_number_tool
 from ai.agent import loop, tools
-from ai.case.types import NumberCheck
+from ai.kb.numbers import NumberCheck
 from ai.types import (
     AnalysisStatus, CaseMatch, CaseSearchResult, LinkCandidate, LinkOrigin, MessageAnalysis,
     MessageReading,

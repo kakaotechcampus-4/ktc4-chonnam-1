@@ -5,7 +5,6 @@
 
 import asyncio
 import json
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -24,6 +23,7 @@ from ai.types import (
     AnalysisStatus, AnswerState, Brand, CaseSearchResult, DomainMatch, EnvironmentDetails,
     EnvironmentPart, MessageDetails, MessagePart, Reason, UrlAnalysis,
 )
+from backend.src.server.investigation import see_claims, see_collection, see_official, see_signals
 from scanner.isolation_page import to_isolated_page
 from scanner.models import BrowserResult, CollectResult
 
@@ -339,8 +339,8 @@ async def test_cancelled_request_reaps_the_agent_and_every_analysis(
     assert stopped == {"collector", "message"}
 
 
-async def test_eval_offers_the_agent_the_same_tool_menu_as_the_backend(stub_read_message):
-    sys.path.insert(0, str(Path(main.__file__).resolve().parent / "ai" / "eval"))
+async def test_eval_offers_the_agent_the_same_tool_menu_as_the_backend(monkeypatch, stub_read_message):
+    monkeypatch.syspath_prepend(str(Path(main.__file__).resolve().parent / "ai" / "eval"))
     import agent_router_eval
 
     stub_read_message([EVIL], "본문")
@@ -360,12 +360,12 @@ BROWSED = CollectResult(
 
 
 @pytest.mark.parametrize("see,result", [
-    (main._see_collection, BROWSED),
-    (main._see_collection, _timeout(EVIL)),
-    (main._see_signals, _part(Brand.CJ_LOGISTICS, risk="비밀번호를 입력하세요")),
-    (main._see_signals, None),
-    (main._see_official, UrlAnalysis(final_url=EVIL, domain="evil.top", official=DomainMatch.NOT_REGISTERED)),
-    (main._see_claims, _caution()),
+    (see_collection, BROWSED),
+    (see_collection, _timeout(EVIL)),
+    (see_signals, _part(Brand.CJ_LOGISTICS, risk="비밀번호를 입력하세요")),
+    (see_signals, None),
+    (see_official, UrlAnalysis(final_url=EVIL, domain="evil.top", official=DomainMatch.NOT_REGISTERED)),
+    (see_claims, _caution()),
 ])
 def test_observations_carry_no_text(see, result):
     for value in see(result).values():

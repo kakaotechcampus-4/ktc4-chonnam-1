@@ -31,7 +31,7 @@ LLM 이 도구 호출로 돌릴 분석을 고르는 구조로 바꾼다. 목적�
 | 도구 | 감싼 함수 | 카드가 읽나 |
 | --- | --- | --- |
 | `collect_link` | `scanner.isolation_client.collect_url_isolated` | 링크마다 읽는다 |
-| `check_official_domain` | `main.build_ai_url_analysis` | 링크마다 읽는다 |
+| `check_official_domain` | `services/official_url_analysis.py` `build_ai_url_analysis` | 링크마다 읽는다 |
 | `analyze_message_signals` | `ai.pipeline.analyze_message_part` | 링크가 있으면 읽는다 |
 | `analyze_claims` | `ai.case.analyze_message_case` | 링크가 없거나 링크 결과가 판단 보류면 읽는다 |
 | `search_similar_cases` | `ai.kb.search.search_cases` | 읽지 않는다 |
@@ -48,7 +48,7 @@ LLM 이 도구 호출로 돌릴 분석을 고르는 구조로 바꾼다. 목적�
 | 실패해도 답이 나간다 | LLM 오류·시간 초과·설정 누락·가리기 실패는 에이전트만 끝낸다(`llm_error`). 시작해 둔 분석은 장부에 남아 카드가 이어 받는다 |
 | 판정은 그대로다 | `finalize_analysis`·`link_caution_applies`·`decide_message`·카드 렌더러는 도구가 아니고 고치지 않았다. LLM 이 쓴 글은 읽지도 저장하지도 않는다 |
 
-본문은 `mask_pii` 로 가리고 줄마다 `<data>` 로 감싸 보낸다(`ai/src/ai/llm/claims.py` 와 같은 방식). 본문에 적힌 지시를 LLM 이
+본문은 `mask_pii` 로 가리고 줄마다 `<data>` 로 감싸 보낸다(`ai/src/ai/case/claims.py` 와 같은 방식). 본문에 적힌 지시를 LLM 이
 따르더라도 할 수 있는 일은 도구 5회를 낭비하거나 일찍 끝내는 것뿐이다.
 
 `tests/test_agent_router.py` 가 문자 8종 × 방해하는 에이전트 7종으로 응답과 `final_payload` 가 에이전트를 끈 실행과 같고

@@ -18,7 +18,8 @@ from openai import AsyncOpenAI
 
 from ai.agent.board import Board, Stop, Tool
 from ai.case.privacy import mask_pii
-from ai.llm._client import create_client
+from ai.diagnostics import where
+from ai.llm._client import create_client, prompt_text
 from ai.types import MessageReading
 
 LOGGER = logging.getLogger(__name__)
@@ -78,8 +79,8 @@ async def _run_agent(
     except asyncio.CancelledError:
         board.stop = "preempted"
         raise
-    except Exception as error:
-        LOGGER.warning("agent loop failed: %s", type(error).__name__)
+    except Exception as error:  # noqa: BLE001 — 에이전트가 실패해도 카드 코드는 그대로 돈다 (원칙 3)
+        LOGGER.warning("agent loop failed: %s", where(error))
         board.stop = "llm_error"
     finally:
         moved.set()
@@ -87,7 +88,7 @@ async def _run_agent(
 
 async def _loop(board: Board, brief: str, llm: AsyncOpenAI, model: str, moved: asyncio.Event) -> Stop:
     messages: list[dict] = [
-        {"role": "system", "content": PROMPT_PATH.read_text(encoding="utf-8")},
+        {"role": "system", "content": prompt_text(PROMPT_PATH)},
         {"role": "user", "content": brief},
     ]
     schemas = _schemas(board)

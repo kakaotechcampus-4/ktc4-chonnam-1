@@ -4,22 +4,20 @@ import asyncio
 
 from ai.agent.board import Board, Obs, Tool
 from ai.case.privacy import mask_pii
-from ai.case.types import NumberCheck
-from ai.kb.numbers import check_phone_number, find_numbers, resolve_org
+from ai.case.steps import SEARCH_BUDGET_S
+from ai.kb.numbers import NumberCheck, check_phone_number, find_numbers, resolve_org
 from ai.kb.search import search_cases
 from ai.types import CaseSearchResult
-
-SEARCH_TIMEOUT_S = 2.5
 
 
 def case_search_tool(body: str) -> Tool[CaseSearchResult]:
     """링크를 뗀 본문으로 비슷한 피해 사례를 찾는다. 관측은 검색 상태와 찾은 수뿐이다."""
 
-    async def run(board: Board, _: None) -> CaseSearchResult:
+    async def run(_board: Board, _: None) -> CaseSearchResult:
         # ponytail: 문자 분석(analyze_message_part·analyze_message_case)도 같은 검색을 따로 돌린다.
         # 그 검색을 board 에서 꺼내 쓰게 바꾸면 요청당 한 번으로 준다
         return await asyncio.wait_for(
-            asyncio.to_thread(search_cases, mask_pii(body)), timeout=SEARCH_TIMEOUT_S
+            asyncio.to_thread(search_cases, mask_pii(body)), timeout=SEARCH_BUDGET_S
         )
 
     def observe(found: CaseSearchResult) -> Obs:
@@ -35,9 +33,13 @@ def case_search_tool(body: str) -> Tool[CaseSearchResult]:
 def official_number_tool(text: str) -> Tool[tuple[NumberCheck, ...]]:
     """글에 적힌 전화번호를 글이 내세운 기관의 공식 대표번호와 대조한다. 관측은 개수뿐이다."""
 
-    async def run(board: Board, _: None) -> tuple[NumberCheck, ...]:
+    def check() -> tuple[NumberCheck, ...]:
         org = resolve_org(text) or ""
         return tuple(check_phone_number(number, org) for number in find_numbers(text))
+
+    async def run(_board: Board, _: None) -> tuple[NumberCheck, ...]:
+        # 첫 호출은 대표번호 파일을 읽고, 공격자가 쓴 글에 정규식을 돌린다
+        return await asyncio.to_thread(check)
 
     def observe(checks: tuple[NumberCheck, ...]) -> Obs:
         return {
