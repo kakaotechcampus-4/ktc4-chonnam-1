@@ -1,6 +1,3 @@
-# ktc4-team-16
-카카오테크 캠퍼스 4기 2단계 팀 프로젝트 — 전남대 1팀
-
 # 🔎 화기니 — 카카오톡 기반 피싱 의심 메시지 검사 챗봇
 
 > **클릭하기 전에, 피싱부터 확인하세요.**  
@@ -11,8 +8,8 @@
 - **서비스 이용 링크:** `http://pf.kakao.com/_ycxoxeX`
 - **시연 영상:** `[5분 이내 영상 URL 입력]`
 - **발표 자료:** `[발표 자료 URL 입력]`
-- **기술문서:** [`docs/README.md`](docs/README.md) / `https://ktc4-chonnam-1-docs.vercel.app/tech-spec/`
-- **협업문서:** `https://ktc4-chonnam-1-docs.vercel.app/collab/`
+- **기술문서:** [테크스펙](https://ktc4-chonnam-1-docs.vercel.app/tech-spec/) | [개발 문서 인덱스](docs/README.md)
+- **협업문서:** [협업 가이드](https://ktc4-chonnam-1-docs.vercel.app/collab/)
 
 ## 1. 해결하려는 문제
 
@@ -133,7 +130,26 @@ APP_ENV=local python -m uvicorn main:app --reload
 python -m pytest -q
 ```
 
-테스트는 BE API, 입력 검증, 카드 렌더링, AI 분석 관련 로직 등을 대상으로 합니다. 외부 API를 대체하는 오프라인 테스트도 포함됩니다. **최종 통과 건수는 제출 시점의 CI 또는 테스트 실행 결과를 확인해 기재하세요.**
+테스트는 BE API, 입력 검증, 카드 렌더링, AI 분석 관련 로직 등을 대상으로 합니다. 외부 API를 대체하는 오프라인 테스트도 포함됩니다.
+
+GitHub Actions를 통해 `develop` 브랜치에 코드가 반영되거나 PR이 생성될 때 자동으로 테스트를 수행합니다.
+
+- **실행 환경:** Ubuntu, Python 3.11
+- **테스트 프레임워크:** pytest
+- **최종 테스트 결과:** 2,826개 통과, 2개 스킵, 경고 1건
+- **테스트 실행 시간:** 50.25초
+- **CI 워크플로:** [ci.yml](.github/workflows/ci.yml)
+- **검증 결과:** [PR #177](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/pull/177)
+
+### CI (자동화 테스트)
+
+GitHub Actions를 이용해 `develop` 브랜치에 코드가
+반영되거나 PR이 생성될 때 자동으로 테스트를 수행합니다.
+
+- 실행 환경: Ubuntu, Python 3.11
+- 테스트 프레임워크: pytest
+- [CI 워크플로](.github/workflows/ci.yml)
+- [GitHub Actions 실행 결과](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/actions)
 
 ## 7. 배포 및 운영
 
