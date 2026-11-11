@@ -70,6 +70,9 @@ class Board:
         self.stop: Stop = "off"
         self._entries: dict[tuple[Tool, int | None], _Entry] = {}
 
+    def __contains__(self, key: tuple[Tool, int | None]) -> bool:
+        return key in self._entries
+
     def get(self, tool: Tool[T], link: int | None = None, *, by: By = "code") -> Awaitable[T]:
         """없으면 시작하고, 있으면 같은 Task 를 기다린다. 재시도하지 않는다.
 

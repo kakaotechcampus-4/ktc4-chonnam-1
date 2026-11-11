@@ -8,7 +8,6 @@ import asyncio
 import json
 import logging
 import os
-import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from enum import Enum
@@ -25,9 +24,8 @@ from ai.types import MessageReading
 LOGGER = logging.getLogger(__name__)
 
 MAX_TURNS = 4          # LLM 호출 수
-MAX_CALLS = 5          # 에이전트가 실행시킨 도구 호출 수
+MAX_CALLS = 5          # 에이전트가 새로 시작시킨 분석 수
 TURN_TIMEOUT_S = 5.0   # LLM 한 턴
-GRACE_S = 3.0          # 카드가 다 만들어진 뒤 에이전트가 끝나기를 기다려 주는 시간
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "v1" / "agent_router.md"
 
 
@@ -38,15 +36,16 @@ async def investigation(
     *,
     client: AsyncOpenAI | None = None,
     model: str | None = None,
-    grace_until: float | None = None,
+    agent_wait_s: float = 0.0,
     on_close: Callable[[Trace], None] | None = None,
 ) -> AsyncIterator[Board]:
     """Board 를 열고 에이전트 루프를 붙인다. 나갈 때 루프와 남은 분석을 모두 취소하고 회수한다.
 
-    에이전트가 먼저 고른다. 첫 턴의 도구 호출이 board 에 오르거나 루프가 끝난 뒤에 board 를 내준다.
-    모델은 인자 → AGENT_MODEL 이고, 없으면 루프를 돌리지 않는다. 에이전트의 실패는 밖으로 나오지 않는다.
-    `grace_until`(time.monotonic 기준)을 넘겨서는 에이전트를 기다리지 않는다. 다 만든 카드를
-    부른 쪽의 전체 상한에 잃지 않게 하려는 것이다.
+    링크가 하나 이하면 에이전트가 먼저 고른다. 첫 턴의 도구 호출이 board 에 오르거나 루프가 끝난 뒤에
+    board 를 내준다. 모델은 인자 → AGENT_MODEL 이고, 없으면 루프를 돌리지 않는다.
+    에이전트의 실패는 밖으로 나오지 않는다.
+    `agent_wait_s` 는 본문이 끝난 뒤 에이전트를 기다릴 시간이다. 운영은 0 이라 카드가 끝나면 바로 끊는다.
+    평가·테스트가 에이전트의 선택을 끝까지 보려고 쓴다.
     `on_close` 는 모든 분석을 회수한 뒤 조사 기록을 받는다. 시간 초과·예외로 끝나도 불린다.
     """
     board = Board(tools, len(reading.links))
@@ -55,14 +54,15 @@ async def investigation(
     try:
         if model:
             moved = asyncio.Event()
+            # 루프가 끝난 이유를 적기 전에 끊기면 이 값이 남는다. 시작도 못 하고 끊겨도 마찬가지다
+            board.stop = "preempted"
             agent = asyncio.create_task(_run_agent(board, reading, client, model, moved))
-            await moved.wait()
+            # 링크가 여럿이면 순서대로 수집해 45초를 나눠 쓰므로 첫 수를 기다릴 여유가 없다
+            if board.link_count <= 1:
+                await moved.wait()
         yield board
-        if agent is not None:
-            # 본문이 정상으로 끝났을 때만 온다. 바로 끊으면 기록이 늘 preempted 로 남는다
-            grace = GRACE_S if grace_until is None else min(GRACE_S, grace_until - time.monotonic())
-            if grace > 0:
-                await asyncio.wait({agent}, timeout=grace)
+        if agent is not None and agent_wait_s > 0:
+            await asyncio.wait({agent}, timeout=agent_wait_s)
     finally:
         if agent is not None:
             agent.cancel()
@@ -81,9 +81,6 @@ async def _run_agent(
             # 클라이언트를 만들 때의 SSL 초기화가 이벤트 루프를 막지 않게 한다(http_client.py 의 측정 참고)
             llm = client or await stack.enter_async_context(await asyncio.to_thread(create_client, TURN_TIMEOUT_S))
             board.stop = await _loop(board, _brief(reading), llm, model, moved)
-    except asyncio.CancelledError:
-        board.stop = "preempted"
-        raise
     except Exception as error:  # noqa: BLE001 — 에이전트가 실패해도 카드 코드는 그대로 돈다 (원칙 3)
         LOGGER.warning("agent loop failed: %s", where(error))
         board.stop = "llm_error"
@@ -114,10 +111,12 @@ async def _loop(board: Board, brief: str, llm: AsyncOpenAI, model: str, moved: a
         for index, target in enumerate(targets):
             if isinstance(target, str):
                 continue
-            if not calls_left:
-                targets[index] = "call_limit"
-                continue
-            calls_left -= 1
+            # 이미 돌고 있는 분석은 새로 시작하지 않으므로 예산을 쓰지 않는다
+            if target not in board:
+                if not calls_left:
+                    targets[index] = "call_limit"
+                    continue
+                calls_left -= 1
             waiting[index] = board.get(*target, by="agent")
         # 이 턴의 호출이 모두 board 에 올랐다. 첫 턴이면 기다리던 카드 코드가 여기서 출발한다
         moved.set()

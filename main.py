@@ -566,11 +566,13 @@ def _analysis_tools(
              "링크 주소를 공식 도메인 목록과 대조한다. 그 링크의 수집과 본문 분석을 함께 시작한다. 링크가 있으면 링크마다 필요하다",
              True, official, see_official),
         Tool("analyze_claims",
-             "문자가 내세운 사칭 주장과 요구를 읽는다. 링크가 없으면 필요하다. "
-             "링크가 있어도 기관·지인을 내세우거나 무언가를 요구하는 문자면 쓸모가 있다",
+             "문자가 내세운 사칭 주장과 요구를 읽는다. 링크가 없는 문자에 필요하다",
              False, claims, see_claims),
     )
-    return need, (*need, case_search_tool(reading.message), official_number_tool(reading.message))
+    # 에이전트에게는 카드가 반드시 읽는 분석과, LLM·임베딩을 쓰지 않는 참고 분석만 내준다.
+    # 카드가 안 읽을 수도 있는 분석을 시작시키면 카드용 임베딩 작업자를 빼앗아 카드 근거가 달라질 수 있다
+    required = (need.collect, need.signals, need.official) if reading.links else (need.claims,)
+    return need, (*required, case_search_tool(reading.message), official_number_tool(reading.message))
 
 
 async def run_analysis(
@@ -592,10 +594,8 @@ async def run_analysis(
         return response
     need, tools = _analysis_tools(utterance, reading, started)
     # 여기서는 카드 종류만 고른다. 어떤 분석이 도는지는 카드가 board 에서 꺼내는 것으로 정해진다
-    # 카드·저장 여유 5초는 에이전트를 기다리는 데 쓰지 않는다
     async with investigation(
-        reading, tools, grace_until=started + MESSAGE_CASE_BUDGET_S,
-        on_close=lambda trace: record_trace(job_id, trace),
+        reading, tools, on_close=lambda trace: record_trace(job_id, trace),
     ) as board:
         if reading.links:
             response = await _link_cards(board, need, reading, job_id)

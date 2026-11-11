@@ -8,6 +8,7 @@ ai/ 에서 실행한다. LLM_API_KEY·LLM_BASE_URL·LLM_MODEL 이 필요하다. 
 문자마다 read_message 로 링크를 읽고, 같은 읽기로 조사를 두 번 돌린다(에이전트 끔, 켬).
 BE 도구는 정해 둔 관측을 정해 둔 시간 뒤에 돌려주는 가짜이고, 카드 대신 카드가 읽는 근거만 꺼낸다
 (링크마다 공식 대조, 링크가 없으면 주장 분석). 수집과 분석이 고정이라 달라지는 것은 에이전트의 선택뿐이다.
+운영은 카드가 끝나면 에이전트를 끊지만, 여기서는 선택을 끝까지 보려고 에이전트가 끝날 때까지 기다린다.
 
 카드가 같은지는 여기서 재지 않는다. tests/test_agent_router.py 가 가짜 LLM 으로 확인한다.
 가짜 도구의 이름·설명은 BE(main._analysis_tools)와 같아야 하고, 그 테스트 파일이 함께 확인한다.
@@ -38,6 +39,8 @@ REPORTS = EVAL_DIR / "reports"
 CONCURRENCY = 4
 # 가짜 BE 도구 하나가 걸리는 시간. 실측이 아니라 정해 둔 값이다. 운영의 수집은 이보다 길다(상한 17초)
 STUB_DELAY_S = 1.0
+# 에이전트의 선택을 끝까지 보려고 기다리는 상한. 4턴 × 5초에 가짜 도구 시간을 더해도 남는다
+AGENT_WAIT_S = 30.0
 LIMIT_NOTE = (
     "BE 도구는 가짜다. 관측은 모든 문자에 같은 값이고 걸리는 시간도 정해 둔 값이다. "
     "에이전트가 본문을 보고 무엇을 먼저 고르는지와 붙는 지연만 잰다. 판정·카드 품질이 아니다."
@@ -58,8 +61,7 @@ BE_TOOLS = (
      True, False,
      {"official": DomainMatch.NOT_REGISTERED}),
     ("analyze_claims",
-     "문자가 내세운 사칭 주장과 요구를 읽는다. 링크가 없으면 필요하다. "
-     "링크가 있어도 기관·지인을 내세우거나 무언가를 요구하는 문자면 쓸모가 있다",
+     "문자가 내세운 사칭 주장과 요구를 읽는다. 링크가 없는 문자에 필요하다",
      False, True,
      {"conclusion": Conclusion.INCONCLUSIVE, "caution": False, "institution_claimed": False, "demands": 0}),
 )
@@ -72,8 +74,7 @@ class Run:
     evidence: list
     trace: Trace
     head_start_s: float  # 조사를 열고 board 를 받기까지. 에이전트의 첫 수를 기다린 시간이다
-    exit_wait_s: float   # 근거를 다 꺼낸 뒤 조사가 닫히기까지. 에이전트를 기다려 준 시간이다
-    total_s: float
+    total_s: float       # 근거를 다 꺼내기까지. 운영에서 카드가 기다리는 시간이다
 
 
 def stub_tools(reading: MessageReading) -> tuple[Tool, ...]:
@@ -92,6 +93,9 @@ def stub_tools(reading: MessageReading) -> tuple[Tool, ...]:
         return run
 
     for name, description, per_link, slow, seen in BE_TOOLS:
+        # BE 처럼 링크가 있으면 주장 분석을 빼고, 없으면 주장 분석만 낸다
+        if (name != "analyze_claims") != bool(reading.links):
+            continue
         tools[name] = Tool(name, description, per_link, canned(name, seen, STUB_DELAY_S if slow else 0.0), dict)
     return (*tools.values(), case_search_tool(reading.message), official_number_tool(reading.message))
 
@@ -100,7 +104,7 @@ async def investigate(reading: MessageReading, model: str | None) -> Run:
     """조사를 한 번 돌린다. model 이 없으면 에이전트 없이 코드만 근거를 꺼낸다."""
     tools = {tool.name: tool for tool in stub_tools(reading)}
     started = time.perf_counter()
-    async with investigation(reading, tuple(tools.values()), model=model) as board:
+    async with investigation(reading, tuple(tools.values()), model=model, agent_wait_s=AGENT_WAIT_S) as board:
         entered = time.perf_counter()
         # 카드가 읽는 근거만 꺼낸다(BE 의 _link_cards·run_message_case 가 꺼내는 것)
         if reading.links:
@@ -109,8 +113,7 @@ async def investigate(reading: MessageReading, model: str | None) -> Run:
         else:
             evidence = [await board.get(tools["analyze_claims"])]
         pulled = time.perf_counter()
-    closed = time.perf_counter()
-    return Run(evidence, board.trace(), entered - started, closed - pulled, closed - started)
+    return Run(evidence, board.trace(), entered - started, pulled - started)
 
 
 async def run_rows(rows: Sequence[tuple[str, str]], model: str) -> tuple[list[dict], list[str]]:
@@ -188,8 +191,7 @@ def render_report(results: Sequence[dict], skipped: Sequence[str], meta: dict) -
         "| 항목 | 에이전트 끔 | 에이전트 켬 |",
         "|---|---|---|",
         f"| 첫 수 기다림 | {_spread([run.head_start_s for run in off])} | {_spread([run.head_start_s for run in on])} |",
-        f"| 끝난 뒤 기다림 | {_spread([run.exit_wait_s for run in off])} | {_spread([run.exit_wait_s for run in on])} |",
-        f"| 전체 | {_spread([run.total_s for run in off])} | {_spread([run.total_s for run in on])} |",
+        f"| 근거를 다 꺼내기까지 | {_spread([run.total_s for run in off])} | {_spread([run.total_s for run in on])} |",
         "",
         "## ④ 근거 일치",
         "",

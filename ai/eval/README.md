@@ -83,10 +83,11 @@ python eval/agent_router_eval.py [--label <이름>]   # reports/<날짜>-agent-r
 에이전트가 돌릴 분석을 어떻게 고르는지와 그 때문에 붙는 지연을 잰다([ADR 0012](../../docs/adr/0012-agent-analysis-router.md)).
 `datasets/smishing.jsonl`·`benign.jsonl` 의 문자마다 `read_message` 로 링크를 읽고, 같은 읽기로 조사를 두 번(에이전트 끔, 켬) 돌린다.
 BE 도구(수집·문자 신호·공식 대조·주장 분석)는 정해 둔 관측을 정해 둔 시간(1초) 뒤에 돌려주는 가짜다.
+운영은 카드가 끝나면 에이전트를 끊지만 평가는 선택을 끝까지 보려고 에이전트가 끝날 때까지 기다린다.
 
 - 루프가 끝난 이유(`done`·`turn_limit`·`call_limit`·`llm_error`·`preempted`)와 LLM 턴 수
 - 도구별로 누가 분석을 시작했는지: 에이전트가 먼저(`agent+code`), 코드만(`code`), 에이전트만(`agent`)
-- 첫 수를 기다린 시간, 카드 근거를 다 꺼낸 뒤 에이전트를 기다린 시간, 전체 시간
+- 첫 수를 기다린 시간, 카드 근거를 다 꺼내기까지 걸린 시간
 - 카드가 읽는 근거가 에이전트를 끈 실행과 같은 행 수. 다르면 에이전트 버그다
 
 카드가 같은지는 이 평가가 아니라 저장소 루트의 `tests/test_agent_router.py` 가 가짜 LLM 으로 확인한다. 가짜 도구의 관측은

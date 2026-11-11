@@ -5,6 +5,7 @@
 
 import asyncio
 import json
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -27,6 +28,10 @@ from backend.src.server.investigation import see_claims, see_collection, see_off
 from scanner.isolation_page import to_isolated_page
 from scanner.models import BrowserResult, CollectResult
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ai" / "tests"))
+
+from scripted_llm import HANG, scripted_client  # noqa: E402
+
 FAMILY = "엄마 나야\n폰 고장나서 통화가 안돼\n급하게 결제할 게 있는데 50만원만 보내줘"
 CJ = "https://www.cjlogistics.com/ko/tool/parcel/tracking"
 EVIL = "https://evil.top/a"
@@ -36,8 +41,6 @@ COLLECTED_AT = datetime(2026, 11, 11, tzinfo=timezone.utc)
 CLEAN_ENV = EnvironmentPart(
     answer=AnswerState.NO_RISK_FOUND, details=EnvironmentDetails(reason=Reason(text="x")),
 )
-HANG = object()
-
 
 def _page(link, final=None, chain=()):
     return CollectResult(link, final or link, chain, 200, "text/html", HTML, None, 1)
@@ -176,34 +179,12 @@ def scripted_agent(monkeypatch):
     턴은 [(도구 이름, 인자)] 목록, 올릴 예외, HANG(끝나지 않음) 중 하나다. 대본이 끝나면 호출 없이 답한다.
     """
     monkeypatch.setattr(loop, "TURN_TIMEOUT_S", 0.05)
-    monkeypatch.setattr(loop, "GRACE_S", 0.05)
 
     def install(*turns):
-        client = SimpleNamespace(requests=[], hanging=asyncio.Event(), hang_reaped=False)
-
-        async def create(**request):
-            client.requests.append({**request, "messages": list(request["messages"])})
-            turn = turns[len(client.requests) - 1] if len(client.requests) <= len(turns) else []
-            if turn is HANG:
-                client.hanging.set()
-                try:
-                    await asyncio.Event().wait()
-                finally:
-                    client.hang_reaped = True
-            if isinstance(turn, BaseException):
-                raise turn
-            calls = [
-                SimpleNamespace(id=f"call-{len(client.requests)}-{index}", function=SimpleNamespace(
-                    name=name, arguments=json.dumps(arguments),
-                ))
-                for index, (name, arguments) in enumerate(turn)
-            ]
-            return SimpleNamespace(choices=[SimpleNamespace(
-                message=SimpleNamespace(content="안전한 문자입니다", tool_calls=calls or None),
-            )])
-
-        client.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
-        monkeypatch.setattr(main, "investigation", partial(investigation, client=client, model="scripted"))
+        client, _ = scripted_client(*turns)
+        monkeypatch.setattr(main, "investigation", partial(
+            investigation, client=client, model="scripted", agent_wait_s=1,
+        ))
         return client
 
     return install
@@ -265,14 +246,26 @@ async def test_code_runs_every_mandatory_step_the_agent_left_out(run_case, scrip
 
 
 async def test_gate_the_agent_started_is_joined_not_rerun(run_case, scripted_agent):
-    fixed = await run_case(CASES["held_with_caution"])
+    case = Case((), FAMILY, _boom, _boom, gate=_caution)
+    fixed = await run_case(case)
     scripted_agent([("analyze_claims", {})])
 
-    routed = await run_case(CASES["held_with_caution"])
+    routed = await run_case(case)
 
     assert routed.response == fixed.response
     assert len(routed.gate_calls) == len(fixed.gate_calls) == 1
     assert _askers(routed)[("analyze_claims", None)] == ("agent", "code")
+
+
+async def test_agent_cannot_start_the_gate_on_a_link_message(run_case, scripted_agent):
+    client = scripted_agent([("analyze_claims", {})])
+
+    run = await run_case(CASES["evil_link"])
+
+    assert run.gate_calls == []
+    assert ("analyze_claims", None) not in _askers(run)
+    assert [json.loads(message["content"]) for message in client.requests[1]["messages"]
+            if message["role"] == "tool"] == [{"error": "unknown_tool"}]
 
 
 async def test_llm_receives_observations_but_no_address_or_page(run_case, scripted_agent):
@@ -341,22 +334,29 @@ async def test_cancelled_request_reaps_the_agent_and_every_analysis(
     assert main.ANALYSIS_JOBS[job_id]["investigation"]["stop"] == "preempted"
 
 
-async def test_eval_offers_the_agent_the_same_tool_menu_as_the_backend(monkeypatch, stub_read_message):
+@pytest.mark.parametrize("links,required", [
+    ([EVIL], ["collect_link", "analyze_message_signals", "check_official_domain"]),
+    ([], ["analyze_claims"]),
+], ids=["link", "no_link"])
+async def test_eval_offers_the_agent_the_same_tool_menu_as_the_backend(
+    monkeypatch, stub_read_message, links, required,
+):
     monkeypatch.syspath_prepend(str(Path(main.__file__).resolve().parent / "ai" / "eval"))
     import agent_router_eval
 
-    stub_read_message([EVIL], "본문")
-    reading = await main.read_message("본문 " + EVIL)
-    _, real = main._analysis_tools("본문 " + EVIL, reading, 0.0)
+    stub_read_message(links, "본문")
+    reading = await main.read_message(" ".join(["본문", *links]))
+    _, real = main._analysis_tools("본문", reading, 0.0)
 
     def menu(offered):
         return [(tool.name, tool.description, tool.per_link) for tool in offered]
 
     assert menu(agent_router_eval.stub_tools(reading)) == menu(real)
+    assert [tool.name for tool in real] == [*required, "search_similar_cases", "check_official_numbers"]
     # 호출 예산 5회를 링크 2개의 필수 호출로 다 쓰지 않게, 필요하다고 적는 링크 도구는 공식 대조 하나다
-    assert [tool.name for tool in real if tool.per_link and "필요하다" in tool.description] == [
-        "check_official_domain",
-    ]
+    assert [tool.name for tool in real if tool.per_link and "필요하다" in tool.description] == (
+        ["check_official_domain"] if links else []
+    )
 
 
 BROWSED = CollectResult(
