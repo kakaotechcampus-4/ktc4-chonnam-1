@@ -60,7 +60,7 @@
 - **응답 인터페이스:** 카카오톡 챗봇 스킬 API 및 카드 템플릿
 - **URL 수집:** 별도 HTTPS 격리 수집 API
 - **테스트:** pytest, pytest-asyncio
-- **배포:** `[실제 배포 플랫폼 및 서비스 URL 확인 후 기재]`
+- **배포:** Render(백엔드 서버, 수동 배포), AWS EC2(격리 URL 수집 서비스)
 
 설계 상세: [`docs/README.md`](docs/README.md), [`docs/isolation-security.md`](docs/isolation-security.md), [`docs/isolation-collector-api.md`](docs/isolation-collector-api.md)
 
@@ -141,26 +141,27 @@ GitHub Actions를 통해 `develop` 브랜치에 코드가 반영되거나 PR이 
 - **CI 워크플로:** [ci.yml](.github/workflows/ci.yml)
 - **검증 결과:** [PR #177](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/pull/177)
 
-### CI (자동화 테스트)
-
-GitHub Actions를 이용해 `develop` 브랜치에 코드가
-반영되거나 PR이 생성될 때 자동으로 테스트를 수행합니다.
-
-- 실행 환경: Ubuntu, Python 3.11
-- 테스트 프레임워크: pytest
-- [CI 워크플로](.github/workflows/ci.yml)
-- [GitHub Actions 실행 결과](https://github.com/kakaotechcampus-4/ktc4-chonnam-1/actions)
-
 ## 7. 배포 및 운영
 
-1. Python 3.11 이상 실행 환경에 저장소를 배포합니다.
-2. `requirements.txt`의 의존성을 설치합니다.
-3. 운영 환경변수와 외부 AI·STT·격리 API 인증 정보를 설정합니다.
-4. ASGI 서버에서 `main:app`을 실행합니다.
-5. 카카오톡 챗봇 관리자센터에서 스킬 서버 주소와 `X-Skill-Secret` 헤더를 설정합니다.
-6. 실제 카카오톡 채널에서 메시지 전송 → 분석 → 결과 콜백까지 확인합니다.
+백엔드 서버는 **Render**, 격리 URL 수집 서비스는 **AWS EC2** 환경에서 운영합니다.
 
-**배포 환경 확인 후 추가할 항목:** 실제 호스팅 서비스명, 빌드/시작 명령, 공개 서비스 URL, 상태 확인 경로, CI/CD 워크플로 링크.
+### 백엔드 배포 (Render)
+
+1. GitHub 저장소의 변경 사항을 반영합니다.
+2. Render 대시보드에서 백엔드 서비스를 선택합니다.
+3. **Manual Deploy**를 통해 배포를 실행합니다.
+4. 배포 로그에서 서버가 정상적으로 시작되었는지 확인합니다.
+5. 카카오톡 채널에서 메시지 전송부터 분석 결과 수신까지 정상 동작하는지 확인합니다.
+
+현재 Render 배포는 수동으로 진행하며, GitHub push에 따른 자동 배포는 적용하지 않았습니다.
+
+### 운영 환경 설정
+
+- Python 3.11 이상
+- `requirements.txt`를 통한 의존성 설치
+- LLM·STT·격리 URL 수집 API 인증 정보 설정
+- `KAKAO_SKILL_SECRET`을 이용한 스킬 요청 인증
+- `KAKAO_CALLBACK_HOSTS`를 통한 콜백 호스트 제한
 
 ### 운영 시 유의사항
 
