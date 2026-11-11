@@ -48,8 +48,30 @@ _MAX_REQUESTED_ACTIONS = 3
 _NO_RISK = "no_risk_found"
 _PARTIAL = "partial"
 _R9_NO_LINES = "- 없음"
-_R9_CARD_MAX_LENGTH = 400
 _R9_DEFAULT_MESSAGE_REASON = "문자 분석 결과를 전달받지 못했습니다."
+
+# D19 판정 요약 카드(chatbot-copy.md 3절 "판정 요약 카드"). 앞면은 basicCard 본문 한도 안,
+# 앞면에서 뺀 근거는 '자세히 보기' 캐러셀(textCard, 장당 128자)에 둔다.
+_SUMMARY_MAX_LENGTH = 230
+_CAROUSEL_TEXT_MAX_LENGTH = 128
+_SCOPE_NOTE = "결과는 확인한 자료로만 안내했어요. 확인하지 못한 부분은 판단에 넣지 않았어요."
+_CARD_IMAGE_BASE = (
+    "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/"
+    "frontend/kakao-templates/assets/cards/"
+)
+_UNCERTAIN_IMAGE = (
+    _CARD_IMAGE_BASE + "r3-inconclusive.png",
+    "내용이 비어 있는 화면과 물음표 옆에서 고민하는 기니피그",
+)
+# 결론별 이미지. 주의 이미지는 아직 없어 판단 보류 이미지를 같이 쓴다
+_VERDICT_IMAGES = {
+    "suspected": (
+        _CARD_IMAGE_BASE + "r1-danger.png",
+        "빨간 경고 표지판 옆에서 손바닥을 들어 멈추라고 하는 경찰 모자 기니피그",
+    ),
+    "caution": _UNCERTAIN_IMAGE,
+    "uncertain": _UNCERTAIN_IMAGE,
+}
 
 
 def _truncate_evidence(evidence: str, max_length: int = _EVIDENCE_MAX_LENGTH) -> str:
@@ -58,6 +80,52 @@ def _truncate_evidence(evidence: str, max_length: int = _EVIDENCE_MAX_LENGTH) ->
     if max_length <= 0:
         return ""
     return evidence[: max_length - 1] + "…"
+
+
+def _fit_lines(lines: list[str], max_length: int) -> str:
+    """줄 목록을 max_length 안으로 맞춘다(4절 "판정 요약 카드에서 옮긴 내용").
+
+    아래 줄부터 괄호 이유를 빼고, 그래도 넘으면 아래 줄부터 뺀다. 무엇을 확인했는지가
+    이유보다 먼저다. 한 줄만 남아도 넘으면 끝을 줄인다.
+    """
+
+    lines = list(lines)
+
+    def size() -> int:
+        return len("\n".join(lines))
+
+    for index in range(len(lines) - 1, -1, -1):
+        if size() <= max_length:
+            break
+        lines[index] = re.sub(r" \([^()]*\)$", "", lines[index])
+    while size() > max_length and len(lines) > 1:
+        lines.pop()
+    return _truncate_evidence("\n".join(lines), max_length)
+
+
+def _card_node(card: dict) -> dict:
+    """첫 output 의 카드 본체. 요약 카드는 basicCard, 그 밖은 textCard 다."""
+
+    output = card["template"]["outputs"][0]
+    return output.get("basicCard") or output["textCard"]
+
+
+def _render_verdict_summary(card_name: str, kind: str, values: dict[str, str]) -> dict:
+    """판정 요약 카드를 채운다. 빈칸이 남긴 빈 줄을 정리하고 230자를 넘지 않게 한다."""
+
+    image_url, image_alt = _VERDICT_IMAGES[kind]
+    card = _tidy_description(render_card(card_name, {
+        **values, "image_url": image_url, "image_alt": image_alt,
+    }))
+    node = _card_node(card)
+    if len(node["description"]) > _SUMMARY_MAX_LENGTH:
+        # 규칙대로면 넘지 않는다. 넘으면 근거 줄을 빼고, 그래도 넘으면 끝을 줄인다
+        card = _tidy_description(render_card(card_name, {
+            **values, "basis_line": "", "image_url": image_url, "image_alt": image_alt,
+        }))
+        node = _card_node(card)
+        node["description"] = _truncate_evidence(node["description"], _SUMMARY_MAX_LENGTH)
+    return card
 
 
 # ============================================================
@@ -177,15 +245,11 @@ _VOICE_QA_OPTION_LABELS = {
 }
 
 # Q1 option_id -> 리스트 카드 항목 썸네일(문자·녹음 공용). 없는 답(clicked_link)은 이미지를 달지 않는다.
-_Q1_IMAGE_BASE = (
-    "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/"
-    "frontend/kakao-templates/assets/cards/"
-)
 _Q1_OPTION_IMAGES = {
-    "entered_info": _Q1_IMAGE_BASE + "q1-list-1-entered-info.png",
-    "installed_app": _Q1_IMAGE_BASE + "q1-list-2-installed-app.png",
-    "sent_money": _Q1_IMAGE_BASE + "q1-list-3-sent-money.png",
-    "not_yet": _Q1_IMAGE_BASE + "q1-list-4-not-yet.png",
+    "entered_info": _CARD_IMAGE_BASE + "q1-list-1-entered-info.png",
+    "installed_app": _CARD_IMAGE_BASE + "q1-list-2-installed-app.png",
+    "sent_money": _CARD_IMAGE_BASE + "q1-list-3-sent-money.png",
+    "not_yet": _CARD_IMAGE_BASE + "q1-list-4-not-yet.png",
 }
 
 
@@ -247,28 +311,8 @@ def _voice_verify_line(official_contact: dict | None) -> str:
     return "통화에 나온 기관의 대표번호를\n직접 찾아 전화해 확인하세요."
 
 
-def _voice_call_claims(claims: dict, caution: bool) -> str:
-    """"주의할 점"/"통화에서 들은 내용" 블록(이슈 #115 V1 call_claims 매핑).
-
-    기관 = identity[].quote, 통화에 나온 말 = 첫 demands[].quote, 통화에
-    나온 사정 = blockers(있으면) 또는 pretexts, 통화에 나온 요구 =
-    demands[].kind 라벨(최대 3개). 전부 비어 있으면 통째로 빈 문자열
-    ("칸 제목 포함, 값 없으면 빈 문자열").
-
-    "내세운 사정 = blockers → pretexts"는 이슈 원문 그대로 "blockers가
-    있으면 그걸, 없으면 pretexts"로 읽어 구현했다 — 다르게 뜻했다면
-    확인 필요(보고 사항).
-
-    말머리는 이슈 #139에 따라 "통화에 나온 ~"로 기본값을 바꿨다(ADR
-    0008로 화자 분리를 아예 없앴으니 "상대가"라고 단정할 근거가 없다).
-    예전에는 `speaker_unknown`일 때만 이 말머리로 바꾸는 치환 루프가
-    있었다 — ADR 0008이 채택되고(2026-11-07) #116이 "화자 분리 코드
-    자체가 없어져 speaker/speaker_unknown을 결과에 남길 필요가 없다"며
-    닫혀(2026-11-10), 그 분기가 영영 쓰일 수 없다는 게 확정돼 지웠다
-    (이슈 #139). 같은 이유로 `_voice_verify_line()`·`claim_note`의
-    `speaker_unknown` 분기와 `_voice_speaker_unknown()` 자체도 PR #167
-    리뷰에 따라 함께 지웠다.
-    """
+def _voice_claim_lines(claims: dict) -> list[str]:
+    """통화 주장 줄(`- 통화에 나온 기관: '…'` 등). 칸 제목은 붙이지 않는다."""
 
     identity = claims.get("identity") or []
     demands = claims.get("demands") or []
@@ -291,12 +335,30 @@ def _voice_call_claims(claims: dict, caution: bool) -> str:
             _VOICE_DEMAND_LABELS.get(d.get("kind", ""), "기타 요구") for d in demands[:3]
         ]
         lines.append(f"- 통화에 나온 요구: {', '.join(demand_labels)}")
+    return lines
 
-    if not lines:
-        return ""
 
-    title = "⚠️ 주의할 점" if caution else "📞 통화에서 들은 내용"
-    return f"{title}\n" + "\n".join(lines) + "\n\n"
+def _voice_basis_line(result: dict, alert: bool) -> str:
+    """V1 요약 카드의 근거 한 줄(3절 "판정 요약 카드" `basis_line`).
+
+    번호 대조에서 대표번호가 아니라고 나온 것이 가장 확실한 근거다. 없으면 통화에 나온
+    기관, 그다음 사정 인용을 쓴다. 요구는 멈출 행동 줄과 같은 말이라 고르지 않는다.
+    """
+
+    for check in result.get("number_checks") or []:
+        if check.get("result") == "not_official":
+            line = _NUMBER_CHECK_CHECKED_LINES["not_official"]
+            return "✅ " + line.format(number=check.get("number", ""), org=check.get("org", ""))
+
+    claims = result.get("claims") or {}
+    mark = "⚠️" if alert else "📞"
+    quotes = [i.get("quote") for i in claims.get("identity") or [] if i.get("quote")]
+    if quotes:
+        return f"{mark} 통화에 나온 기관: '{_voice_truncate(quotes[0])}'"
+    pretext_source = (claims.get("blockers") or []) or (claims.get("pretexts") or [])
+    if pretext_source:
+        return f"{mark} 통화에 나온 사정: '{_voice_truncate(pretext_source[0])}'"
+    return ""
 
 
 def _voice_number_check_entries(number_checks: list[dict]) -> tuple[list[str], list[str]]:
@@ -404,22 +466,21 @@ def render_voice_result_card(result: dict, job_id: str | None = None) -> dict:
         return render_card("ve4-no-claim")
 
     caution = bool(result.get("caution"))
-    checked, unchecked = _voice_checked_unchecked(result)
 
     if conclusion == Conclusion.SUSPECTED.value:
-        headline = "⚠️ 보이스피싱이 의심돼요"
+        kind, headline = "suspected", "⚠️ 보이스피싱이 의심돼요"
     elif caution:
-        headline = "🔎 주의가 필요한 통화예요"
+        kind, headline = "caution", "🔎 주의가 필요한 통화예요"
     else:
-        headline = "🤔 판단하기 어려워요"
+        kind, headline = "uncertain", "🤔 판단하기 어려워요"
 
-    card = render_card("v1-voice-result", {
+    # D19: 앞면은 할 일, 근거 한 줄, 확인하지 못한 것 한 줄. 나머지는 녹음 캐러셀에 있다
+    card = _render_verdict_summary("v1-voice-result", kind, {
         "headline": headline,
         "stop_line": _voice_stop_line(result.get("stop_actions") or []),
         "verify_line": _voice_verify_line(result.get("official_contact")),
-        "call_claims": _voice_call_claims(result.get("claims") or {}, caution),
-        "checked": checked,
-        "unchecked": unchecked,
+        "basis_line": _voice_basis_line(result, kind != "uncertain"),
+        "unchecked_line": "❌ 실제로 건 곳은 확인하지 못했어요.",
     })
 
     card = _inject_job_id(card, job_id)
@@ -519,16 +580,17 @@ def render_voice_detail_carousel(result: dict) -> dict:
     이슈 #115). `VoiceCaseResult`는 문자·URL 결과와 모양이 완전히 달라
     `render_detail_carousel()`을 재사용하지 않는다.
 
-    `claim_lines`는 `call_claims`에서 칸 제목(첫 줄)만 뺀 줄들이다.
+    `claim_lines`는 통화 주장 줄(칸 제목 없이)이다.
     """
 
-    caution = bool(result.get("caution"))
-    claims_block = _voice_call_claims(result.get("claims") or {}, caution).strip()
-    claim_lines = (
-        "\n".join(claims_block.splitlines()[1:]) if claims_block else "확인된 의심 근거가 없어요."
-    )
-    _, unchecked = _voice_checked_unchecked(result)
+    claim_lines = "\n".join(_voice_claim_lines(result.get("claims") or {})) or "확인된 의심 근거가 없어요."
+    checked, unchecked = _voice_checked_unchecked(result)
     verify_line = _voice_verify_line(result.get("official_contact"))
+    # D19: 결과 카드 앞면에서 뺀 확인한 것, 확인하지 못한 것을 장당 128자 안으로 둔다
+    checked = _fit_lines(checked.splitlines(), _CAROUSEL_TEXT_MAX_LENGTH)
+    unchecked = _fit_lines(
+        unchecked.splitlines(), _CAROUSEL_TEXT_MAX_LENGTH - len("\n\n" + _SCOPE_NOTE),
+    )
 
     # #109: 가장 닮은 사례 하나(matches[0])의 type 으로 문구를 고른다. 표에 없는 유형이면
     # 수법을 추측하지 않고 사례를 찾았다는 사실만 알린다.
@@ -540,6 +602,7 @@ def render_voice_detail_carousel(result: dict) -> dict:
         "claim_note": "상대가 한 말로 보이는 문장만 근거로 썼어요.",
         "similar_type": similar_type,
         "similar_line": similar_line,
+        "checked": checked,
         "unchecked": unchecked,
         "verify_line": verify_line,
     })
@@ -694,6 +757,25 @@ def _r9_blank_values(analysis_result: dict) -> dict[str, str]:
     }
 
 
+def _r9_summary_values(analysis_result: dict) -> dict[str, str]:
+    """R9 요약 카드의 근거 한 줄과 확인하지 못한 것 한 줄(3절 "판정 요약 카드").
+
+    R9 는 아직 주장 칸이 없어 주소 줄만 근거로 쓴다(5순위). 주소를 대조하지 못했으면
+    그 사실을, 아니면 보낸 곳을 확인하지 못했다고 쓴다.
+    """
+
+    brand = (analysis_result.get("message") or {}).get("brand")
+    official = (analysis_result.get("url") or {}).get("official")
+    address_checked, address_unchecked = _r9_address_lines(official, brand)
+    return {
+        "basis_line": f"✅ {address_checked}" if address_checked else "",
+        "unchecked_line": (
+            "❌ 주소가 공식 주소인지 확인하지 못했어요." if address_unchecked
+            else "❌ 실제로 보낸 곳은 확인하지 못했어요."
+        ),
+    }
+
+
 def _r9_message_reason(message: dict) -> str:
     """이슈 #68: `message.brand`는 택배사만 알아보므로, 청소행정과처럼
     택배사가 아닌 기관이 내세운 명분·요구는 이 칸으로만 전달된다.
@@ -762,6 +844,7 @@ def _result_card_values(analysis_result: dict, card_name: str) -> dict[str, str]
 
     if card_name == "r9-uncertain":
         values.update(_r9_blank_values(analysis_result))
+        values.update(_r9_summary_values(analysis_result))
 
     return values
 
@@ -777,19 +860,11 @@ def render_result_card(
     card_name = select_result_card(analysis_result)
     values = _result_card_values(analysis_result, card_name)
 
-    card = render_card(card_name, values)
-
     if card_name == "r9-uncertain":
-        message = analysis_result.get("message") or {}
-        reason = _r9_message_reason(message)
-        node = card["template"]["outputs"][0]["textCard"]
-        # 다른 빈칸을 먼저 채운 뒤 400자에서 남는 만큼만 message_reason에 쓴다.
-        fixed = substitute_values(node["description"], {"message_reason": ""})
-        available = _R9_CARD_MAX_LENGTH - len(fixed)
-        node["description"] = substitute_values(
-            node["description"],
-            {"message_reason": _truncate_evidence(reason, available)},
-        )
+        # D19 요약 카드. 확인한 것과 문자에 적힌 내용은 '자세히 보기'에 둔다
+        card = _render_verdict_summary(card_name, "uncertain", values)
+    else:
+        card = render_card(card_name, values)
 
     return _inject_job_id(card, job_id, allow_details=allow_details)
 
@@ -922,7 +997,45 @@ def _guidance_items(analysis_result: dict) -> list[dict]:
     ]
 
 
-def render_detail_carousel(analysis_result: dict) -> dict:
+def _r9_detail_items(analysis_result: dict, case_result: dict | None) -> list[dict]:
+    """R9 '자세히 보기'에 더하는 장(D19, 4절 "판정 요약 카드에서 옮긴 내용").
+
+    요약 카드 앞면에서 뺀 확인한 것과 확인하지 못한 것(이유 포함)을 장으로 둔다. 확인 범위(C2)는
+    그대로 둔다. 실패 이유(#59)를 128자 C2 에 밀어 넣으면 이유가 잘려 나가기 때문이다.
+    #89 주의 갈래면 그 카드가 쓴 주장, 확인한 것, 확인하지 못한 것을 쓴다. 아니면 #68 의
+    '문자에 적힌 내용'을 장으로 둔다. 택배사가 아닌 기관의 명분은 이 칸으로만 전달된다.
+    """
+
+    templates = render_card("c-detail-carousel-message")["template"]["outputs"][0]["carousel"]["items"]
+    lines_template, checked_template = templates[0], templates[1]
+
+    def lines_item(title: str, lines: list[str]) -> dict:
+        return substitute_values(lines_template, {
+            "claims_title": title, "claim_lines": _fit_lines(lines, _CAROUSEL_TEXT_MAX_LENGTH),
+        })
+
+    items = []
+    if case_result:
+        checked_lines, unchecked_lines = _link_caution_lines(analysis_result, case_result)
+        claim_lines = _message_claim_lines(case_result)
+        if claim_lines:
+            items.append(lines_item("⚠️ 주의할 점", claim_lines))
+    else:
+        blank = _r9_blank_values(analysis_result)
+        checked_lines = [line for line in blank["checked"].splitlines() if line != _R9_NO_LINES]
+        unchecked_lines = [line for line in blank["unchecked"].splitlines() if line != _R9_NO_LINES]
+        items.append(lines_item(
+            "📩 문자에 적힌 내용", [_r9_message_reason(analysis_result.get("message") or {})],
+        ))
+
+    items.append(substitute_values(checked_template, {
+        "checked": _fit_lines(checked_lines or [_R9_NO_LINES], _CAROUSEL_TEXT_MAX_LENGTH),
+    }))
+    items.append(lines_item("❌ 확인하지 못한 것", unchecked_lines or [_R9_NO_LINES]))
+    return items
+
+
+def render_detail_carousel(analysis_result: dict, case_result: dict | None = None) -> dict:
     """"자세히 보기"에서 쓸 의심 근거 캐러셀을 만든다.
 
     c-detail-carousel.json의 items[0]을 "의심 근거(C1)" 템플릿으로 보고
@@ -949,11 +1062,18 @@ def render_detail_carousel(analysis_result: dict) -> dict:
 
     guidance_items = _guidance_items(analysis_result)
 
+    # D19: R9(와 그 자리의 #89 주의 갈래) 요약 카드에서 뺀 내용
+    r9_items = (
+        _r9_detail_items(analysis_result, case_result)
+        if case_result or select_result_card(analysis_result) == "r9-uncertain"
+        else []
+    )
+
     signal_budget = max(
         0,
         min(
             MAX_CAROUSEL_SIGNAL_ITEMS,
-            MAX_CAROUSEL_TOTAL_ITEMS - _FIXED_CAROUSEL_ITEMS - len(guidance_items),
+            MAX_CAROUSEL_TOTAL_ITEMS - _FIXED_CAROUSEL_ITEMS - len(guidance_items) - len(r9_items),
         ),
     )
 
@@ -1006,7 +1126,7 @@ def render_detail_carousel(analysis_result: dict) -> dict:
                 {
                     "carousel": {
                         "type": template["template"]["outputs"][0]["carousel"]["type"],
-                        "items": [*c1_items, c2_item, c3_template, *guidance_items],
+                        "items": [*c1_items, *r9_items, c2_item, c3_template, *guidance_items],
                     }
                 }
             ]
@@ -1049,7 +1169,6 @@ _MESSAGE_HEADLINES = {
 _MESSAGE_CALL_KNOWN_LINE = "원래 알던 번호로 직접 전화해 확인하세요."
 _MESSAGE_ACCOUNT_HOLDER_LINE = "보내기 전에 받는 계좌가 본인 명의인지 한 번 더 확인하세요."
 _MESSAGE_ORG_LINE = "보낸 기관의 공식 앱·홈페이지나 대표번호로 직접 확인하세요."
-_MESSAGE_BASIS_NOTE = "답해 주신 내용 기준으로 안내했어요."
 
 _MESSAGE_USER_ANSWER_LINES = {
     "not_person": "- 원래 번호로 통화한 결과 (본인이 아니라고 답해 주셨어요)",
@@ -1144,8 +1263,8 @@ def _message_verify_line(result: dict, has_stop_line: bool) -> str:
     return line
 
 
-def _message_claims_block(result: dict, alert: bool) -> str:
-    """주장 요약 칸(R6b `message_claims`). 칸 제목까지 포함하고, 줄이 없으면 빈 문자열."""
+def _message_claim_lines(result: dict) -> list[str]:
+    """주장 줄. 순서는 내세운 관계 → 기관 → 사정(명분) → 요구한 것이다."""
 
     claims = result.get("claims") or {}
     identity = claims.get("identity") or []
@@ -1174,11 +1293,36 @@ def _message_claims_block(result: dict, alert: bool) -> str:
     ))[:3]
     if labels:
         lines.append(f"- 요구한 것: {', '.join(labels)}")
+    return lines
 
-    if not lines:
-        return ""
-    title = "⚠️ 주의할 점" if alert else "📩 문자에 적힌 내용"
-    return f"{title}\n" + "\n".join(lines) + "\n\n"
+
+_MESSAGE_ANSWER_BASIS_LINES = {
+    "not_person": "✅ 원래 번호로 통화해 보니 본인이 아니라고 하셨어요.",
+    "is_person": "✅ 원래 번호로 통화해 보니 본인이 맞다고 하셨어요.",
+}
+
+
+def _message_basis_line(result: dict, alert: bool) -> str:
+    """R6b 요약 카드의 근거 한 줄(3절 "판정 요약 카드" `basis_line`).
+
+    결론을 바꾼 Q2 답이 1순위다. 없으면 내세운 관계나 기관, 그다음 사정(명분) 인용을 쓴다.
+    요구한 것은 멈출 행동 줄과 같은 말이 되어 고르지 않는다.
+    """
+
+    answer = (result.get("answers") or {}).get("called_known_number")
+    if result.get("basis_from_answer") and answer in _MESSAGE_ANSWER_BASIS_LINES:
+        return _MESSAGE_ANSWER_BASIS_LINES[answer]
+    mark = "⚠️" if alert else "📩"
+    for line in _message_claim_lines(result):
+        if not line.startswith("- 요구한 것"):
+            return f"{mark} {line[2:]}"
+    return ""
+
+
+def _message_unchecked_line(result: dict) -> str:
+    if "acquaintance" in _message_identity_kinds(result):
+        return "❌ 실제로 보낸 사람은 확인하지 못했어요."
+    return "❌ 실제로 보낸 곳은 확인하지 못했어요."
 
 
 def _message_checked_unchecked(result: dict) -> tuple[str, str]:
@@ -1212,11 +1356,11 @@ def _message_checked_unchecked(result: dict) -> tuple[str, str]:
 def _tidy_description(card: dict) -> dict:
     """빈 빈칸이 남긴 앞쪽 빈 줄과 겹친 빈 줄을 정리한다("남는 빈 줄은 BE가 정리한다")."""
 
-    text_card = card["template"]["outputs"][0]["textCard"]
-    description = text_card["description"].lstrip("\n")
+    node = _card_node(card)
+    description = node["description"].lstrip("\n")
     while "\n\n\n" in description:
         description = description.replace("\n\n\n", "\n\n")
-    text_card["description"] = description
+    node["description"] = description.rstrip("\n")
     return card
 
 
@@ -1276,32 +1420,20 @@ def render_message_case_card(result: dict, job_id: str | None = None) -> dict:
 
     caution = bool(result.get("caution"))
     if conclusion == Conclusion.SUSPECTED.value:
-        card_name, headline = "r6b-warning", _MESSAGE_HEADLINES["suspected"]
+        kind, card_name = "suspected", "r6b-warning"
     else:
-        card_name = "r6b-uncertain"
-        headline = _MESSAGE_HEADLINES["caution" if caution else "uncertain"]
+        kind, card_name = ("caution" if caution else "uncertain"), "r6b-uncertain"
 
-    alert = conclusion == Conclusion.SUSPECTED.value or caution
     stop_line = _message_stop_line(result.get("stop_actions") or [])
-    checked, unchecked = _message_checked_unchecked(result)
-
-    values = {
-        "headline": headline,
+    # D19: 앞면은 할 일, 근거 한 줄, 확인하지 못한 것 한 줄. 나머지는 '자세히 보기'에 있다
+    card = _render_verdict_summary(card_name, kind, {
+        "headline": _MESSAGE_HEADLINES[kind],
         "stop_line": stop_line,
         "verify_line": _message_verify_line(result, bool(stop_line)),
-        "basis_note": _MESSAGE_BASIS_NOTE if result.get("basis_from_answer") else "",
-        "message_claims": _message_claims_block(result, alert),
-        "checked": checked,
-        "unchecked": unchecked,
-    }
-    card = _tidy_description(render_card(card_name, values))
-    if len(card["template"]["outputs"][0]["textCard"]["description"]) > _R9_CARD_MAX_LENGTH:
-        # textCard 설명 상한(400자)을 넘으면 주장 요약을 빼고, 그래도 넘으면 끝을 자른다
-        card = _tidy_description(render_card(card_name, {**values, "message_claims": ""}))
-        text_card = card["template"]["outputs"][0]["textCard"]
-        text_card["description"] = _truncate_evidence(
-            text_card["description"], _R9_CARD_MAX_LENGTH
-        )
+        "basis_line": _message_basis_line(result, kind != "uncertain"),
+        "unchecked_line": _message_unchecked_line(result),
+    })
+    card = _inject_job_id(card, job_id)
 
     question_cards = [
         qa_card
@@ -1324,18 +1456,39 @@ def link_caution_applies(analysis_result: dict) -> bool:
     return select_result_card(analysis_result) == "r9-uncertain" and official != "official"
 
 
-def render_link_caution_card(analysis_result: dict, case_result: dict | None) -> dict | None:
+def render_link_caution_card(
+    analysis_result: dict,
+    case_result: dict | None,
+    job_id: str | None = None,
+    *,
+    allow_details: bool = True,
+) -> dict | None:
     """링크 결과가 판단 보류인데 문자 게이트가 주의라고 하면 R6b 주의 갈래 카드를 만든다 (#89).
 
     새 카드를 만들지 않고 링크 없는 문자 결과 카드(`r6b-uncertain`)를 그대로 쓴다. 판정은 바꾸지 않고
     판단 보류 안에서 제목과 첫머리만 고른다. 주의가 아니면 None 을 돌려주고 호출부가 R9 를 쓴다.
     링크 결과 아래 Q1 은 미구현(chatbot-copy.md D16)이라 질문 카드는 붙이지 않는다.
+    D19 요약 카드라 앞면에서 뺀 내용은 '자세히 보기'(R9 와 같은 문자 캐러셀)에 둔다.
     """
 
     if not case_result or not case_result.get("caution"):
         return None
     if case_result.get("conclusion") != Conclusion.INCONCLUSIVE.value:
         return None
+
+    stop_line = _message_stop_line(case_result.get("stop_actions") or [])
+    card = _render_verdict_summary("r6b-uncertain", "caution", {
+        "headline": _MESSAGE_HEADLINES["caution"],
+        "stop_line": stop_line,
+        "verify_line": _message_verify_line(case_result, bool(stop_line)),
+        "basis_line": _message_basis_line(case_result, True),
+        "unchecked_line": _message_unchecked_line(case_result),
+    })
+    return _inject_job_id(card, job_id, allow_details=allow_details)
+
+
+def _link_caution_lines(analysis_result: dict, case_result: dict) -> tuple[list[str], list[str]]:
+    """#89 주의 갈래의 확인한 것, 확인하지 못한 것. 문자 게이트 결과에 주소와 페이지 줄을 더한다."""
 
     url = analysis_result.get("url") or {}
     message = analysis_result.get("message") or {}
@@ -1351,23 +1504,31 @@ def render_link_caution_card(analysis_result: dict, case_result: dict | None) ->
     checked += [f"- {line}" for line in (address_checked, env_checked) if line]
     unchecked = [line for line in case_unchecked.splitlines() if line != _R9_NO_LINES]
     unchecked += [f"- {line}" for line in (address_unchecked, env_unchecked) if line]
+    return checked, unchecked
 
-    stop_line = _message_stop_line(case_result.get("stop_actions") or [])
-    values = {
-        "headline": _MESSAGE_HEADLINES["caution"],
-        "stop_line": stop_line,
-        "verify_line": _message_verify_line(case_result, bool(stop_line)),
-        "basis_note": "",
-        "message_claims": _message_claims_block(case_result, True),
-        "checked": "\n".join(checked) or _R9_NO_LINES,
-        "unchecked": "\n".join(unchecked) or _R9_NO_LINES,
-    }
-    card = _tidy_description(render_card("r6b-uncertain", values))
-    if len(card["template"]["outputs"][0]["textCard"]["description"]) > _R9_CARD_MAX_LENGTH:
-        # textCard 설명 상한(400자)을 넘으면 주장 요약을 빼고, 그래도 넘으면 끝을 자른다
-        card = _tidy_description(render_card("r6b-uncertain", {**values, "message_claims": ""}))
-        text_card = card["template"]["outputs"][0]["textCard"]
-        text_card["description"] = _truncate_evidence(text_card["description"], _R9_CARD_MAX_LENGTH)
+
+def render_message_detail_carousel(result: dict) -> dict:
+    """링크 없는 문자 결과(R6b)의 '자세히 보기'(`c-detail-carousel-message.json`, D19).
+
+    요약 카드 앞면에서 뺀 주장, 확인한 것, 확인하지 못한 것(이유 포함)을 장마다 128자 안으로
+    보여 준다. 주장이 없으면 첫 장을 뺀다. 앞면의 근거 줄도 상세에 다시 쓴다.
+    """
+
+    conclusion = result.get("conclusion")
+    alert = conclusion == Conclusion.SUSPECTED.value or bool(result.get("caution"))
+    checked, unchecked = _message_checked_unchecked(result)
+    claim_lines = _message_claim_lines(result)
+
+    card = render_card("c-detail-carousel-message", {
+        "claims_title": "⚠️ 주의할 점" if alert else "📩 문자에 적힌 내용",
+        "claim_lines": _fit_lines(claim_lines, _CAROUSEL_TEXT_MAX_LENGTH),
+        "checked": _fit_lines(checked.splitlines(), _CAROUSEL_TEXT_MAX_LENGTH),
+        "unchecked": _fit_lines(
+            unchecked.splitlines(), _CAROUSEL_TEXT_MAX_LENGTH - len("\n\n" + _SCOPE_NOTE),
+        ),
+    })
+    if not claim_lines:
+        card["template"]["outputs"][0]["carousel"]["items"].pop(0)
     return card
 
 

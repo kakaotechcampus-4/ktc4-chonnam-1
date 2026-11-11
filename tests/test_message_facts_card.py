@@ -7,7 +7,17 @@ from ai.types import (
     AnalysisStatus, CaseSearchResult, EvidenceField, FailureCode,
     MessageAnalysis, SignalAnalysis,
 )
-from services.result_card_renderer import render_result_card
+from services.result_card_renderer import render_detail_carousel, render_result_card
+
+
+def _r9_card(result: dict) -> dict:
+    """D19: R9 앞면은 요약 카드이고, 확인한 것, 확인하지 못한 것, 문자에 적힌 내용은
+    '자세히 보기'에 있다. 사용자가 보는 두 곳을 이어 붙여 본다."""
+
+    front = render_result_card(result)["template"]["outputs"][0]["basicCard"]
+    items = render_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+    moved = [f"{i['title']}\n{i['description']}" for i in items if i["title"] != "📵 문자 속 링크에 접속하지 마세요"]
+    return {"description": "\n\n".join([front["description"], *moved]), "front": front["description"]}
 
 
 @pytest.mark.parametrize("search_failed", [False, True])
@@ -30,11 +40,11 @@ def test_waste_message_claims_reach_card_only_with_current_evidence(grounded, se
         SignalAnalysis(status=AnalysisStatus.COMPLETED),
         failure=FailureCode.TIMEOUT if search_failed else None,
     )
-    card = render_result_card({
+    card = _r9_card({
         "url": {"official": "not_registered"},
         "message": part.model_dump(mode="json"),
         "env": {"answer": "not_run"},
-    })["template"]["outputs"][0]["textCard"]
+    })
     for output in (part.details.reason.text, card["description"]):
         for quote in ("청소행정과", "쓰레기 무단투기 신고가 접수되었습니다.", "아래 링크에서 민원 내용을 확인하세요."):
             assert (quote in output) is grounded
@@ -72,8 +82,8 @@ def test_long_reason_keeps_card_limit_and_verification_guidance(message_answer):
         "message": {"answer": message_answer, "details": {"reason": {"text": reason}}},
         "env": {"answer": "failed"},
     }
-    card = render_result_card(result)["template"]["outputs"][0]["textCard"]
-    assert len(card["description"]) <= 400
+    card = _r9_card(result)
+    assert len(card["front"]) <= 230
     assert "청소행정과" in card["description"]
     assert "…" in card["description"]
     assert "공식 앱이나 홈페이지" in card["description"]
@@ -87,7 +97,7 @@ def test_long_reason_keeps_card_limit_and_verification_guidance(message_answer):
 
 
 def test_missing_message_reason_uses_a_neutral_fallback():
-    card = render_result_card({"url": {"official": "unresolved"}})["template"]["outputs"][0]["textCard"]
+    card = _r9_card({"url": {"official": "unresolved"}})
     assert "문자 분석 결과를 전달받지 못" in card["description"]
     assert "{{" not in card["description"]
     assert "위험 근거는 찾지 못" not in card["description"]
