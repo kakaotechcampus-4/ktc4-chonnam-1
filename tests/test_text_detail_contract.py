@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from services import result_card_renderer as renderer
+from services import card_parts, detail_carousel
 from services.chatbot_copy_data import SIGNAL_COPY
 
 
@@ -17,7 +18,7 @@ def _scope_item(items: list[dict]) -> dict:
 @pytest.mark.parametrize("code", list(SIGNAL_COPY))
 @pytest.mark.parametrize("length", [0, 1, 59, 60, 128, 300])
 def test_text_carousel_keeps_complete_reason_within_128(monkeypatch, code, length):
-    monkeypatch.setattr(renderer, "find_guidance", lambda _: [])
+    monkeypatch.setattr(detail_carousel, "find_guidance", lambda _: [])
     payload = {"message": {"answer": "risk_found", "details": {
         "signals": [{"code": code, "evidence": "가" * length}],
     }}, "env": {"answer": "not_run"}}
@@ -48,14 +49,14 @@ def test_text_carousel_keeps_complete_reason_within_128(monkeypatch, code, lengt
     (["entered_info", "sent_money"], "송금한 은행에 지급정지를 요청하세요."),
 ])
 def test_k6_payment_stop_matches_answer_and_numbers_only_visible_actions(answers, expected):
-    lines = renderer._response_action_lines(
+    lines = card_parts.response_action_lines(
         ["unknown_action", "request_payment_stop", "report_112"], answers,
     )
     assert lines == [f"1. {expected}", "2. 112에 신고하세요."]
 
 
 def test_guidance_shares_text_card_and_ten_item_budget(monkeypatch):
-    monkeypatch.setattr(renderer, "find_guidance", lambda _: [
+    monkeypatch.setattr(detail_carousel, "find_guidance", lambda _: [
         SimpleNamespace(kind="verification", text="공식 앱에서 확인하세요.",
                         source="공식 안내", published_at="2026-11-10", rule_id=str(i))
         for i in range(3)
@@ -75,7 +76,7 @@ def test_guidance_shares_text_card_and_ten_item_budget(monkeypatch):
 @pytest.mark.parametrize("message_answer", ["partial", "failed", "no_risk_found"])
 @pytest.mark.parametrize("env_answer", ["partial", "failed", "not_run", "no_risk_found"])
 def test_scope_with_failures_fits_without_losing_disclaimer(monkeypatch, message_answer, env_answer):
-    monkeypatch.setattr(renderer, "find_guidance", lambda _: [])
+    monkeypatch.setattr(detail_carousel, "find_guidance", lambda _: [])
     part = lambda answer: {"answer": answer, "details": {
         "signals": [], "reason": {"failures": ["timeout", "collection_failed"]},
     }}
@@ -106,7 +107,7 @@ def test_r8_basic_card_uses_existing_image_asset():
     ("failed", "partial"), (None, "no_risk_found"),
 ])
 def test_scope_separates_address_verification_from_analysis(monkeypatch, official, message_answer, env_answer):
-    monkeypatch.setattr(renderer, "find_guidance", lambda _: [])
+    monkeypatch.setattr(detail_carousel, "find_guidance", lambda _: [])
     payload = {"url": {"official": official},
                "message": {"answer": message_answer, "details": {"reason": {"failures": ["timeout"]}}},
                "env": {"answer": env_answer}}
@@ -123,7 +124,7 @@ def test_scope_separates_address_verification_from_analysis(monkeypatch, officia
 
 @pytest.mark.parametrize("evidence", [None, "", "   ", "\n\t"])
 def test_missing_quote_does_not_invent_observations(monkeypatch, evidence):
-    monkeypatch.setattr(renderer, "find_guidance", lambda _: [])
+    monkeypatch.setattr(detail_carousel, "find_guidance", lambda _: [])
     payload = {"message": {"answer": "partial", "details": {"signals": [
         {"code": "install_prompt", "evidence": evidence},
     ]}}, "env": {"answer": "not_run"}}

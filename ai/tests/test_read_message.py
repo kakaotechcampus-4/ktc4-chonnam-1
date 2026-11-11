@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
+import asyncio
 import pytest
 
 import ai.llm.analyze as analyze_module
@@ -233,13 +234,13 @@ async def test_timeout_is_the_callers(monkeypatch):
     factory = Mock(return_value=client)
     monkeypatch.setattr(module, "create_client", factory)
     seen = []
-    real_wait_for = analyze_module.asyncio.wait_for
+    real_wait_for = asyncio.wait_for
 
     async def wait_for(awaitable, timeout):
         seen.append(timeout)
         return await real_wait_for(awaitable, timeout)
 
-    monkeypatch.setattr(analyze_module.asyncio, "wait_for", wait_for)
+    monkeypatch.setattr(asyncio, "wait_for", wait_for)
 
     await read_message(TEXT, model="test", timeout_s=12.0)
 

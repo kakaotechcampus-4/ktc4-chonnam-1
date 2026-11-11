@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from ai.kb.guidance import find_guidance, load_rules
-from services import result_card_renderer as renderer
+from services import detail_carousel as renderer
 from services.chatbot_copy_data import GUIDANCE_DELIVERY_CONTACTS
 
 

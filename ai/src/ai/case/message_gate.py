@@ -31,24 +31,12 @@ from ai.case.types import (
     UncheckedReason,
     VerifyAction,
 )
+from ai.case.rules import MAX_STOP, Q1_OPTIONS, RISK_DEMANDS, STOP_TABLE, slim
 from ai.types import AnalysisStatus, CaseSearchResult, FailureCode
 
 _E = EvidenceCode
 
-# v3 §7.4 위험 요구 (통화 게이트와 같다)
-_RISK_DEMANDS = frozenset(
-    {
-        _E.MONEY_REQUEST,
-        _E.CASH_DELIVERY_REQUEST,
-        _E.GIFT_CARD_REQUEST,
-        _E.AUTH_CODE_REQUEST,
-        _E.INFO_REQUEST,
-        _E.APP_INSTALL_REQUEST,
-        _E.REMOTE_APP_MENTION,
-        _E.CALL_REQUEST,
-    }
-)
-_ANY_DEMAND = _RISK_DEMANDS | {_E.MESSENGER_MOVE, _E.ACCOUNT_LOCK_LURE, _E.LOTTERY_LURE}
+_ANY_DEMAND = RISK_DEMANDS | {_E.MESSENGER_MOVE, _E.ACCOUNT_LOCK_LURE, _E.LOTTERY_LURE}
 _CLAIMS = frozenset({_E.INSTITUTION_CLAIM, _E.ACQUAINTANCE_CLAIM})
 # 개인 메신저 아이디: @handle, "아이디: xxx", 영문·숫자가 섞인 낱말(ck5529, zxf226).
 # 가게 "채널 추가" 광고와 모르는 사람의 아이디 유도를 가른다 (#160)
@@ -61,25 +49,7 @@ MESSENGER_HANDLE = re.compile(
 # L-4 지인 사칭의 요구 짝
 _L4_DEMANDS = frozenset({_E.MONEY_REQUEST, _E.GIFT_CARD_REQUEST, _E.AUTH_CODE_REQUEST})
 
-# v3 §7.5 표 순서. 링크가 없어서 dont_click_link 는, 통화가 아니라서 hang_up 은 없다
-_STOP_TABLE: list[tuple[frozenset[EvidenceCode], StopAction]] = [
-    (frozenset({_E.INFO_REQUEST}), StopAction.DONT_ENTER_INFO),
-    (
-        frozenset({_E.APP_INSTALL_REQUEST, _E.REMOTE_APP_MENTION}),
-        StopAction.DONT_INSTALL_APP,
-    ),
-    (
-        frozenset({_E.MONEY_REQUEST, _E.CASH_DELIVERY_REQUEST}),
-        StopAction.DONT_SEND_MONEY,
-    ),
-    (frozenset({_E.GIFT_CARD_REQUEST}), StopAction.DONT_SEND_GIFT_CARD),
-    (frozenset({_E.AUTH_CODE_REQUEST}), StopAction.DONT_SHARE_AUTH_CODE),
-    (frozenset({_E.CALL_REQUEST}), StopAction.DONT_CALL_NUMBER_IN_MESSAGE),
-]
-_MAX_STOP = 3
 
-# 링크가 없어서 clicked_link 는 없다 (v3 §7.6)
-Q1_OPTIONS = ["entered_info", "installed_app", "sent_money", "not_yet"]
 Q2_OPTIONS = ["not_person", "is_person", "no_answer", "not_yet", "unknown"]
 # unknown 은 Q1 선택지에서 뺐지만 들어오면 not_yet 과 같이 처리한다 (v3 §7.6)
 Q1_ACCEPTED = frozenset({*Q1_OPTIONS, "unknown"})
@@ -107,17 +77,7 @@ def _answer_evidence(answers: MessageAnswers) -> list[Evidence]:
 def _stop_actions(codes: set[EvidenceCode], *, has_link: bool = False) -> list[StopAction]:
     # 링크가 있는 문자는 "링크를 누르지 마세요" 를 맨 앞에 둔다 (#89, chatbot-copy.md R9 멈출 행동)
     head = [StopAction.DONT_CLICK_LINK] if has_link else []
-    return [*head, *(action for trigger, action in _STOP_TABLE if codes & trigger)][:_MAX_STOP]
-
-
-def _slim(similar: CaseSearchResult | None) -> CaseSearchResult | None:
-    """matched_variant 는 사례 본문이라 결과에 싣지 않는다. id·유사도·유형만 남긴다."""
-    if similar is None:
-        return None
-    return CaseSearchResult(
-        status=similar.status,
-        matches=[m.model_copy(update={"matched_variant": ""}) for m in similar.matches],
-    )
+    return [*head, *(action for trigger, action in STOP_TABLE if codes & trigger)][:MAX_STOP]
 
 
 def _checked_unchecked(
@@ -175,11 +135,10 @@ def decide_message(
     링크 판정은 공식 주소 대조가 따로 한다. 이 결과는 BE 가 판단 보류 카드의 갈래를 고르는 데만 쓴다.
     """
     answers = answers or MessageAnswers()
-    read_ran = accepted is not None
     q2 = answers.called_known_number
 
     common = {
-        "similar_cases": _slim(similar),
+        "similar_cases": slim(similar),
         "rejected": list(rejected or []),
         "claims": claims or ClaimView(),
         "reading_status": reading_status,
@@ -223,7 +182,7 @@ def decide_message(
 
     acquaintance = _E.ACQUAINTANCE_CLAIM in codes
     # Q2 는 가족·지인이라고 한 문자에만 묻는다. 그 밖의 문자에 온 Q2 답은 쓰지 않는다
-    q2_applies = acquaintance and bool(codes & (_RISK_DEMANDS | {_E.MESSENGER_MOVE}))
+    q2_applies = acquaintance and bool(codes & (RISK_DEMANDS | {_E.MESSENGER_MOVE}))
     if not acquaintance:
         q2 = None
     evidence = [*base, *_answer_evidence(answers.model_copy(update={"called_known_number": q2}))]
@@ -234,7 +193,7 @@ def decide_message(
         floors.append("L-4")
 
     caution_before_answer = bool(
-        codes & _RISK_DEMANDS
+        codes & RISK_DEMANDS
         or _E.INSTITUTION_CLAIM in codes
         or (acquaintance and codes & {_E.MESSENGER_MOVE, _E.CONTACT_BLOCKER})
         # 링크로 계정 정지를 풀라는 미끼(#160-4). message.py 가 링크가 있을 때만 근거를 넣는다

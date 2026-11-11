@@ -7,6 +7,9 @@ from ai.case import warm_up_voice_case_search
 from ai.pipeline import warm_up_case_search
 from ai.types import AnalysisStatus
 from backend.src.server.http_client import http_client_lifespan
+from backend.src.server.log import get_logger
+
+_log = get_logger("server")
 
 
 def warm_up_kb() -> None:
@@ -20,8 +23,8 @@ def warm_up_kb() -> None:
 
     try:
         result = warm_up_case_search()
-    except Exception as e:
-        print(
+    except Exception as e:  # noqa: BLE001 — 워밍업이 실패해도 서버는 떠야 한다
+        _log.warning(
             f"[KB WARMUP FAILED] "
             f"{type(e).__name__}: {e}"
         )
@@ -30,14 +33,14 @@ def warm_up_kb() -> None:
     elapsed = time.monotonic() - start
 
     if result.status is not AnalysisStatus.COMPLETED:
-        print(
+        _log.warning(
             f"[KB WARMUP EMPTY] "
             f"status={result.status.value} "
             f"({elapsed:.2f}s)"
         )
         return
 
-    print(f"[KB WARMUP] {elapsed:.2f}s")
+    _log.info(f"[KB WARMUP] {elapsed:.2f}s")
 
 
 def warm_up_voice_case_search_task() -> None:
@@ -52,8 +55,8 @@ def warm_up_voice_case_search_task() -> None:
 
     try:
         result = warm_up_voice_case_search()
-    except Exception as e:
-        print(
+    except Exception as e:  # noqa: BLE001 — 워밍업이 실패해도 서버는 떠야 한다
+        _log.warning(
             f"[VOICE KB WARMUP FAILED] "
             f"{type(e).__name__}: {e}"
         )
@@ -62,14 +65,14 @@ def warm_up_voice_case_search_task() -> None:
     elapsed = time.monotonic() - start
 
     if result.status is not AnalysisStatus.COMPLETED:
-        print(
+        _log.warning(
             f"[VOICE KB WARMUP EMPTY] "
             f"status={result.status.value} "
             f"({elapsed:.2f}s)"
         )
         return
 
-    print(f"[VOICE KB WARMUP] {elapsed:.2f}s")
+    _log.info(f"[VOICE KB WARMUP] {elapsed:.2f}s")
 
 
 @asynccontextmanager

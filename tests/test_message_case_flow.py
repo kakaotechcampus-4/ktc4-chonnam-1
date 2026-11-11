@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 import main
+from services.kakao_card_renderer import render_card
 from ai.case.types import MessageCaseResult
 
 SECRET = "synthetic-skill-secret"
@@ -27,8 +28,6 @@ def isolated_state(monkeypatch):
     monkeypatch.setenv("APP_ENV", "staging")
     monkeypatch.setenv("KAKAO_SKILL_SECRET", SECRET)
     monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "bot-api.kakao.com")
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
-    monkeypatch.setattr(main, "RUNNING_USERS", set())
 
 
 async def _post(body):
@@ -113,7 +112,7 @@ async def test_skill_first_response_is_analyzing_card(monkeypatch):
     response = await _post({"userRequest": {
         "utterance": FAMILY, "user": {"id": USER}, "callbackUrl": CALLBACK,
     }})
-    assert response == main.render_card("r5-analyzing")
+    assert response == render_card("r5-analyzing")
     assert started == [FAMILY]
 
 
@@ -183,7 +182,7 @@ async def test_institution_message_points_to_official_channels(monkeypatch, stub
 
 async def test_chatter_still_gets_input_required(monkeypatch, stub_read_message):
     job, card = await _analyze_with_callback(monkeypatch, stub_read_message, "오늘 저녁 뭐 먹을까")
-    assert card == main.render_card("r6-input-required")
+    assert card == render_card("r6-input-required")
     assert job["final_payload"]["conclusion"] == "input_required"
 
 
@@ -204,7 +203,7 @@ async def test_budget_subtracts_reading_time(monkeypatch, stub_read_message):
     monkeypatch.setattr(main, "analyze_message_case", fake)
     stub_read_message(message=FAMILY)
     card = await main.run_message_case(FAMILY, started=main.time.monotonic() - 10)
-    assert card == main.render_card("r4-unavailable")
+    assert card == render_card("r4-unavailable")
     assert 29 < seen["budget"] <= main.MESSAGE_CASE_BUDGET_S - 10
 
 

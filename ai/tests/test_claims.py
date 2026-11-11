@@ -13,7 +13,7 @@ from ai.case.types import (
     Segment,
     Side,
 )
-from ai.llm.claims import read_claims
+from ai.case.claims import read_claims
 from ai.types import FailureCode
 
 
@@ -174,10 +174,42 @@ async def test_validation_failure_logs_field_and_reason_without_text(src, make_p
     # 운영 로그에 "ValidationError" 만 남아 원인을 재현 실험으로 찾아야 했다.
     # 어느 칸이 왜 깨졌는지 남기되, 모델 출력·원문은 남기지 않는다
     client, _ = make_parse_client(side_effect=_validation_error())
-    with caplog.at_level("WARNING", logger="ai.llm.claims"):
+    with caplog.at_level("WARNING", logger="ai.case.claims"):
         result = await read_claims(src, client=client)
     assert (result.status, result.failure) == ("fallback", FailureCode.INVALID_OUTPUT)
     logged = caplog.text
     assert "ValidationError" in logged
     assert "identity.0.kind:enum" in logged
     assert "비밀값" not in logged and "홍길동" not in logged and "서울중앙지검" not in logged
+
+
+async def test_client_created_here_is_closed(src, make_parse_client, monkeypatch):
+    """client 를 받지 않으면 직접 만든 것을 닫는다. 통화·문자 경로는 요청마다 여기로 온다."""
+    import ai.case.claims as claims_module
+
+    client, _ = make_parse_client(parsed=reading())
+    client.close = AsyncMock()
+
+    class Owned:
+        async def __aenter__(self):
+            return client
+
+        async def __aexit__(self, *args):
+            await client.close()
+
+    monkeypatch.setattr(claims_module, "create_client", lambda timeout: Owned())
+    monkeypatch.setenv("LLM_MODEL", "main-model")
+
+    result = await read_claims(src)
+
+    assert result.status == "ok"
+    client.close.assert_awaited_once()
+
+
+async def test_given_client_is_left_open(src, make_parse_client):
+    client, _ = make_parse_client(parsed=reading())
+    client.close = AsyncMock()
+
+    await read_claims(src, client=client)
+
+    client.close.assert_not_awaited()

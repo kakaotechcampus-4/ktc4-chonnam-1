@@ -86,14 +86,14 @@ def test_fast_embedding_is_logged_as_hybrid(kb, monkeypatch, caplog):
 
 
 async def test_whole_budget_timeout_is_logged_and_marked(caplog):
-    from ai.case.message import MessageRuntime, _search as message_search
+    from ai.case.steps import search_within
     from ai.case.types import UncheckedReason
 
     def stuck(text):
         time.sleep(0.5)
 
     with caplog.at_level(logging.WARNING):
-        found, miss = await message_search(MessageRuntime(search_cases=stuck), "본문", 0.1)
+        found, miss = await search_within(stuck, "본문", 0.1, label="message")
     # 검색 실패(시간 초과)는 "사례 없음" 과 다른 값으로 남는다
     assert found is None and miss is UncheckedReason.TIMEOUT
     assert "message case search timed out" in caplog.text

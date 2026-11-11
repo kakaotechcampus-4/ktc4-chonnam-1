@@ -18,6 +18,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel
 
+from ai.diagnostics import where
+
 LOGGER = logging.getLogger(__name__)
 
 NORM_DIR = Path(__file__).resolve().parent / "norm_rules"
@@ -132,8 +134,8 @@ def find_guidance(result: Any, norm_dir: Path = NORM_DIR) -> list[Guidance]:
             if any(all(value in facts[key] for key, value in condition.items())
                    for condition in rule.match)
         ]
-    except Exception as exc:  # 설명용 부가 기능이라 실패해도 응답을 막지 않는다 (원칙 3)
-        LOGGER.warning("guidance lookup failed: %s", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 — 설명용 부가 기능이라 실패해도 응답을 막지 않는다 (원칙 3)
+        LOGGER.warning("guidance lookup failed: %s", where(exc))
         return []
     hits.sort(key=lambda item: (_KIND_ORDER[item.kind], item.rule_id))
     return hits[:MAX_GUIDANCE]

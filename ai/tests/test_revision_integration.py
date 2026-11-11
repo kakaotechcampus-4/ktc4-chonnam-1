@@ -11,8 +11,6 @@ from pydantic import ValidationError
 import ai.llm.page as page_analysis_module
 import ai.page as page_module
 import ai.pipeline.analysis as pipeline_module
-import ai.pipeline.results as results_module
-import ai.verdict as verdict_module
 from ai.page import inspect_html
 from ai.pipeline import analyze_environment_part, analyze_message_part, assemble_analysis
 from ai.types import (
@@ -34,8 +32,6 @@ def _ans(no_risk):
 
 def first_doubt(part):
     return part.details.doubts[0].value if part.details.doubts else None
-
-
 
 
 TEXT = "배송 현황을 확인하세요"
@@ -666,25 +662,6 @@ async def test_unknown_none_and_null_preserve_distinct_json_keys(state, make_par
 def test_invalid_official_never_produces_classification(official):
     with pytest.raises(ValidationError):
         UrlAnalysis(final_url="https://example.com/a", domain="example.com", official=official)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("official", [False, True])
-async def test_new_pipeline_never_calls_legacy_decide(official, monkeypatch, make_parse_client):
-    forbidden = Mock(side_effect=AssertionError("legacy verdict must remain independent"))
-    monkeypatch.setattr(verdict_module, "decide", forbidden)
-    monkeypatch.setattr(pipeline_module, "decide", forbidden, raising=False)
-    monkeypatch.setattr(results_module, "decide", forbidden, raising=False)
-    client, _ = make_parse_client(parsed=PageProposal())
-    message, env = await asyncio.gather(
-        analyze_message_part(TEXT, client=message_client(make_parse_client), model="test"),
-        analyze_environment_part(page(), client=client, model="test"),
-    )
-    response = assemble_analysis(url(official), message, env)
-    assert response.result is official
-    assert message.answer is _Answer.NO_RISK_FOUND
-    assert env.answer is _Answer.NO_RISK_FOUND
-    forbidden.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@
 from urllib.parse import urlsplit
 
 import pytest
+from fastapi.testclient import TestClient
 
 import main
 from ai.case import MessageRuntime, analyze_message_case
@@ -72,3 +73,24 @@ def offline_message_case(monkeypatch):
         return await analyze_message_case(text, **kwargs)
 
     monkeypatch.setattr(main, "analyze_message_case", offline)
+
+
+@pytest.fixture(autouse=True)
+def clean_job_state():
+    """테스트마다 Job 저장소와 실행 중 사용자 목록을 비운다.
+
+    객체를 바꿔 끼우지 않고 그 자리에서 비운다. 저장소를 다른 모듈로 옮겨도
+    `main.ANALYSIS_JOBS` 와 같은 객체라 테스트가 그대로 돈다.
+    """
+
+    main.ANALYSIS_JOBS.clear()
+    main.RUNNING_USERS.clear()
+    yield
+    main.ANALYSIS_JOBS.clear()
+    main.RUNNING_USERS.clear()
+
+
+@pytest.fixture
+def client():
+    with TestClient(main.app) as test_client:
+        yield test_client

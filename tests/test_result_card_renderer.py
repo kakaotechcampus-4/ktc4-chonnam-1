@@ -9,14 +9,15 @@ test_result_card_selector.py의 몫이라 여기서는 다시 다루지 않는�
 from types import SimpleNamespace
 
 from services import result_card_renderer
+from services import detail_carousel
 from services.result_card_renderer import (
     MAX_CAROUSEL_SIGNAL_ITEMS,
     MAX_CAROUSEL_TOTAL_ITEMS,
     merge_kakao_responses,
     render_detail_carousel,
     render_result_card,
-    _r9_blank_values,
 )
+from services.link_cards import r9_blank_values
 
 from services.chatbot_copy_data import (
     get_message_failure_copy,
@@ -328,7 +329,7 @@ class TestR9BlankValues:
             _part("not_run"),
         )
 
-        values = _r9_blank_values(analysis)
+        values = r9_blank_values(analysis)
 
         assert "- 문자 내용 (문자 분석을 완료하지 못했어요)" in values["unchecked"]
         assert "문자 내용 (문자 분석을 완료하지 못했어요)" not in values["checked"]
@@ -698,7 +699,7 @@ class TestRenderDetailCarouselGuidance:
         )
 
     def test_no_guidance_adds_no_cards(self, monkeypatch):
-        monkeypatch.setattr(result_card_renderer, "find_guidance", lambda payload: [])
+        monkeypatch.setattr(detail_carousel, "find_guidance", lambda payload: [])
 
         carousel = render_detail_carousel(self._analysis())
 
@@ -707,7 +708,7 @@ class TestRenderDetailCarouselGuidance:
 
     def test_verification_kind_uses_text_as_is(self, monkeypatch):
         monkeypatch.setattr(
-            result_card_renderer, "find_guidance",
+            detail_carousel, "find_guidance",
             lambda payload: [_guidance(kind="verification", text="인터넷우체국에서 본인 확인 후 조회하세요.")],
         )
 
@@ -719,7 +720,7 @@ class TestRenderDetailCarouselGuidance:
 
     def test_procedure_kind_formats_source_and_year(self, monkeypatch):
         monkeypatch.setattr(
-            result_card_renderer, "find_guidance",
+            detail_carousel, "find_guidance",
             lambda payload: [_guidance(
                 kind="procedure", text="문자 대신 공식 앱으로 확인하라",
                 source="우정사업본부", published_at="2024-03-06",
@@ -736,7 +737,7 @@ class TestRenderDetailCarouselGuidance:
 
     def test_more_than_three_guidance_items_are_capped(self, monkeypatch):
         monkeypatch.setattr(
-            result_card_renderer, "find_guidance",
+            detail_carousel, "find_guidance",
             lambda payload: [_guidance(text=f"안내{i}") for i in range(5)],
         )
 
@@ -748,7 +749,7 @@ class TestRenderDetailCarouselGuidance:
     def test_long_guidance_text_is_truncated_to_128_chars(self, monkeypatch):
         long_text = "고객센터 " + "0" * 200
         monkeypatch.setattr(
-            result_card_renderer, "find_guidance",
+            detail_carousel, "find_guidance",
             lambda payload: [_guidance(kind="verification", text=long_text, rule_id="synthetic")],
         )
 
@@ -761,7 +762,7 @@ class TestRenderDetailCarouselGuidance:
 
     def test_guidance_items_shrink_the_signal_budget_to_stay_within_ten(self, monkeypatch):
         monkeypatch.setattr(
-            result_card_renderer, "find_guidance",
+            detail_carousel, "find_guidance",
             lambda payload: [_guidance(text=f"안내{i}") for i in range(3)],
         )
         signals = [_signal(evidence=f"증거{i}") for i in range(20)]
@@ -780,7 +781,7 @@ class TestRenderDetailCarouselGuidance:
         def _boom(payload):
             raise RuntimeError("kb unavailable")
 
-        monkeypatch.setattr(result_card_renderer, "find_guidance", _boom)
+        monkeypatch.setattr(detail_carousel, "find_guidance", _boom)
 
         carousel = render_detail_carousel(self._analysis())
 

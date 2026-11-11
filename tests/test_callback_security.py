@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 import main
+from services.kakao_card_renderer import render_card
 from backend.src.server import http_client
 
 
@@ -43,16 +44,12 @@ pytestmark = pytest.mark.asyncio
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch):
-    main.ANALYSIS_JOBS.clear()
-    main.RUNNING_USERS.clear()
     # Exercise real authentication rather than bypassing it with APP_ENV=test.
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("KAKAO_SKILL_SECRET", SECRET)
     monkeypatch.delenv("KAKAO_SKILL_SECRET_PREVIOUS", raising=False)
     monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", ALLOWED_HOST)
     yield
-    main.ANALYSIS_JOBS.clear()
-    main.RUNNING_USERS.clear()
 
 
 @pytest.fixture
@@ -137,7 +134,7 @@ async def test_authenticated_request_with_invalid_callback_is_blocked_without_si
     assert main.ANALYSIS_JOBS == {}
     assert USER not in main.RUNNING_USERS
     assert response.status_code == 200
-    assert response.json() == main.render_card("r4-unavailable")
+    assert response.json() == render_card("r4-unavailable")
 
 
 async def test_unauthenticated_request_is_rejected_before_any_side_effect(monkeypatch, analysis):
