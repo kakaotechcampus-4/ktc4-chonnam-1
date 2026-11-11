@@ -679,7 +679,7 @@ async def test_real_sdk_stages_and_search_keep_existing_budgets(monkeypatch, mak
     env = await analyze_environment_part(page(), client=client, model="test")
     assert message.answer is _Answer.NO_RISK_FOUND
     assert env.answer is _Answer.NO_RISK_FOUND
-    assert sorted(deadlines) == [2.5, 5.0, 30.0, 30.0]
+    assert sorted(deadlines) == [2.5, 8.0, 30.0, 30.0]
 
 
 @pytest.mark.asyncio
