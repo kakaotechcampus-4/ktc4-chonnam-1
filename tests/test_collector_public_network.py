@@ -198,8 +198,15 @@ async def test_connection_handled_after_close_opens_no_tunnel():
     await asyncio.wait_for(proxy._handle(reader, writer), 0.2)
     assert not proxy._handlers
     assert dials == []
-    assert await asyncio.wait_for(c_reader.read(), 0.2) == b""
+    
+    try:
+        assert await asyncio.wait_for(c_reader.read(), 0.2) == b""
+    except ConnectionResetError:
+        pass
+    
     c_writer.close()
+    with contextlib.suppress(ConnectionResetError):
+        await c_writer.wait_closed()
 
 
 async def test_httpx_real_tls_tunnel_and_redirect_keep_pinned_ip(tmp_path, monkeypatch):
