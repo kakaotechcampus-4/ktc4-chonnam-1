@@ -12,9 +12,13 @@
 2. **LLM의 역할은 세 가지뿐이다.** (a) 문자에서 구조화된 정보 추출,
    (b) 관측 자료에서 위험 신호를 **근거와 함께 제안**, (c) 판정 결과를 사람이
    읽을 문장으로 변환. **판정 자체는 하지 않는다.** LLM이 낸 신호는 근거가
-   실제 입력에 존재하는지 검증한 것만 `ai/verdict.py` 의 `decide()` 가 쓴다.
+   실제 입력에 존재하는지 검증한 것만 쓴다. 링크 문자는
+   `ai/pipeline/results.py` 가 검증·조립하고 `services/result_card_selector.py`
+   가 카드를 고른다. 링크 없는 문자와 통화는 `ai/case/verify.py` 를 통과한
+   근거로 `ai/case/message_gate.py`·`gate.py` 가 결론을 낸다.
 3. **LLM이 실패해도 응답은 나가야 한다.** 설명은 부가 기능이다.
-   타임아웃 시 `ai/llm/explain.py` 의 템플릿으로 폴백한다.
+   추출이 실패하면 `fallback_analysis()` 로 빈 결과를 내고 판단 보류 카드로 간다.
+   통화·문자 결론 문장은 LLM 없이 `ai/case/explain.py` 템플릿으로 만든다.
 4. **의존 방향은 `backend` → `ai` 한 방향.** `ai/` 안에서 `server` 를 import 금지.
    `ai/` 는 카카오를 몰라야 한다 (payload, 카드 형식 등).
 

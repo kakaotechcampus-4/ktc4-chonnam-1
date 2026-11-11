@@ -93,7 +93,7 @@ HTTP 수집은 리다이렉트 최대 5홉을 따른다. 브라우저는 설정�
 
 ## 검증
 
-단계 제한은 `main.py`, `scanner/isolation_client.py`,
-`infra/isolation/collector/app.py`, `ai/src/ai/llm/`의 실제 설정을 따른다.
+단계 제한은 `main.py`, `backend/src/server/`(`budgets.py`·`voice_flow.py`·`callback.py`),
+`scanner/isolation_client.py`, `infra/isolation/collector/app.py`, `ai/src/ai/llm/`·`ai/src/ai/case/`의 실제 설정을 따른다.
 현재 측정과 실행하지 못한 항목은
 [자체 URL 수집 전환 검증 기록](experiments/2026-10-17-internal-url-scanner.md)에 남긴다.

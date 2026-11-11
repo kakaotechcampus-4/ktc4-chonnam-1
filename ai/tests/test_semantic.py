@@ -129,3 +129,52 @@ def test_query_embedding_failure_logs_cause_and_elapsed_time(cases_dir, monkeypa
 
     assert re.search(r"query embedding failed: TimeoutError elapsed=\d+\.\d{3}s kind=text", caplog.text)
     assert "우체국" not in caplog.text
+
+
+def _configured(monkeypatch):
+    monkeypatch.setattr(semantic.embedding, "is_configured", lambda: True)
+
+
+def test_index_retry_after_failure_runs_in_background(monkeypatch):
+    """재시도는 요청 스레드에서 돌지 않는다. KB 전체 임베딩이 검색 예산을 넘기기 때문이다."""
+    import threading
+
+    _configured(monkeypatch)
+    release = threading.Event()
+    built = threading.Event()
+    index = semantic.EmbeddingIndex({"A": ((1.0,),)})
+
+    def fail(cases, kind):
+        raise RuntimeError("down")
+
+    def slow_build(cases, kind):
+        release.wait(5)
+        built.set()
+        return index
+
+    monkeypatch.setattr(semantic, "_build", fail)
+    assert semantic.load_index(Path("kb"), "text", ["case"]) is None
+
+    monkeypatch.setattr(semantic, "RETRY_AFTER_S", 0.0)
+    monkeypatch.setattr(semantic, "_build", slow_build)
+
+    # 재시도를 시작한 호출도, 만드는 중에 온 호출도 기다리지 않고 None 을 받는다
+    assert semantic.load_index(Path("kb"), "text", ["case"]) is None
+    assert semantic.load_index(Path("kb"), "text", ["case"]) is None
+    assert not built.is_set()
+
+    release.set()
+    assert built.wait(5)
+    for _ in range(100):
+        if semantic.load_index(Path("kb"), "text", ["case"]) is index:
+            break
+        threading.Event().wait(0.01)
+    assert semantic.load_index(Path("kb"), "text", ["case"]) is index
+
+
+def test_first_index_build_happens_where_it_is_called(monkeypatch):
+    _configured(monkeypatch)
+    index = semantic.EmbeddingIndex({"A": ((1.0,),)})
+    monkeypatch.setattr(semantic, "_build", lambda cases, kind: index)
+
+    assert semantic.load_index(Path("kb"), "voice", ["case"]) is index

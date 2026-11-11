@@ -30,6 +30,12 @@ OFFICIAL_DOMAINS: dict[str, set[str]] = {
     "경동택배": {"kdexp.com"},
     "합동택배": {"hdexp.co.kr"},
     "DHL": {"dhl.com"},
+    # 택배 문자를 많이 보내는 쇼핑몰(#161, ADR 0011). coupa.ng 는 쿠팡 소유라는 공식 근거를 찾지 못해
+    # 여기 넣지 않고 단축 주소로 본다(services/link_resolution.py). 도착 주소가 coupang.com 이면 공식이다
+    "쿠팡": {"coupang.com"},
+    # 대학(#161, ADR 0011). .ac.kr 은 고등교육기관만 등록할 수 있어 소유가 분명하다.
+    # AI 기관 목록(Brand)에 없어 문자에서 읽지 못하므로 주소로 찾는다(brand_for_domain)
+    "전남대학교": {"jnu.ac.kr"},
     # 테스트/예시용 — BE_DOMAIN_MATCH_TASK_GUIDE.md의 필수 테스트 케이스가
     # 이 브랜드를 기준으로 작성되어 있어 그대로 유지한다.
     "NAVER": {"naver.com"},

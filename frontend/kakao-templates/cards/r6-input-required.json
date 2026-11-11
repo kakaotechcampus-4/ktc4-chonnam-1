@@ -5,7 +5,7 @@
       {
         "basicCard": {
           "title": "🔎 사칭이나 요구하는 말을 찾지 못했어요",
-          "description": "기관이나 가족을 내세우거나\n돈·정보·앱 설치를 요구한 말을 찾지 못했어요.\n보낸 사람이 누구인지는 확인하지 못했어요.\n\n나중에 돈을 보내거나 앱을 설치하라고 하면 따르지 마세요.\n확인할 문자나 통화 녹음이 있으면 다시 보내 주세요.",
+          "description": "기관이나 가족을 내세우거나\n돈·정보·앱 설치를 요구한 말을 찾지 못했어요.\n보낸 사람이 누구인지는 확인하지 못했어요.\n\n나중에 돈을 보내거나\n앱을 설치하라고 하면 따르지 마세요.\n확인할 문자나 통화 녹음이 있으면\n다시 보내 주세요.",
           "thumbnail": {
             "imageUrl": "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/frontend/kakao-templates/assets/cards/r6-input-required.png",
             "altText": "녹음이 담긴 말풍선과 휴대폰 화면 옆에서 턱을 괴고 고민하는 경찰 모자 기니피그",

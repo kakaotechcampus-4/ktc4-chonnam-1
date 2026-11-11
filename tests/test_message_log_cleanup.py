@@ -12,8 +12,6 @@ NOTICE = "분석 결과를 찾을 수 없어요. 문자나 통화 녹음을 다�
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch):
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
-    monkeypatch.setattr(main, "RUNNING_USERS", set())
     monkeypatch.setenv("APP_ENV", "staging")
     monkeypatch.setenv("KAKAO_SKILL_SECRET", "synthetic-secret")
     monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "callback.example.test")
@@ -27,10 +25,10 @@ def test_missing_result_notice_accepts_text_or_recording(kind):
         main.ANALYSIS_JOBS["empty"] = {"final_payload": None}
         response = main.handle_detail_carousel("empty")
     elif kind == "missing-voice":
-        response = main.handle_voice_answer("missing", "not_yet")
+        response = main.handle_voice_answer("missing", "not_yet", None)
     else:
         main.ANALYSIS_JOBS["invalid"] = {"analysis_kind": "voice", "final_payload": {"invalid": True}}
-        response = main.handle_voice_answer("invalid", "not_yet")
+        response = main.handle_voice_answer("invalid", "not_yet", None)
     assert response == main.kakao_response(NOTICE)
 
 

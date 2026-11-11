@@ -18,33 +18,6 @@ from pydantic import (
 LOGGER = logging.getLogger(__name__)
 
 
-class ReasonCode(str, Enum):
-    """판정을 올린 **대표 이유** 하나. 근거 전부는 `Verdict.accepted_signals`."""
-
-    NO_URL = "no_url"
-    OFFICIAL_MATCH = "official_match"
-    LOOKALIKE = "lookalike"
-    # 대조를 끝냈고 목록에 없었으며 다른 근거도 없을 때만 씁니다. 대조 자체가
-    # 실패한 UNRESOLVED 에 이 코드를 붙이면 하지 않은 확인을 주장하게 됩니다.
-    NOT_IN_WHITELIST = "not_in_whitelist"
-    OFFICIAL_BUT_RISKY = "official_but_risky"
-    RISK_SIGNAL = "risk_signal"
-    EXPIRED_LINK = "expired_link"
-    UNRESOLVED = "unresolved"
-
-
-@dataclass(frozen=True)
-class Verdict:
-    """백엔드가 판정을 끝낸 결과. ai는 이걸 문장으로 바꾸기만 합니다."""
-
-    reason_code: ReasonCode
-    url: str | None = None
-    official_domain: str | None = None
-    carrier_name: str | None = None
-    final_state: "FinalState | None" = None
-    accepted_signals: "tuple[RiskSignal, ...]" = ()
-
-
 class AnalysisStatus(str, Enum):
     COMPLETED = "completed"
     FALLBACK = "fallback"
@@ -130,6 +103,8 @@ class FailureCode(str, Enum):
     PARTIAL_CONTENT = "partial_content"
 
 
+# 아래 docstring 은 LLM 에 보내는 JSON 스키마와 contracts/schemas 의 description 으로 그대로 나간다.
+# 문구를 바꾸면 추출 평가를 다시 돌려야 한다. 문구 속 decide() 는 지금 없는 옛 판정 함수다.
 class CategoryCode(str, Enum):
     """메시지의 **주제** 분류입니다. 위험 신호가 아닙니다.
 
@@ -355,67 +330,12 @@ class InboundModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-class CheckState(str, Enum):
-    """검사 결과 3분법. 빈 목록으로 '없음'을 추론하면 안 됩니다."""
-
-    FOUND = "found"
-    CHECKED_ABSENT = "checked_absent"
-    UNKNOWN = "unknown"
-
-
-class PageState(str, Enum):
-    RENDERED = "rendered"
-    EXPIRED = "expired"
-    CLOAKED_SUSPECT = "cloaked_suspect"
-    UNREACHABLE = "unreachable"
-
-
-class ObservationStatus(str, Enum):
-    SUCCESS = "success"
-    PARTIAL = "partial"
-    FAILED = "failed"
-    NOT_RUN = "not_run"
-
-
-class CheckResult(InboundModel):
-    state: CheckState
-    items: list[str] = Field(default_factory=list)
-
-
-class UncheckedItem(InboundModel):
-    check: str
-    reason: str
-
-
-class Observations(InboundModel):
-    """urlscan과 격리 서버 결과를 백엔드가 합친 공통 구조."""
-
-    status: ObservationStatus
-    source: str
-    page_state: PageState
-    input_url: str | None = None
-    final_url: str | None = None
-    payload_type: str | None = None
-    checks: dict[str, CheckResult] = Field(default_factory=dict)
-    static_risk_signals: list[str] = Field(default_factory=list)
-    unchecked: list[UncheckedItem] = Field(default_factory=list)
-
-
 class DomainMatch(str, Enum):
     OFFICIAL = "official"
     BRAND_MISMATCH = "brand_mismatch"
     NOT_REGISTERED = "not_registered"
     NO_URL = "no_url"
     UNRESOLVED = "unresolved"
-
-
-class DomainCheck(InboundModel):
-    """백엔드의 화이트리스트 대조 결과. ai는 목록 파일을 읽지 않습니다."""
-
-    match: DomainMatch
-    checked_domain: str | None = None
-    official_domain: str | None = None
-    carrier_name: str | None = None
 
 
 class ScanResult(InboundModel):
@@ -465,8 +385,8 @@ class RiskSignalCode(str, Enum):
     OVERSIZED_PAYLOAD = "oversized_payload"
     PACKER_DETECTED = "packer_detected"
     BRAND_MISMATCH = "brand_mismatch"
-    # decide() 만 발행합니다. 프롬프트에도 싣지 않고, LLM 이 제안하면
-    # verdict.SYNTHETIC_ONLY_CODES 가 버립니다.
+    # LLM 이 제안할 수 없는 코드입니다. 프롬프트에 싣지 않고, 제안하면
+    # SignalItem.reject_expired_link 가 막습니다.
     EXPIRED_LINK = "expired_link"
 
 
@@ -475,6 +395,8 @@ class EvidenceSource(str, Enum):
     OBSERVATION = "observation"
 
 
+# 이 docstring 도 LLM 스키마(SignalProposal)의 description 으로 나간다. 위 CategoryCode 주석과 같은 이유로 그대로 둔다.
+# 지금은 LLM 이 낸 후보일 뿐이고, 근거 확인은 ai/pipeline/results.py 가 한다.
 class RiskSignal(StrictModel):
     """확인된 위험 근거.
 
@@ -643,6 +565,8 @@ class CaseMatch(StrictModel):
     similarity: float
     matched_variant: str
     categories: list[CategoryCode] = Field(default_factory=list)
+    # 사례 레코드의 수법 유형(예: kidnapping). 통화 카드의 "비슷한 사례" 문구에 쓴다(#109). 판정에는 쓰지 않는다
+    type: str = ""
 
 
 class CaseSearchResult(StrictModel):
@@ -653,9 +577,3 @@ class CaseSearchResult(StrictModel):
 # ── 최종 상태 ────────────────────────────────────────────────
 
 
-class FinalState(str, Enum):
-    SMISHING_SUSPECTED = "smishing_suspected"
-    OFFICIAL_DOMAIN = "official_domain"
-    INCONCLUSIVE = "inconclusive"
-    NOT_ANALYZABLE = "not_analyzable"
-    INPUT_REQUIRED = "input_required"

@@ -9,41 +9,43 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from ai.diagnostics import where
 from ai.case.actions import response_actions_for
-from ai.case.lexicon import read_with_lexicon
-from ai.case.message_gate import Q1_ACCEPTED, Q2_OPTIONS, Q2_SETTLED, decide_message
+from ai.case.lexicon import ACCOUNT_LOCK_PATTERN, LOTTERY_PATTERN, read_with_lexicon
+from ai.case.message_gate import MESSENGER_HANDLE, Q1_ACCEPTED, Q2_OPTIONS, Q2_SETTLED, decide_message
 from ai.case.privacy import mask_pii
 from ai.case.types import (
     CheckItem,
     ClaimReadingResult,
+    Evidence,
+    EvidenceCode,
     InputKind,
     MessageCaseResult,
-    OfficialContact,
     Origin,
     QuestionId,
     ReadingSource,
+    Scenario,
     Segment,
     Side,
     UncheckedItem,
     UncheckedReason,
 )
-from ai.case.verify import VerifyResult, verify_call
-from ai.kb.numbers import official_contact
+from ai.case.verify import verify_call
 from ai.kb.search import search_cases
-from ai.llm.claims import TIMEOUT_SECONDS as READ_BUDGET_S
-from ai.llm.claims import read_claims
+from ai.case.claims import TIMEOUT_SECONDS as READ_BUDGET_S
+from ai.case.steps import READ_GRACE_S as _READ_GRACE_S
+from ai.case.steps import SEARCH_BUDGET_S, official_contact_for, read_or_lexicon, search_within
+from ai.case.claims import read_claims
 from ai.types import CaseSearchResult, FailureCode
 
 LOGGER = logging.getLogger(__name__)
 
-SEARCH_BUDGET_S = 2.5
 DEFAULT_TIME_BUDGET_S = 25.0
-# read_claims 가 제 시간 초과에서 스스로 어휘표로 폴백하도록, 바깥 한도는 조금 넉넉히 둔다
-_READ_GRACE_S = 0.5
 # read_message 의 MAX_MESSAGE_CHARS 와 같다. 더 긴 글은 BE 가 먼저 막는다
 MAX_MESSAGE_CHARS = 8192
 
@@ -57,55 +59,32 @@ class MessageRuntime:
     search_cases: Callable[[str], CaseSearchResult] = search_cases
 
 
+# "<받은 문자> 라고 (문자가) 왔는데 <내 질문>" 꼴(#143). 받은 문자를 문장 안에 넣어 보내면 줄 전체가
+# 받는 사람의 말로 읽혀 그 안의 요구·사정이 버려진다. 받은 문자와 질문을 다른 세그먼트로 나눈다
+_REPORTED = re.compile(
+    r"^(?P<message>.+?)\s*(?:이?라고|이렇게|하고)\s*"
+    r"(?:(?:문자|메시지|메세지|카톡|톡|연락)\s*(?:가|이)?\s*)?"
+    r"(?:왔는데|왔어요|왔어|왔습니다|왔네요|왔다|옴|받았는데|받았어요)[.,!?…]*\s*(?P<rest>.*)$"
+)
+
+
+def _split_reported(line: str) -> list[str]:
+    match = _REPORTED.match(line)
+    if match is None:
+        return [line]
+    return [part for part in (match["message"].strip(), match["rest"].strip()) if part]
+
+
 def message_source(text: str) -> ReadingSource:
-    """마스킹한 문자를 줄 단위 세그먼트로 만든다. 문자는 보낸 사람 한 명의 말이라 화자를 나누지 않는다."""
-    lines = [line.strip() for line in mask_pii(text).splitlines()]
+    """마스킹한 문자를 줄 단위 세그먼트로 만든다. 문자는 보낸 사람 한 명의 말이라 화자를 나누지 않는다.
+
+    "~라고 왔는데 ~맞을까?" 처럼 받은 문자를 문장 안에 넣은 줄은 받은 문자와 질문으로 나눈다(#143).
+    """
+    lines = [part for line in mask_pii(text).splitlines() for part in _split_reported(line.strip())]
     return ReadingSource(
         kind=InputKind.TEXT,
         segments=[Segment(side=Side.UNKNOWN, text=line) for line in lines if line],
     )
-
-
-async def _search(
-    runtime: MessageRuntime, text: str, timeout_s: float
-) -> tuple[CaseSearchResult | None, UncheckedReason | None]:
-    try:
-        found = await asyncio.wait_for(
-            asyncio.to_thread(runtime.search_cases, text), timeout=timeout_s
-        )
-        return found, None
-    except asyncio.CancelledError:
-        raise
-    except TimeoutError:
-        return None, UncheckedReason.TIMEOUT
-    except Exception as exc:
-        LOGGER.warning("message case search failed: %s", type(exc).__name__)
-        return None, UncheckedReason.FAILED
-
-
-async def _read(
-    runtime: MessageRuntime, source: ReadingSource, timeout_s: float
-) -> ClaimReadingResult:
-    try:
-        return await asyncio.wait_for(runtime.read_claims(source), timeout=timeout_s)
-    except asyncio.CancelledError:
-        raise
-    except TimeoutError:
-        failure = FailureCode.TIMEOUT
-    except Exception as exc:
-        LOGGER.warning("message claims reading failed: %s", type(exc).__name__)
-        failure = FailureCode.LLM_ERROR
-    return read_with_lexicon(source, failure)
-
-
-def _official_contact(verify: VerifyResult) -> OfficialContact | None:
-    """받아들인 기관 주장 중 대표번호 KB 에 있는 첫 기관. 번호는 KB 에서만 온다."""
-    for ident in verify.claims.identity:
-        if ident.listed_institution:
-            contact = official_contact(ident.name) or official_contact(ident.quote)
-            if contact:
-                return contact
-    return None
 
 
 async def analyze_message_case(
@@ -113,23 +92,27 @@ async def analyze_message_case(
     *,
     runtime: MessageRuntime | None = None,
     time_budget_s: float = DEFAULT_TIME_BUDGET_S,
+    has_link: bool = False,
 ) -> MessageCaseResult:
     """링크 없는 문자를 분석한다. 질문으로 멈추지 않고 늘 결과를 낸다.
+
+    has_link=True 면 링크가 있는 문자의 본문을 같은 규칙으로 읽는다(#89). BE 는 링크 결과가 판단
+    보류일 때만 부르며, 이 결과로 판단 보류 카드의 주의 갈래를 고른다. 링크 판정은 바꾸지 않는다.
 
     BE 는 링크가 없다고 확인된 문자(read_message 가 성공했고 links·unverified_links 가 비었음)만
     넘긴다. 예기치 못한 오류가 나도 예외 대신 분석 불가 결과를 돌려준다(CancelledError 만 올린다).
     """
     try:
-        return await _analyze(text, runtime or MessageRuntime(), time_budget_s)
+        return await _analyze(text, runtime or MessageRuntime(), time_budget_s, has_link)
     except asyncio.CancelledError:
         raise
-    except Exception as exc:
-        LOGGER.warning("message analysis failed: %s", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 — 분석의 맨 바깥이다. 예외 대신 분석 불가 결과를 돌려준다 (원칙 3)
+        LOGGER.warning("message analysis failed: %s", where(exc))
         return decide_message(accepted=None, failures=[FailureCode.MISSING_RESULT])
 
 
 async def _analyze(
-    text: str, runtime: MessageRuntime, time_budget_s: float
+    text: str, runtime: MessageRuntime, time_budget_s: float, has_link: bool = False
 ) -> MessageCaseResult:
     started = time.monotonic()
 
@@ -147,9 +130,9 @@ async def _analyze(
 
     try:
         source = message_source(text)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — 가리지 못한 글은 읽기·검색에 넘기지 않고 분석 불가로 끝낸다
         # 가리지 못한 문자는 읽기·검색에 넘기지 않는다
-        LOGGER.warning("message masking failed: %s", type(exc).__name__)
+        LOGGER.warning("message masking failed: %s", where(exc))
         return decide_message(accepted=None, failures=[FailureCode.MISSING_RESULT])
 
     failures: list[FailureCode] = []
@@ -160,8 +143,10 @@ async def _analyze(
     else:
         query = "\n".join(seg.text for seg in source.segments)
         reading, (similar, search_miss) = await asyncio.gather(
-            _read(runtime, source, min(READ_BUDGET_S + _READ_GRACE_S, remaining())),
-            _search(runtime, query, min(SEARCH_BUDGET_S, remaining())),
+            read_or_lexicon(
+                runtime.read_claims, source, min(READ_BUDGET_S + _READ_GRACE_S, remaining()), label="message",
+            ),
+            search_within(runtime.search_cases, query, min(SEARCH_BUDGET_S, remaining()), label="message"),
         )
 
     if reading.reading is None:
@@ -177,8 +162,8 @@ async def _analyze(
             derived_by="lexicon" if reading.status == "fallback" else "llm",
             origin=Origin.MESSAGE,
         )
-    except Exception as exc:
-        LOGGER.warning("message claims verification failed: %s", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 — 검증이 깨지면 읽은 주장을 쓰지 않고 분석 불가로 끝낸다
+        LOGGER.warning("message claims verification failed: %s", where(exc))
         return decide_message(
             accepted=None,
             similar=similar,
@@ -187,14 +172,14 @@ async def _analyze(
         )
 
     try:
-        contact = _official_contact(verify)
-    except Exception as exc:
+        contact = official_contact_for(verify)
+    except Exception as exc:  # noqa: BLE001 — 확인 안내는 부가 정보다. 못 찾아도 결론은 낸다
         # 확인 안내는 부가 정보다. 못 찾으면 FE 가 일반 문장을 쓴다
-        LOGGER.warning("official contact lookup failed: %s", type(exc).__name__)
+        LOGGER.warning("official contact lookup failed: %s", where(exc))
         contact = None
 
     return decide_message(
-        accepted=verify.accepted,
+        accepted=_with_lock_lure(source, _with_handle_line(source, verify.accepted), has_link),
         claims=verify.claims,
         rejected=verify.rejected,
         similar=similar,
@@ -202,7 +187,56 @@ async def _analyze(
         official_contact=contact,
         failures=failures,
         reading_status=reading.status,
+        has_link=has_link,
     )
+
+
+# 링크가 있는 문자에서만 쓰는 미끼 어휘표와 근거 코드 (#160)
+_LINK_LURES = (
+    (ACCOUNT_LOCK_PATTERN, EvidenceCode.ACCOUNT_LOCK_LURE),
+    (LOTTERY_PATTERN, EvidenceCode.LOTTERY_LURE),
+)
+
+
+def _with_lock_lure(
+    source: ReadingSource, accepted: list[Evidence], has_link: bool
+) -> list[Evidence]:
+    """링크가 있는 문자에서 미끼 줄을 어휘표로 찾아 근거로 덧붙인다 (#160-2·4).
+
+    LLM 은 "일시동결 되었습니다" 를 명분으로만 읽고 "해지해주세요" 를 요구로 읽지 않으며,
+    "[로)1179회 2,등 발송오류" 같은 로또 미끼는 주장·요구가 없어 아무것도 읽지 않는다.
+    판정은 이 근거를 보고 게이트가 한다. 링크가 없으면 쓰지 않는다(링크로 끌어들이는 수법이다).
+    미끼 종류마다 첫 줄 하나만 근거로 남긴다.
+    """
+    if not has_link:
+        return accepted
+    found = []
+    for pattern, code in _LINK_LURES:
+        line = next((seg.text for seg in source.segments if pattern.search(seg.text)), None)
+        if line is not None:
+            found.append(Evidence(
+                code=code, origin=Origin.MESSAGE, quote=line,
+                derived_by="lexicon", counts_for_floor=False,
+            ))
+    return [*accepted, *found]
+
+
+def _with_handle_line(source: ReadingSource, accepted: list[Evidence]) -> list[Evidence]:
+    """메신저 이동 인용에 아이디가 빠졌으면 같은 줄의 아이디를 근거로 덧붙인다.
+
+    LLM 은 "제 라인 추가해 주세요" 만 인용하고 같은 줄 끝의 "zxf226" 을 빼기도 한다.
+    게이트는 근거만 보고 다시 돌므로(답 처리) 아이디가 든 줄을 근거로 남겨 둔다.
+    """
+    moves = [e for e in accepted if e.code == EvidenceCode.MESSENGER_MOVE and e.quote]
+    if not moves or any(MESSENGER_HANDLE.search(e.quote) for e in moves):
+        return accepted
+    for seg in source.segments:
+        if MESSENGER_HANDLE.search(seg.text) and any(e.quote in seg.text for e in moves):
+            return [*accepted, Evidence(
+                code=EvidenceCode.MESSENGER_MOVE, origin=Origin.MESSAGE, quote=seg.text,
+                derived_by="code", counts_for_floor=False,
+            )]
+    return accepted
 
 
 def _search_miss(result: MessageCaseResult) -> UncheckedReason | None:
@@ -260,4 +294,5 @@ def apply_message_answer(
         answers=answers,
         failures=result.failures,
         reading_status=result.reading_status,
+        has_link=result.scenario == Scenario.LINK_SMISHING,
     )

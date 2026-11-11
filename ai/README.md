@@ -47,23 +47,12 @@ links = [link.url for link in reading.links]
 
 ## 판정
 
-```python
-from ai.kb.search import search_cases
-from ai.llm import analyze_message, explain_verdict, extract_signals
-from ai.verdict import decide
+링크 문자는 `ai.pipeline` 의 `analyze_message_part()` → `finalize_analysis()` 가 결과를 조립한다.
+LLM 이 낸 신호는 근거가 실제 입력에 있는 것만 `pipeline/results.py` 가 채택한다.
+링크 없는 문자와 통화는 `ai.case` 의 `verify.py` 를 통과한 근거로 `message_gate.py`·`gate.py` 가 결론을 낸다.
+공식 주소 대조는 백엔드가 해서 넘긴다. AI는 화이트리스트 파일을 읽지 않고 스캐너를 부르지 않는다.
 
-extracted = await analyze_message(masked_text)
-cases = search_cases(masked_text)
-signals = await extract_signals(masked_text, extracted, observations)
-verdict = decide(masked_text, extracted, domain_check, observations, signals)
-text = await explain_verdict(verdict, observations, cases)
-```
-
-`decide()` 는 LLM도 네트워크도 없는 순수함수다. `domain_check` 와 `observations`
-는 백엔드가 만들어 넘긴다. AI는 화이트리스트 파일을 읽지 않고 스캐너를 부르지 않는다.
-
-RAG 유사도, 스캐너 점수, 주제 분류는 판정 입력에서 제외한다. LLM이 제안한 신호는
-근거가 실제 입력에 존재하는 것만 채택한다.
+RAG 유사도와 주제 분류는 판정 입력에서 제외한다.
 
 ## 최소 스미싱 시나리오 검증
 

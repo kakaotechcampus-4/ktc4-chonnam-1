@@ -50,10 +50,10 @@ def test_example_file_must_be_filled():
 def test_render_writes_compose_and_ips(tmp_path):
     (tmp_path / "egress-hosts").write_text("bit.ly 67.199.248.10\nme2.do 67.199.248.10\nnaver.me 223.130.200.107\n")
     assert render_module["main"](str(tmp_path)) == 0
-    compose = (tmp_path / "compose.egress.yaml").read_text()
+    compose = (tmp_path / "compose.egress.yaml").read_text(encoding="utf-8")
     assert '- "bit.ly:67.199.248.10"' in compose
     assert 'COLLECTOR_ALLOWED_HOSTS: "bit.ly,me2.do,naver.me"' in compose
-    assert (tmp_path / "egress-ips.txt").read_text() == "67.199.248.10\n223.130.200.107\n"
+    assert (tmp_path / "egress-ips.txt").read_text(encoding="utf-8") == "67.199.248.10\n223.130.200.107\n"
 
 
 def test_render_fails_without_touching_files(tmp_path):

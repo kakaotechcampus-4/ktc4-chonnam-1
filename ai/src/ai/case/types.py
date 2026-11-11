@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import Field, ValidationInfo, field_validator
 
+from ai.kb.numbers import NumberCheck, OfficialContact
 from ai.types import CaseSearchResult, FailureCode, LinkCandidate, LLMAnswer, StrictModel
 
 
@@ -87,6 +88,10 @@ class EvidenceCode(str, Enum):
     REMOTE_APP_MENTION = "remote_app_mention"
     CALL_REQUEST = "call_request"
     MESSENGER_MOVE = "messenger_move"
+    # 링크가 있는 문자 전용(#160): 계정·지갑을 정지·동결했다며 해지·해제를 요구한다. 어휘표로만 낸다
+    ACCOUNT_LOCK_LURE = "account_lock_lure"
+    # 링크가 있는 문자 전용(#160-2): 로또 회차·당첨을 내세운 미끼. 어휘표로만 낸다
+    LOTTERY_LURE = "lottery_lure"
     # Q2 답 근거 (v3 §7.1). user_not_person 만 하한(L-4)에 쓴다
     USER_NOT_PERSON = "user_not_person"
     USER_IS_PERSON = "user_is_person"
@@ -305,27 +310,6 @@ class ClaimView(StrictModel):
     pretexts: list[str] = Field(default_factory=list)
     demands: list[ClaimViewDemand] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
-
-
-class NumberCheck(StrictModel):
-    """상대가 말한 번호를 내세운 기관의 공식 대표번호와 맞춰 본 결과 (v3 §6.3)."""
-
-    number: str
-    org: str
-    # org_not_listed: 대표번호 KB 에 없는 기관. 공식이 아니라는 뜻이 아니다
-    result: Literal["official", "not_official", "org_not_listed"]
-    source_url: str | None = None
-
-
-class OfficialContact(StrictModel):
-    """상대가 내세운 기관의 공식 대표번호. V1 확인 안내(`verify_line`)에 쓴다.
-
-    번호는 대표번호 KB 에서만 온다. 녹음 속 번호는 사기범 번호일 수 있어 쓰지 않는다.
-    """
-
-    org: str
-    number: str
-    source_url: str
 
 
 class VoiceCaseResult(StrictModel):

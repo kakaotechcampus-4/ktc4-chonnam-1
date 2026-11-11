@@ -22,7 +22,7 @@ async def test_existing_result_button_opens_the_saved_analysis(monkeypatch, has_
         "env": {"answer": "not_run", "details": {"reason": {"failures": ["missing_result"]}}},
     }
     monkeypatch.setenv("APP_ENV", "test")
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {
+    main.ANALYSIS_JOBS.update({
         "parcel-job": {"user_id": "parcel-user", "status": "completed", "final_payload": payload},
     })
     result = render_result_card(payload, job_id="parcel-job")
@@ -47,4 +47,8 @@ async def test_existing_result_button_opens_the_saved_analysis(monkeypatch, has_
     if has_signal:
         assert "앱을 설치해 주세요" in descriptions
     else:
-        assert len(items) == 2  # 확인 범위 + 행동 안내. 다른 분석 결과가 섞이지 않는다.
+        # D19 판단 보류 상세 + 확인 범위 + 행동 안내. 다른 분석 결과가 섞이지 않는다.
+        assert [item["title"] for item in items] == [
+            "📩 문자에 적힌 내용", "✅ 확인한 것", "❌ 확인하지 못한 것",
+            "📋 확인 범위", "📵 문자 속 링크에 접속하지 마세요",
+        ]

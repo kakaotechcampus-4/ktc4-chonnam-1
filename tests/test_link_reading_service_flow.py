@@ -14,6 +14,7 @@ from openai import AsyncOpenAI
 import ai.llm.page as page_llm
 import ai.pipeline.analysis as message_pipeline
 import main
+from services.kakao_card_renderer import render_card
 from scanner.isolation_client import collect_url_isolated
 
 
@@ -41,8 +42,6 @@ async def _run(monkeypatch, utterance, llm_urls, *, html="<p>배송 조회 안�
     monkeypatch.setenv("LLM_MODEL", "test")
     monkeypatch.setenv("ISOLATION_API_URL", "https://collector.example")
     monkeypatch.setenv("ISOLATION_API_TOKEN", "synthetic-collector-token")
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
-    monkeypatch.setattr(main, "RUNNING_USERS", set())
     calls = {"extract": 0, "llm": 0, "callback": 0}
     collected = []
 
@@ -101,7 +100,7 @@ async def _run(monkeypatch, utterance, llm_urls, *, html="<p>배송 조회 안�
                                     "callbackUrl": "https://bot-api.kakao.com/callback/synthetic"},
                 })
     # 링크가 있든 없든 첫 응답은 대기 카드다
-    assert response.json() == main.render_card("r5-analyzing")
+    assert response.json() == render_card("r5-analyzing")
     job = main.find_latest_job_by_user(USER)
     assert job["status"] == "completed"
     assert calls["callback"] == 1
@@ -117,7 +116,7 @@ def _texts(result):
 async def test_message_without_links_gets_no_link_card(monkeypatch):
     job, calls, collected = await _run(monkeypatch, SENDER + "오늘 중 배송 예정입니다.", [])
 
-    assert job["result"] == main.render_card("r6-input-required")
+    assert job["result"] == render_card("r6-input-required")
     assert collected == []
     assert calls["extract"] == 1
 
@@ -134,7 +133,7 @@ async def test_unread_link_is_never_no_link_or_official(monkeypatch, text, urls)
     job, calls, collected = await _run(monkeypatch, text, urls)
 
     assert _texts(job["result"]) == [main._UNREAD_LINKS_TEXT]
-    assert job["result"] != main.render_card("r6-input-required")
+    assert job["result"] != render_card("r6-input-required")
     # 고치거나 잘라 낸 주소로 수집·공식 대조를 하지 않는다
     assert collected == []
     assert job["final_payload"] is None
@@ -187,7 +186,7 @@ async def test_official_link_still_confirms(monkeypatch):
 async def test_failed_reading_is_unavailable_not_no_link(monkeypatch, failure):
     job, calls, collected = await _run(monkeypatch, SENDER + "https://evil.top/a", failure)
 
-    assert job["result"] == main.render_card("r4-unavailable")
+    assert job["result"] == render_card("r4-unavailable")
     assert collected == []
     assert calls["extract"] == 1
 
@@ -235,7 +234,7 @@ async def test_multi_link_notice_reaches_callback_within_output_limit(
     assert calls["extract"] == 1
     assert collected == ([] if failure else links)
     if failure:
-        assert response == main.render_card("r4-unavailable")
+        assert response == render_card("r4-unavailable")
         assert job["final_payload"] is None
     elif not links:
         assert _texts(response) == [main._UNREAD_LINKS_TEXT]
@@ -254,7 +253,7 @@ async def test_multi_link_notice_reaches_callback_within_output_limit(
         cards = outputs[int(unverified):]
         assert len(cards) == expected_count
         # Real response parsing, collection, official-domain verdict and rendering.
-        assert all(card == main.render_card("r2-official", {
+        assert all(card == render_card("r2-official", {
             "org_name": "CJ대한통운", "official_url": "https://cjlogistics.com",
         })["template"]["outputs"][0] for card in cards)
         assert job["final_payload"]["url"]["official"] == "official"

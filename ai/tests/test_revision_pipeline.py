@@ -17,7 +17,7 @@ from ai.types import (
     SignalAnalysis, SignalProposal, Topic,
 )
 
-from ai.types import AnswerState as _Answer, DomainMatch as _Domain
+from ai.types import AnswerState as _Answer
 
 INCOMPLETE = {_Answer.PARTIAL, _Answer.FAILED, _Answer.NOT_RUN}
 
@@ -74,7 +74,6 @@ async def test_successful_no_match_is_not_retrieval_failure(monkeypatch):
     assert first_doubt(part) is MessageDoubt.PARCEL_LOOKUP
     assert signals.await_args.kwargs["case_search"].status is AnalysisStatus.COMPLETED
     assert signals.await_args.kwargs["case_search"].matches == []
-    assert signals.await_args.args[2] is None
 
 
 @pytest.mark.asyncio
@@ -286,7 +285,8 @@ async def test_missing_model_closes_owned_client_without_sdk_calls(entrypoint, m
     part = (await module.analyze_message_part(TEXT) if entrypoint == "message"
         else await module.analyze_environment_part(page()))
     assert part.answer in INCOMPLETE
-    assert client.closed
+    # 페이지 단계는 모델 설정을 먼저 확인해 클라이언트를 만들지 않고 멈춘다. 만든 것은 닫혀 있어야 한다
+    assert client.closed or not factory.called
     assert client.calls == []
 
 

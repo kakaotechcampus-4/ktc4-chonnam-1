@@ -13,6 +13,7 @@ from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from ai.diagnostics import where
 from ai.case import forms
 from ai.case.attach_gate import attach_score, load_model
 from ai.case.gate import decide_call
@@ -24,7 +25,6 @@ from ai.case.types import (
     IdentityKind,
     InputKind,
     NumberCheck,
-    OfficialContact,
     ReadingSource,
     Scenario,
     TranscriptResult,
@@ -35,18 +35,17 @@ from ai.case.types import (
 )
 from ai.case.verify import VerifyResult, verify_call
 from ai.kb import search
-from ai.kb.numbers import check_phone_number, find_numbers, official_contact, resolve_org
+from ai.kb.numbers import check_phone_number, find_numbers, resolve_org
 from ai.kb.search import search_voice_cases
-from ai.llm.claims import TIMEOUT_SECONDS as READ_BUDGET_S
-from ai.llm.claims import read_claims
+from ai.case.claims import TIMEOUT_SECONDS as READ_BUDGET_S
+from ai.case.steps import READ_GRACE_S as _READ_GRACE_S
+from ai.case.steps import SEARCH_BUDGET_S, official_contact_for, read_or_lexicon, search_within
+from ai.case.claims import read_claims
 from ai.types import CaseSearchResult, FailureCode
 
 LOGGER = logging.getLogger(__name__)
 
-SEARCH_BUDGET_S = 2.5
 DEFAULT_TIME_BUDGET_S = 40.0
-# read_claims 가 제 시간 초과에서 스스로 어휘표로 폴백하도록, 바깥 한도는 조금 넉넉히 둔다
-_READ_GRACE_S = 0.5
 MAX_NUMBER_CHECKS = 2
 
 
@@ -95,8 +94,8 @@ def warm_up_voice_case_search() -> CaseSearchResult:
     result = search.warm_up_voice_case_search()
     try:
         load_model()
-    except Exception as exc:
-        LOGGER.warning("voice gate warm-up failed: %s", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 — 관문 모델 워밍업이 실패해도 서버는 뜬다. 요청 때 사례 미첨부로 처리된다
+        LOGGER.warning("voice gate warm-up failed: %s", where(exc))
     return result
 
 
@@ -128,38 +127,6 @@ def _set_unchecked(
     result.unchecked.append(entry)
 
 
-async def _search(
-    runtime: VoiceRuntime, text: str, timeout_s: float
-) -> tuple[CaseSearchResult | None, UncheckedReason | None]:
-    try:
-        found = await asyncio.wait_for(
-            asyncio.to_thread(runtime.search_cases, text), timeout=timeout_s
-        )
-        return found, None
-    except asyncio.CancelledError:
-        raise
-    except TimeoutError:
-        return None, UncheckedReason.TIMEOUT
-    except Exception as exc:
-        LOGGER.warning("voice case search failed: %s", type(exc).__name__)
-        return None, UncheckedReason.FAILED
-
-
-async def _read(
-    runtime: VoiceRuntime, source: ReadingSource, timeout_s: float
-) -> ClaimReadingResult:
-    try:
-        return await asyncio.wait_for(runtime.read_claims(source), timeout=timeout_s)
-    except asyncio.CancelledError:
-        raise
-    except TimeoutError:
-        failure = FailureCode.TIMEOUT
-    except Exception as exc:
-        LOGGER.warning("voice claims reading failed: %s", type(exc).__name__)
-        failure = FailureCode.LLM_ERROR
-    return read_with_lexicon(source, failure)
-
-
 def _check_numbers(
     runtime: VoiceRuntime, source: ReadingSource, verify: VerifyResult
 ) -> tuple[list[NumberCheck], bool]:
@@ -186,8 +153,8 @@ def _check_numbers(
     for number in find_numbers(other_text)[:MAX_NUMBER_CHECKS]:
         try:
             checks.append(runtime.check_phone_number(number, org))
-        except Exception as exc:
-            LOGGER.warning("phone number check failed: %s", type(exc).__name__)
+        except Exception as exc:  # noqa: BLE001 — 번호 대조는 보조 근거다. 실패하면 미확인으로 남긴다
+            LOGGER.warning("phone number check failed: %s", where(exc))
             failed = True
     return checks, failed
 
@@ -222,19 +189,6 @@ def _log_reading(
     )
 
 
-def _official_contact(verify: VerifyResult) -> OfficialContact | None:
-    """받아들인 기관 주장 중 대표번호 KB 에 있는 첫 기관. V1 확인 안내에 쓴다.
-
-    번호는 KB 에서만 온다. 누가 말했는지와 상관없이 공식 번호로 직접 확인하라는 안내다.
-    """
-    for ident in verify.claims.identity:
-        if ident.listed_institution:
-            contact = official_contact(ident.name) or official_contact(ident.quote)
-            if contact:
-                return contact
-    return None
-
-
 async def analyze_call(
     transcript: TranscriptResult,
     *,
@@ -249,8 +203,8 @@ async def analyze_call(
         return await _analyze(transcript, runtime, time_budget_s)
     except asyncio.CancelledError:
         raise
-    except Exception as exc:
-        LOGGER.warning("voice analysis failed: %s", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 — 분석의 맨 바깥이다. 예외 대신 분석 불가 결과를 돌려준다 (원칙 3)
+        LOGGER.warning("voice analysis failed: %s", where(exc))
         return VoiceCaseResult(
             scenario=Scenario.VOICE_PHISHING,
             conclusion=Conclusion.NOT_ANALYZABLE,
@@ -304,9 +258,9 @@ async def _analyze(
     try:
         masked = mask_transcript(transcript)
         source = ReadingSource(kind=InputKind.AUDIO, segments=masked.segments)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — 가리지 못한 글은 읽기·검색에 넘기지 않고 분석 불가로 끝낸다
         # 가리지 못한 대본은 읽기·검색에 넘기지 않는다
-        LOGGER.warning("transcript masking failed: %s", type(exc).__name__)
+        LOGGER.warning("transcript masking failed: %s", where(exc))
         return _not_analyzed(failures)
 
     if remaining() <= 0:
@@ -323,10 +277,13 @@ async def _analyze(
     # 사례 데이터에 화자 표기가 없어서 질의는 마스킹 대본 전체다 (Task 6)
     query = "\n".join(seg.text for seg in source.segments)
     reading, (similar, search_miss) = await asyncio.gather(
-        _read(
-            runtime, source, min(READ_BUDGET_S + _READ_GRACE_S, max(remaining(), 0.0))
+        read_or_lexicon(
+            runtime.read_claims, source,
+            min(READ_BUDGET_S + _READ_GRACE_S, max(remaining(), 0.0)), label="voice",
         ),
-        _search(runtime, query, min(SEARCH_BUDGET_S, max(remaining(), 0.0))),
+        search_within(
+            runtime.search_cases, query, min(SEARCH_BUDGET_S, max(remaining(), 0.0)), label="voice",
+        ),
     )
 
     if reading.reading is None:
@@ -340,8 +297,8 @@ async def _analyze(
             reading.reading,
             derived_by="lexicon" if reading.status == "fallback" else "llm",
         )
-    except Exception as exc:
-        LOGGER.warning("claims verification failed: %s", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 — 검증이 깨지면 읽은 주장을 쓰지 않고 분석 불가로 끝낸다
+        LOGGER.warning("claims verification failed: %s", where(exc))
         result = _not_analyzed(failures)
         if search_miss is not None:
             _set_unchecked(result, UncheckedItem.SIMILAR_CASES, search_miss)
@@ -353,8 +310,8 @@ async def _analyze(
     if not number_timeout:
         try:
             number_checks, number_failed = _check_numbers(runtime, source, verify)
-        except Exception as exc:
-            LOGGER.warning("number step failed: %s", type(exc).__name__)
+        except Exception as exc:  # noqa: BLE001 — 번호 단계가 통째로 실패해도 결론은 낸다
+            LOGGER.warning("number step failed: %s", where(exc))
             number_checks, number_failed = [], True
 
     result = decide_call(
@@ -367,10 +324,10 @@ async def _analyze(
     )
     _log_reading(reading, verify, result)
     try:
-        result.official_contact = _official_contact(verify)
-    except Exception as exc:
+        result.official_contact = official_contact_for(verify)
+    except Exception as exc:  # noqa: BLE001 — 확인 안내는 부가 정보다. 못 찾아도 결론은 낸다
         # 확인 안내는 부가 정보다. 못 찾으면 FE 가 일반 문장을 쓴다
-        LOGGER.warning("official contact lookup failed: %s", type(exc).__name__)
+        LOGGER.warning("official contact lookup failed: %s", where(exc))
     if search_miss is not None:
         _set_unchecked(result, UncheckedItem.SIMILAR_CASES, search_miss)
     if number_timeout:

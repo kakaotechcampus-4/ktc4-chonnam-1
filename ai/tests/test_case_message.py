@@ -573,3 +573,203 @@ async def test_sentence_not_from_impersonator_gets_no_caution(sentence, reading,
     r = await _analyze(sentence, reading if path == "llm" else None)
     assert r.caution is False
     assert _q(r) == {}
+
+
+# ── #160: 모르는 사람이 메신저로 옮기라는 문자 ─────────────────
+
+STRANGER_MESSENGER = (
+    "퇴근 후에 좀 쉬고 싶으신가요?\n고르실 사진 보내드릴테니 제 라인 추가해 주세요 : zxf226"
+)
+STRANGER_MESSENGER_READING = {
+    "demands": [{"kind": "move_messenger", "quote": "제 라인 추가해 주세요"}],
+}
+
+
+async def test_stranger_messenger_move_is_caution_without_q2():
+    r = await _analyze(STRANGER_MESSENGER, STRANGER_MESSENGER_READING)
+    assert (r.conclusion, r.caution, r.floors) == (Conclusion.INCONCLUSIVE, True, [])
+    # Q2(원래 번호로 통화)는 지인 주장에만 붙는다
+    assert list(_q(r)) == ["already_acted"]
+
+
+# 가게 광고("채널 추가")는 개인 아이디가 없으니 주의로 올리지 않는다 (#160 수정의 오탐 방지)
+SHOP_AD = "카카오톡 채널 추가하시면 할인 쿠폰을 드려요"
+
+
+async def test_shop_channel_ad_is_not_caution():
+    r = await _analyze(SHOP_AD, {"demands": [{"kind": "move_messenger", "quote": "카카오톡 채널 추가하시면"}]})
+    assert r.caution is False
+
+
+@pytest.mark.parametrize("text", [
+    "[국제발신]\nんな時間に連絡とか、変なタイミングでごめん。…でも今しかなかった。Line : mx5782",
+    '[국제발신]\n은행 여직원 모시겠어요? 추가 후 답장"1" LINE : ck5529',
+    "고수익 부업 안내. 텔레그램 @abc12 로 문의 주세요",
+    "카톡 아이디 happyday 로 친구 추가해 주세요",
+])
+async def test_messenger_handle_spam_is_caution_by_lexicon(text):
+    # LLM 이 실패해도(어휘표) 메신저 아이디로 옮기라는 문자는 주의다
+    r = await _analyze(text, None)
+    assert (r.conclusion, r.caution) == (Conclusion.INCONCLUSIVE, True)
+
+
+async def test_stranger_messenger_caution_survives_q1_answer():
+    # LLM 인용("제 라인 추가해 주세요")에 아이디가 없어도 같은 줄의 아이디를 근거로 남겨 답 뒤에도 주의다
+    r = await _analyze(STRANGER_MESSENGER, STRANGER_MESSENGER_READING)
+    after = apply_message_answer(r, "already_acted", "not_yet")
+    assert (after.conclusion, after.caution) == (Conclusion.INCONCLUSIVE, True)
+
+
+@pytest.mark.parametrize("text", [
+    "내일 회의는 줌으로 진행합니다. 회의 ID: 123 456 7890",
+    "주문하신 상품 영수증 번호 1234-5678-9012-3456 입니다",
+])
+async def test_masked_number_alone_is_not_info_request(text):
+    # 가림 표시(<계좌번호>·<카드번호>)의 글자를 개인정보 요구로 읽지 않는다
+    r = await _analyze(text, None)
+    assert r.caution is False
+    assert all(e.code != E.INFO_REQUEST for e in r.evidence)
+
+
+async def test_real_account_request_with_masked_number_is_still_caution():
+    r = await _analyze("계좌번호 123-456-789012 로 지금 입금해 주세요", None)
+    assert r.caution is True
+
+
+# ── #89: 링크가 있는 문자도 같은 게이트로 주의 갈래를 고른다 ─────────────
+
+LINK_INFO = "[Web발신] 청소행정과입니다. 쓰레기 무단투기 신고가 접수되었습니다. 아래 링크에서 정보를 입력해 주세요"
+LINK_INFO_READING = {
+    "identity": [{"kind": "institution", "name": "청소행정과", "quote": "청소행정과입니다"}],
+    "pretexts": [{"quote": "쓰레기 무단투기 신고가 접수되었습니다"}],
+    "demands": [{"kind": "personal_info", "quote": "아래 링크에서 정보를 입력해 주세요"}],
+}
+
+
+async def test_link_message_puts_dont_click_link_first():
+    r = await analyze_message_case(LINK_INFO, runtime=_runtime(LINK_INFO_READING), has_link=True)
+    assert r.scenario == Scenario.LINK_SMISHING
+    assert r.caution is True
+    assert r.stop_actions[0] == StopAction.DONT_CLICK_LINK
+    assert StopAction.DONT_ENTER_INFO in r.stop_actions
+
+
+async def test_link_message_keeps_link_after_answer():
+    r = await analyze_message_case(LINK_INFO, runtime=_runtime(LINK_INFO_READING), has_link=True)
+    after = apply_message_answer(r, "already_acted", "not_yet")
+    assert after.scenario == Scenario.LINK_SMISHING
+    assert after.stop_actions[0] == StopAction.DONT_CLICK_LINK
+
+
+async def test_no_link_message_never_says_dont_click_link():
+    r = await _analyze(LINK_INFO, LINK_INFO_READING)
+    assert r.scenario == Scenario.IMPERSONATION_NO_LINK
+    assert StopAction.DONT_CLICK_LINK not in r.stop_actions
+
+
+async def test_link_message_without_claims_stays_input_required():
+    # 정상 택배 안내처럼 주장·요구가 없으면 주의로 올리지 않는다
+    r = await analyze_message_case("[CJ대한통운] 오늘 배송 예정입니다. 아래 링크에서 조회하세요",
+                                   runtime=_runtime({}), has_link=True)
+    assert r.caution is False
+    assert r.conclusion == Conclusion.INPUT_REQUIRED
+
+
+# ── #160-4: 계정·지갑을 정지·동결했다며 링크로 해지·해제를 요구하는 문자 ──────
+
+LOCK = "[국제발신]\nkyc (Net****pi) 일시동결 되었습니다.고객지원 센터에서 해지해주세요"
+
+
+@pytest.mark.parametrize("reading", [{"pretexts": [{"quote": "kyc (Net****pi) 일시동결 되었습니다"}]}, None],
+                         ids=["llm", "lexicon"])
+async def test_account_lock_lure_with_link_is_caution(reading):
+    r = await analyze_message_case(LOCK, runtime=_runtime(reading), has_link=True)
+    assert (r.conclusion, r.caution) == (Conclusion.INCONCLUSIVE, True)
+    assert any(e.code == E.ACCOUNT_LOCK_LURE for e in r.evidence)
+    assert r.stop_actions[0] == StopAction.DONT_CLICK_LINK
+
+
+async def test_account_lock_lure_survives_answer():
+    r = await analyze_message_case(LOCK, runtime=_runtime({}), has_link=True)
+    after = apply_message_answer(r, "already_acted", "not_yet")
+    assert after.caution is True
+
+
+async def test_account_lock_lure_needs_a_link():
+    # 링크가 없으면 이 근거를 쓰지 않는다(링크로 해지하게 하는 수법). 다른 규칙은 그대로다
+    r = await _analyze(LOCK, {})
+    assert all(e.code != E.ACCOUNT_LOCK_LURE for e in r.evidence)
+
+
+@pytest.mark.parametrize("text", [
+    "카드 분실신고로 사용이 정지되었습니다. 문의는 고객센터로 연락 주세요",
+    "거래정지 해제를 원하시면 가까운 영업점에 방문 바랍니다",
+    "[KB] 해외결제 차단 처리되었습니다. 본인이 아니면 확인 바랍니다",
+])
+async def test_plain_lock_notice_is_not_a_lure(text):
+    r = await analyze_message_case(text, runtime=_runtime({}), has_link=True)
+    assert all(e.code != E.ACCOUNT_LOCK_LURE for e in r.evidence)
+    assert r.caution is False
+
+
+# ── #143: "~라고 왔는데 ~맞을까?" 처럼 받은 문자를 문장 안에 넣어 보내도 같은 결과 ──────
+
+REPORTED_QUOTED = '이런 문자 왔는데 사기야?\n"엄마 나야 폰 고장나서 50만원만 보내줘"'
+REPORTED_INLINE = "엄마 나야 폰 고장나서 50만원만 보내줘 라고 왔는데 우리 딸 맞을까?"
+REPORTED_READING = {
+    "identity": [{"kind": "acquaintance", "name": "자녀", "quote": "엄마 나야"}],
+    "blockers": [{"quote": "폰 고장나서"}],
+    "demands": [{"kind": "money_transfer", "quote": "50만원만 보내줘"}],
+}
+
+
+@pytest.mark.parametrize("reading", [REPORTED_READING, None], ids=["llm", "lexicon"])
+@pytest.mark.parametrize("text", [
+    REPORTED_INLINE,
+    "엄마 나야 폰 고장나서 50만원만 보내줘라고 문자 왔는데 진짜일까요?",
+    "엄마 나야 폰 고장나서 50만원만 보내줘 이렇게 문자가 왔어요. 우리 딸 맞나요?",
+])
+async def test_inline_reported_message_matches_quoted(text, reading):
+    quoted = await _analyze(REPORTED_QUOTED, reading)
+    inline = await _analyze(text, reading)
+    assert (quoted.conclusion, quoted.caution) == (Conclusion.INCONCLUSIVE, True)
+    assert (inline.conclusion, inline.caution) == (quoted.conclusion, quoted.caution)
+    assert list(_q(inline)) == list(_q(quoted)) == ["already_acted", "called_known_number"]
+
+
+@pytest.mark.parametrize("text", [
+    "엄마가 오늘 늦는다고 했어",
+    "보내라고요? 제가 왜요",
+])
+async def test_ordinary_saying_is_not_split_as_reported_message(text):
+    from ai.case.message import message_source
+    assert [s.text for s in message_source(text).segments] == [text]
+
+
+# ── #160-2: 로또 회차·당첨을 내세운 미끼 + 링크 ─────────────────────────────
+
+LOTTERY = "[Web발신]\n[로)1179회 2,등 발송오류\n(또}1180회 살펴주세요"
+
+
+@pytest.mark.parametrize("reading", [{}, None], ids=["llm", "lexicon"])
+async def test_lottery_lure_with_link_is_caution(reading):
+    r = await analyze_message_case(LOTTERY, runtime=_runtime(reading), has_link=True)
+    assert (r.conclusion, r.caution) == (Conclusion.INCONCLUSIVE, True)
+    assert any(e.code == E.LOTTERY_LURE for e in r.evidence)
+    assert r.stop_actions[0] == StopAction.DONT_CLICK_LINK
+
+
+async def test_lottery_lure_needs_a_link():
+    r = await _analyze(LOTTERY, {})
+    assert all(e.code != E.LOTTERY_LURE for e in r.evidence)
+
+
+@pytest.mark.parametrize("text", [
+    "제23회 정기총회 개최 안내",
+    "회원님 3회 연속 출석 이벤트 당첨을 축하합니다",
+    "제 1024회 동창회 모임 공지",
+])
+async def test_ordinary_round_numbers_are_not_lottery_lure(text):
+    r = await analyze_message_case(text, runtime=_runtime({}), has_link=True)
+    assert all(e.code != E.LOTTERY_LURE for e in r.evidence)
+    assert r.caution is False

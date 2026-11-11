@@ -6,6 +6,7 @@ from services.kakao_card_renderer import (
     CardNotFoundError,
     load_card_template,
     render_card,
+    substitute_values,
 )
 
 
@@ -80,3 +81,20 @@ class TestLoadCardTemplate:
 
         title = template["template"]["outputs"][0]["basicCard"]["title"]
         assert "{{ org_name }}" in title
+
+
+class TestSubstituteValues:
+    def test_placeholder_inside_a_value_is_not_substituted_again(self):
+        """사용자 글(통화 인용문 등)에 든 `{{ key }}` 는 글자 그대로 나간다."""
+        text = substitute_values(
+            "{{ quote }} / {{ checked }}",
+            {"quote": "상대가 {{ checked }} 라고 말함", "checked": "확인 목록"},
+        )
+
+        assert text == "상대가 {{ checked }} 라고 말함 / 확인 목록"
+
+    def test_spacing_inside_braces_does_not_matter(self):
+        assert substitute_values("a {{key}} b {{  key  }} c", {"key": "X"}) == "a X b X c"
+
+    def test_whole_placeholder_keeps_value_type(self):
+        assert substitute_values("{{ items }}", {"items": [1, 2]}) == [1, 2]

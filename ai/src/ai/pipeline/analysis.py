@@ -10,8 +10,9 @@ from dataclasses import replace
 
 from openai import APITimeoutError, AsyncOpenAI
 
+from ai.diagnostics import where
 from ai.kb.search import search_cases
-from ai.links import has_link_mark, message_links, remove_spans
+from ai.links import has_link_mark, looks_like_link, message_links, remove_spans
 from ai.llm._client import create_client
 from ai.llm.analyze import TIMEOUT_SECONDS as EXTRACTION_TIMEOUT_SECONDS
 from ai.llm.analyze import analyze_message, fallback_analysis, ground_analysis
@@ -86,7 +87,8 @@ async def read_message(
                 extracted = await analyze_message(
                     text, client=llm, model=model, timeout_s=timeout_s, ground_urls=False)
                 llm_done = time.perf_counter()
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 — 추출이 실패하면 폴백 결과로 간다 (원칙 3)
+            LOGGER.warning("message read failed: %s", where(error))
             extracted = fallback_analysis(_failure_code(error))
     found = message_links(text, extracted.urls)
     if failure is None:
@@ -100,8 +102,10 @@ async def read_message(
     message = remove_spans(text, [span for span, _ in found])
     # A span the model changed or cut short stays out of `links`, and a link it
     # skipped leaves its mark in the body. Neither may read as "no link".
+    # A span with no address shape (a messenger id the model listed) is not a link.
     unverified = (
-        any(span not in text or span in message for span in extracted.urls)
+        any(looks_like_link(span) and (span not in text or span in message)
+            for span in extracted.urls)
         or has_link_mark(message)
     )
     # Links now live in `links`; later steps read only the body without them.
@@ -167,6 +171,8 @@ async def analyze_message_part(
                 if isinstance(result, asyncio.CancelledError):
                     raise result
             if isinstance(search_result, Exception):
+                # 검색 예산 초과·실패를 사례 없음과 구분해 남긴다(#155)
+                LOGGER.warning("message part case search failed: %s", type(search_result).__name__)
                 failure = _failure_code(search_result)
             else:
                 cases = search_result
@@ -176,9 +182,10 @@ async def analyze_message_part(
                 extracted = extraction_result
             if extracted.analysis_status is AnalysisStatus.COMPLETED:
                 signals = await analyze_signals(
-                    text, extracted, None, case_search=cases, client=llm, model=model
+                    text, extracted, case_search=cases, client=llm, model=model
                 )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 — 신호 제안이 실패해도 문자 결과는 낸다 (원칙 3)
+        LOGGER.warning("message part failed: %s", where(error))
         signals = SignalAnalysis(status=AnalysisStatus.FALLBACK, failure=_failure_code(error))
     return build_message_part(text, extracted, cases, signals, failure=failure)
 
@@ -211,7 +218,8 @@ async def analyze_environment_part(
     started = time.perf_counter()
     try:
         analysis = await analyze_page(replace(inspection, failure=None), client=client, model=model)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 — 페이지 분석이 실패해도 HTML 관측은 남긴다 (원칙 3)
+        LOGGER.warning("page analysis failed: %s", where(error))
         analysis = PageAnalysis(status=AnalysisStatus.FALLBACK, failure=_failure_code(error))
     LOGGER.warning(
         "page llm elapsed=%.3fs status=%s failure=%s",

@@ -5,25 +5,15 @@
 """
 
 import pytest
-from fastapi.testclient import TestClient
 
 import main
+from services.result_card_renderer import render_voice_detail_carousel
 
 
 @pytest.fixture(autouse=True)
 def clean_jobs(monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
-    main.ANALYSIS_JOBS.clear()
-    main.RUNNING_USERS.clear()
     yield
-    main.ANALYSIS_JOBS.clear()
-    main.RUNNING_USERS.clear()
-
-
-@pytest.fixture
-def client():
-    with TestClient(main.app) as test_client:
-        yield test_client
 
 
 def _job(job_id: str, final_payload=None, status: str = "completed") -> dict:
@@ -77,14 +67,14 @@ class TestHandleDetailCarousel:
 
         assert "carousel" in response["template"]["outputs"][0]
         items = response["template"]["outputs"][0]["carousel"]["items"]
-        assert len(items) == 2  # 신호 없음 → C2 + C3
+        assert len(items) == 3 + 2  # 신호 없음 → D19 판단 보류 상세 3장 + C2 + C3
 
     def test_voice_detail_is_not_blocked_by_text_link_count(self):
         payload = {"conclusion": "suspected", "claims": {}, "unchecked": []}
         job = _job("voice-job", final_payload=payload)
         job.update(analysis_kind="voice", link_count=3)
 
-        assert main.handle_detail_carousel("voice-job") == main.render_voice_detail_carousel(payload)
+        assert main.handle_detail_carousel("voice-job") == render_voice_detail_carousel(payload)
 
 
 class TestKakaoSkillRoutesClientExtraToDetailCarousel:

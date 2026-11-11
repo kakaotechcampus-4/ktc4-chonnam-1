@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
+import asyncio
 import pytest
 
 import ai.llm.analyze as analyze_module
@@ -233,13 +234,13 @@ async def test_timeout_is_the_callers(monkeypatch):
     factory = Mock(return_value=client)
     monkeypatch.setattr(module, "create_client", factory)
     seen = []
-    real_wait_for = analyze_module.asyncio.wait_for
+    real_wait_for = asyncio.wait_for
 
     async def wait_for(awaitable, timeout):
         seen.append(timeout)
         return await real_wait_for(awaitable, timeout)
 
-    monkeypatch.setattr(analyze_module.asyncio, "wait_for", wait_for)
+    monkeypatch.setattr(asyncio, "wait_for", wait_for)
 
     await read_message(TEXT, model="test", timeout_s=12.0)
 
@@ -255,3 +256,34 @@ async def test_read_message_logs_timings_without_message_text(caplog):
     assert "status=completed failure=None links=1" in caplog.text
     assert "bit.ly" not in caplog.text
     assert "CJ대한통운" not in caplog.text
+
+
+async def test_hangul_link_is_read_not_unverified():
+    # #162: 한글 주소를 버리면 본문에 :// 가 남아 "검사하지 못했어요"가 나갔다
+    text = "[CJ대한통운] 배송정보 조회 안내\nhttp://앱다운.com\n운송장번호 : 601151608872"
+    client = FakeClient(ExtractedMessage(urls=["http://앱다운.com"]))
+
+    reading = await read_message(text, client=client, model="test")
+
+    assert [link.domain for link in reading.links] == ["xn--2j1bu56az1a.com"]
+    assert reading.unverified_links is False
+
+
+@pytest.mark.parametrize("span", ["ck5529", "LINE : ck5529"])
+async def test_messenger_id_span_is_not_unverified(span):
+    # #162: 모델이 메신저 아이디를 링크로 짚어도 주소 모양이 아니면 받지 못한 링크가 아니다
+    text = '[국제발신]\n모시겠어요? 추가 후 답장"1" LINE : ck5529'
+    client = FakeClient(ExtractedMessage(urls=[span]))
+
+    reading = await read_message(text, client=client, model="test")
+
+    assert reading.links == ()
+    assert reading.unverified_links is False
+
+
+@pytest.mark.parametrize("span", ["3.5", "1179.2"])
+async def test_number_span_is_not_unverified(span):
+    reading = await read_message(
+        "3.5kg 상품이 도착했습니다. 1179.2 회차", client=FakeClient(ExtractedMessage(urls=[span])), model="test")
+
+    assert reading.unverified_links is False

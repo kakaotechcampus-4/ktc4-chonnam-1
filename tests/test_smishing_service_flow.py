@@ -30,8 +30,6 @@ async def test_input_callback_details_and_check_result_share_one_analysis(monkey
     monkeypatch.delenv("URLSCAN_API_KEY", raising=False)
     monkeypatch.setenv("ISOLATION_API_URL", "https://collector.example")
     monkeypatch.setenv("ISOLATION_API_TOKEN", "synthetic-collector-token")
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
-    monkeypatch.setattr(main, "RUNNING_USERS", set())
     calls = {"llm": 0, "collect": 0, "callback": 0}
     delivered = []
 

@@ -27,6 +27,7 @@ from ai.case.types import (
 )
 from ai.case.verify import VerifyResult
 from ai.links import spoken_link
+from ai.case.rules import MAX_STOP, Q1_OPTIONS, RISK_DEMANDS, STOP_TABLE, slim
 from ai.types import AnalysisStatus, CaseSearchResult, FailureCode
 
 _E = EvidenceCode
@@ -43,42 +44,9 @@ _L3_DEMANDS = frozenset(
     }
 )
 
-# v3 §7.4 위험 요구
-_RISK_DEMANDS = frozenset(
-    {
-        _E.MONEY_REQUEST,
-        _E.CASH_DELIVERY_REQUEST,
-        _E.GIFT_CARD_REQUEST,
-        _E.AUTH_CODE_REQUEST,
-        _E.INFO_REQUEST,
-        _E.APP_INSTALL_REQUEST,
-        _E.REMOTE_APP_MENTION,
-        _E.CALL_REQUEST,
-    }
-)
 
 # U-5 에서 "요구가 있다"고 보는 코드
-_ANY_DEMAND = _RISK_DEMANDS | {_E.MESSENGER_MOVE}
-
-# v3 §7.5 표 순서. 링크 줄(dont_click_link)은 말로 부른 주소가 있을 때만 맨 앞에 붙는다
-_STOP_TABLE: list[tuple[frozenset[EvidenceCode], StopAction]] = [
-    (frozenset({_E.INFO_REQUEST}), StopAction.DONT_ENTER_INFO),
-    (
-        frozenset({_E.APP_INSTALL_REQUEST, _E.REMOTE_APP_MENTION}),
-        StopAction.DONT_INSTALL_APP,
-    ),
-    (
-        frozenset({_E.MONEY_REQUEST, _E.CASH_DELIVERY_REQUEST}),
-        StopAction.DONT_SEND_MONEY,
-    ),
-    (frozenset({_E.GIFT_CARD_REQUEST}), StopAction.DONT_SEND_GIFT_CARD),
-    (frozenset({_E.AUTH_CODE_REQUEST}), StopAction.DONT_SHARE_AUTH_CODE),
-    (frozenset({_E.CALL_REQUEST}), StopAction.DONT_CALL_NUMBER_IN_MESSAGE),
-]
-_MAX_STOP = 3
-
-# 링크가 없어서 clicked_link 는 없다 (v3 §7.6)
-_Q1_OPTIONS = ["entered_info", "installed_app", "sent_money", "not_yet"]
+_ANY_DEMAND = RISK_DEMANDS | {_E.MESSENGER_MOVE}
 
 
 def _number_evidence(number_checks: list[NumberCheck]) -> list[Evidence]:
@@ -97,11 +65,11 @@ def _number_evidence(number_checks: list[NumberCheck]) -> list[Evidence]:
 
 
 def _stop_actions(codes: set[EvidenceCode], link_spoken: bool = False) -> list[StopAction]:
-    out = [action for trigger, action in _STOP_TABLE if codes & trigger]
+    out = [action for trigger, action in STOP_TABLE if codes & trigger]
     if link_spoken:
         out.insert(0, StopAction.DONT_CLICK_LINK)
     # 통화에서는 끊기가 가장 중요한 행동이라 상한에 잘리지 않게 둘만 고르고 끝에 붙인다
-    return [*out[: _MAX_STOP - 1], StopAction.HANG_UP]
+    return [*out[: MAX_STOP - 1], StopAction.HANG_UP]
 
 
 def _checked_unchecked(
@@ -164,16 +132,6 @@ def _checked_unchecked(
     return checked, unchecked
 
 
-def _slim(similar: CaseSearchResult | None) -> CaseSearchResult | None:
-    """matched_variant 는 대본 통째라 결과에 싣지 않는다. id·유사도만 남긴다."""
-    if similar is None:
-        return None
-    return CaseSearchResult(
-        status=similar.status,
-        matches=[m.model_copy(update={"matched_variant": ""}) for m in similar.matches],
-    )
-
-
 def decide_call(
     *,
     transcript_empty: bool,
@@ -192,7 +150,7 @@ def decide_call(
     common = {
         "scenario": Scenario.VOICE_PHISHING,
         "number_checks": number_checks,
-        "similar_cases": _slim(similar),
+        "similar_cases": slim(similar),
         "checked": checked,
         "unchecked": unchecked,
         "reading_status": reading_status,
@@ -263,7 +221,7 @@ def decide_call(
     else:
         conclusion = Conclusion.INCONCLUSIVE
         caution = bool(
-            codes & _RISK_DEMANDS
+            codes & RISK_DEMANDS
             or unofficial
             or link_spoken
             or _E.INSTITUTION_CLAIM in codes
@@ -277,7 +235,7 @@ def decide_call(
     if conclusion == Conclusion.SUSPECTED or caution:
         questions.append(
             AttachedQuestion(
-                question_id=QuestionId.ALREADY_ACTED, option_ids=list(_Q1_OPTIONS)
+                question_id=QuestionId.ALREADY_ACTED, option_ids=list(Q1_OPTIONS)
             )
         )
 

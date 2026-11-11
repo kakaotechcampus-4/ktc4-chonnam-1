@@ -11,6 +11,8 @@ import httpx
 import pytest
 
 import main
+from services.result_card_renderer import render_detail_carousel, render_result_card
+from services.kakao_card_renderer import render_card
 from ai.types import FailureCode
 from scanner.models import CollectResult
 
@@ -23,8 +25,6 @@ def isolated_state(monkeypatch):
     monkeypatch.setenv("APP_ENV", "staging")
     monkeypatch.setenv("KAKAO_SKILL_SECRET", SECRET)
     monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "bot-api.kakao.com")
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {})
-    monkeypatch.setattr(main, "RUNNING_USERS", set())
 
 
 @pytest.fixture
@@ -86,7 +86,7 @@ async def test_interrupted_reading_is_unavailable_not_no_link(stub_read_message,
 
     response = await main.run_analysis("https://evil.top/a 확인")
 
-    assert response == main.render_card("r4-unavailable")
+    assert response == render_card("r4-unavailable")
     assert collected["collect"] == []
 
 
@@ -101,7 +101,7 @@ async def test_too_long_message_asks_for_the_link_part(stub_read_message, collec
 async def test_empty_reading_is_input_required(stub_read_message, collected):
     stub_read_message(failure=FailureCode.EMPTY_INPUT)
 
-    assert await main.run_analysis(" ") == main.render_card("r6-input-required")
+    assert await main.run_analysis(" ") == render_card("r6-input-required")
 
 
 async def test_message_without_links_is_input_required(stub_read_message, collected):
@@ -109,7 +109,7 @@ async def test_message_without_links_is_input_required(stub_read_message, collec
 
     response = await main.run_analysis("오늘 배송 예정입니다")
 
-    assert response == main.render_card("r6-input-required")
+    assert response == render_card("r6-input-required")
     assert collected["collect"] == []
 
 
@@ -119,7 +119,7 @@ async def test_unread_link_is_not_called_no_link(stub_read_message, collected):
 
     response = await main.run_analysis("조회 cjlogistlcs.com")
 
-    assert response != main.render_card("r6-input-required")
+    assert response != render_card("r6-input-required")
     assert _texts(response) == [main._UNREAD_LINKS_TEXT]
     assert collected["collect"] == []
 
@@ -168,7 +168,7 @@ async def test_link_notice_and_result_cards_respect_output_limit(
     assert 1 <= len(outputs) <= main.KAKAO_MAX_OUTPUTS
     assert collected["collect"] == ([] if failure else links)
     if failure:
-        assert response == main.render_card("r4-unavailable")
+        assert response == render_card("r4-unavailable")
         assert rendered == []
     elif not links:
         assert _texts(response) == [main._UNREAD_LINKS_TEXT]
@@ -238,8 +238,8 @@ async def test_real_result_cards_disable_only_ambiguous_detail_buttons(
     visible = outputs[int(unverified):]
     for output, payload in zip(visible, payloads):
         # Compare the whole real R1/R9 output: only the detail button may change.
-        expected = main.render_result_card(payload, job_id=job_id)["template"]["outputs"][0]
-        key = "basicCard" if kind == "r1" else "textCard"
+        expected = render_result_card(payload, job_id=job_id)["template"]["outputs"][0]
+        key = "basicCard"  # R1, 그리고 D19 로 요약 카드가 된 R9 모두 basicCard 다
         assert any(b["label"] == "자세히 보기" for b in expected[key]["buttons"])
         if link_count > 1:
             expected[key]["buttons"] = [
@@ -249,7 +249,7 @@ async def test_real_result_cards_disable_only_ambiguous_detail_buttons(
             button = next(b for b in output[key]["buttons"] if b["label"] == "자세히 보기")
             if job_id:
                 assert button["extra"] == {"job_id": job_id}
-                assert main.handle_detail_carousel(job_id) == main.render_detail_carousel(payload)
+                assert main.handle_detail_carousel(job_id) == render_detail_carousel(payload)
             else:
                 assert "extra" not in button
         assert output == expected
@@ -306,7 +306,7 @@ async def test_first_response_waits_for_callback_even_without_links(monkeypatch)
 
     response = await _skill("오늘 배송 예정입니다")
 
-    assert response.json() == main.render_card("r5-analyzing")
+    assert response.json() == render_card("r5-analyzing")
     assert started == [("오늘 배송 예정입니다", USER)]
 
 
@@ -320,7 +320,7 @@ async def test_blank_utterance_answers_at_once_without_job(monkeypatch, utteranc
 
     response = await _skill(utterance)
 
-    assert response.json() == main.render_card("r6-input-required")
+    assert response.json() == render_card("r6-input-required")
     assert main.ANALYSIS_JOBS == {}
     assert USER not in main.RUNNING_USERS
 
@@ -342,5 +342,5 @@ async def test_callback_delivers_no_link_card(stub_read_message, monkeypatch):
 
     job = main.ANALYSIS_JOBS[job_id]
     assert job["status"] == "completed"
-    assert job["result"] == main.render_card("r6-input-required")
+    assert job["result"] == render_card("r6-input-required")
     assert len(delivered) == 1
