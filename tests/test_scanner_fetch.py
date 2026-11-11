@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 
 import httpx
+import pytest
 
 from scanner.fetch import HTML_LIMIT_BYTES, collect_url, extract_title
 from scanner.models import CollectResult
@@ -86,6 +87,16 @@ class TestNormalPage:
         assert result.failures == ()
         assert result.elapsed_ms >= 0
         assert seen == ["https://example.test/"]
+
+    @pytest.mark.parametrize("charset", ["undefined", "no-such-codec"])
+    def test_unusable_charset_keeps_the_page(self, charset):
+        result, _ = run("https://example.test/", {
+            "https://example.test/": page("<p>조회</p>", content_type=f"text/html; charset={charset}"),
+        })
+
+        assert result.status_code == 200
+        assert "조회" in result.html
+        assert result.failures == ()
 
 
 class TestRedirect:

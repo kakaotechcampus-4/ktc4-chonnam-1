@@ -135,7 +135,8 @@ async def _read_limited(response: httpx.Response, limit: int) -> tuple[bytes, bo
 def _decode(body: bytes, encoding: str | None) -> str:
     try:
         return body.decode(encoding or "utf-8", errors="replace")
-    except LookupError:
+    except (LookupError, UnicodeError):
+        # 헤더의 charset 은 공격자가 정한다. "undefined" 같은 코덱은 UnicodeError 를 낸다
         return body.decode("utf-8", errors="replace")
 
 
