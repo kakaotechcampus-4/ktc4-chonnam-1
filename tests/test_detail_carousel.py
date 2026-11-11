@@ -77,7 +77,7 @@ class TestHandleDetailCarousel:
 
         assert "carousel" in response["template"]["outputs"][0]
         items = response["template"]["outputs"][0]["carousel"]["items"]
-        assert len(items) == 2  # 신호 없음 → C2 + C3
+        assert len(items) == 3 + 2  # 신호 없음 → D19 판단 보류 상세 3장 + C2 + C3
 
     def test_voice_detail_is_not_blocked_by_text_link_count(self):
         payload = {"conclusion": "suspected", "claims": {}, "unchecked": []}

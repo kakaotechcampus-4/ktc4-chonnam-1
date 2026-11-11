@@ -76,8 +76,20 @@ def _outputs(card):
     return card["template"]["outputs"]
 
 
-def _text_card(card, index=0):
-    return _outputs(card)[index]["textCard"]
+def _card_body(card, index=0):
+    """카드 본체. D19 로 결과 카드(R6b)는 basicCard 이고, K6 같은 대응 카드는 textCard 다."""
+    output = _outputs(card)[index]
+    return output.get("textCard") or output["basicCard"]
+
+
+def _basic_card(card, index=0):
+    return _outputs(card)[index]["basicCard"]
+
+
+def _detail_text(job_id):
+    """D19: R6b 앞면은 요약 카드다. 주장, 확인한 것, 확인하지 못한 것은 '자세히 보기'에 있다."""
+    items = _outputs(main.handle_detail_carousel(job_id))[0]["carousel"]["items"]
+    return "\n\n".join(f"{item['title']}\n{item['description']}" for item in items)
 
 
 def _list_items(card, index):
@@ -115,18 +127,24 @@ async def test_family_message_gets_r6b_with_q1_and_q2(monkeypatch, stub_read_mes
 
     outputs = _outputs(card)
     assert len(outputs) == 3  # 결과 카드 + Q1 + Q2 (카카오 상한 안)
-    result = _text_card(card)
+    result = _card_body(card)
     assert result["title"] == "🔎 주의가 필요한 문자예요"
     description = result["description"]
-    assert description.startswith("돈을 보내지 마세요.\n원래 알던 번호로 직접 전화해 확인하세요.")
-    assert "⚠️ 주의할 점\n- 내세운 관계: '엄마 나야'" in description
-    assert "- 요구한 것: 송금·입금" in description
-    assert "✅ 확인한 것\n- 문자 내용" in description
-    assert "- 실제로 보낸 사람" in description
-    assert "답해 주신 내용 기준" not in description
+    # D19 요약 카드: 할 일, 근거 한 줄, 확인하지 못한 것 한 줄
+    assert description == (
+        "돈을 보내지 마세요.\n원래 알던 번호로 직접 전화해 확인하세요.\n\n"
+        "⚠️ 내세운 관계: '엄마 나야'\n❌ 실제로 보낸 사람은 확인하지 못했어요."
+    )
+    assert result["thumbnail"]["imageUrl"].endswith("/r3-inconclusive.png")
+    assert result["buttons"][0]["extra"] == {"job_id": job["job_id"]}
     assert "스미싱" not in json.dumps(card, ensure_ascii=False)
-    assert "\n\n\n" not in description
-    assert len(description) <= 400
+    assert len(description) <= 230
+    # 앞면에서 뺀 내용은 '자세히 보기'에 있다
+    detail = _detail_text(job["job_id"])
+    assert "⚠️ 주의할 점\n- 내세운 관계: '엄마 나야'" in detail
+    assert "- 요구한 것: 송금·입금" in detail
+    assert "✅ 확인한 것\n- 문자 내용" in detail
+    assert "- 실제로 보낸 사람" in detail
     _assert_no_placeholders(card)
 
     assert outputs[1]["listCard"]["header"]["title"] == "📌 이미 하신 게 있나요?"
@@ -151,14 +169,15 @@ async def test_institution_message_points_to_official_channels(monkeypatch, stub
 
     outputs = _outputs(card)
     assert len(outputs) == 2  # Q2 는 가족·지인 문자에만
-    result = _text_card(card)
+    result = _card_body(card)
     assert result["title"] == "🔎 주의가 필요한 문자예요"
     # 문자가 내세운 기관 이름이나 번호를 안내 문장에 쓰지 않는다(3절 R6b·R9 org_label)
     assert result["description"].startswith(
         "돈을 보내지 마세요.\n보낸 기관의 공식 앱·홈페이지나 대표번호로 직접 확인하세요."
     )
-    assert "- 내세운 기관:" in result["description"]
-    assert "- 실제로 보낸 곳" in result["description"]
+    assert "⚠️ 내세운 기관:" in result["description"]
+    assert "❌ 실제로 보낸 곳은 확인하지 못했어요." in result["description"]
+    assert "- 실제로 보낸 곳" in _detail_text(job["job_id"])
     _assert_no_placeholders(card)
 
 
@@ -172,7 +191,7 @@ async def test_sync_path_without_job_has_no_question_cards(stub_read_message):
     stub_read_message(message=FAMILY)
     card = await main.run_analysis(FAMILY)
     assert len(_outputs(card)) == 1
-    assert _text_card(card)["title"] == "🔎 주의가 필요한 문자예요"
+    assert _card_body(card)["title"] == "🔎 주의가 필요한 문자예요"
 
 
 async def test_budget_subtracts_reading_time(monkeypatch, stub_read_message):
@@ -207,10 +226,12 @@ async def test_q2_not_person_turns_into_warning_and_updates_check_result(monkeyp
 
     card = await _answer(job["job_id"], "called_known_number", "not_person")
 
-    result = _text_card(card)
+    result = _card_body(card)
     assert result["title"] == "⚠️ 사칭 문자로 의심돼요"
-    assert "답해 주신 내용 기준으로 안내했어요." in result["description"]
-    assert "- 원래 번호로 통화한 결과 (본인이 아니라고 답해 주셨어요)" in result["description"]
+    # D19: 결론을 바꾼 답이 근거 한 줄이 된다(답해 주신 내용 기준 줄을 대신한다)
+    assert "✅ 원래 번호로 통화해 보니 본인이 아니라고 하셨어요." in result["description"]
+    assert result["thumbnail"]["imageUrl"].endswith("/r1-danger.png")
+    assert "- 원래 번호로 통화한 결과 (본인이 아니라고 답해 주셨어요)" in _detail_text(job["job_id"])
     # Q2 는 떨어지고 Q1 만 남는다
     assert len(_outputs(card)) == 2
     assert _outputs(card)[1]["listCard"]["header"]["title"] == "📌 이미 하신 게 있나요?"
@@ -218,7 +239,7 @@ async def test_q2_not_person_turns_into_warning_and_updates_check_result(monkeyp
     # "결과 확인" 도 새 결과를 보여 준다
     assert job["result"] == card
     checked = main.handle_check_result(USER)
-    assert _text_card(checked, 1)["title"] == "⚠️ 사칭 문자로 의심돼요"
+    assert _card_body(checked, 1)["title"] == "⚠️ 사칭 문자로 의심돼요"
 
 
 async def test_q2_is_person_turns_caution_off(monkeypatch, stub_read_message):
@@ -226,10 +247,11 @@ async def test_q2_is_person_turns_caution_off(monkeypatch, stub_read_message):
 
     card = await _answer(job["job_id"], "called_known_number", "is_person")
 
-    result = _text_card(card)
+    result = _card_body(card)
     assert result["title"] == "🤔 판단하기 어려워요"
     assert "보내기 전에 받는 계좌가 본인 명의인지 한 번 더 확인하세요." in result["description"]
-    assert "본인이 맞다고 답해 주셨어요" in result["description"]
+    assert "✅ 원래 번호로 통화해 보니 본인이 맞다고 하셨어요." in result["description"]
+    assert "본인이 맞다고 답해 주셨어요" in _detail_text(job["job_id"])
     assert len(_outputs(card)) == 1  # 질문이 모두 떨어진다
     _assert_no_placeholders(card)
 
@@ -240,14 +262,14 @@ async def test_old_q2_button_after_not_person_does_not_downgrade(monkeypatch, st
 
     card = await _answer(job["job_id"], "called_known_number", "is_person")
 
-    assert _text_card(card)["title"] == "⚠️ 사칭 문자로 의심돼요"
+    assert _card_body(card)["title"] == "⚠️ 사칭 문자로 의심돼요"
     assert job["final_payload"]["conclusion"] == "suspected"
 
 
 async def test_q2_not_yet_keeps_asking(monkeypatch, stub_read_message):
     job, _ = await _analyze_with_callback(monkeypatch, stub_read_message, FAMILY)
     card = await _answer(job["job_id"], "called_known_number", "not_yet")
-    assert _text_card(card)["title"] == "🔎 주의가 필요한 문자예요"
+    assert _card_body(card)["title"] == "🔎 주의가 필요한 문자예요"
     assert len(_outputs(card)) == 3
 
 
@@ -259,7 +281,7 @@ async def test_q1_sent_money_gets_k6_with_112(monkeypatch, stub_read_message):
 
     card = await _answer(job["job_id"], "already_acted", "sent_money")
 
-    k6 = _text_card(card)
+    k6 = _card_body(card)
     assert k6["title"] == "🚨 지금 먼저 하세요"
     assert k6["description"].startswith(
         "1. 송금한 은행에 지급정지를 요청하세요.\n2. 112에 신고하세요.\n\n"
@@ -272,7 +294,7 @@ async def test_q1_sent_money_gets_k6_with_112(monkeypatch, stub_read_message):
 async def test_q1_gift_card_sent_money_contacts_issuer(monkeypatch, stub_read_message):
     job, _ = await _analyze_with_callback(monkeypatch, stub_read_message, GIFT)
     card = await _answer(job["job_id"], "already_acted", "sent_money")
-    assert _text_card(card)["description"].startswith(
+    assert _card_body(card)["description"].startswith(
         "1. 상품권 발행사 고객센터에 사용 정지를 요청하세요.\n2. 112에 신고하세요."
     )
 
@@ -280,7 +302,7 @@ async def test_q1_gift_card_sent_money_contacts_issuer(monkeypatch, stub_read_me
 async def test_q1_entered_info_gets_kisa_button(monkeypatch, stub_read_message):
     job, _ = await _analyze_with_callback(monkeypatch, stub_read_message, FAMILY)
     card = await _answer(job["job_id"], "already_acted", "entered_info")
-    k6 = _text_card(card)
+    k6 = _card_body(card)
     assert [b["label"] for b in k6["buttons"]] == ["KISA 상담하기"]
     assert "pd.fss.or.kr" in k6["description"]
 
@@ -288,7 +310,7 @@ async def test_q1_entered_info_gets_kisa_button(monkeypatch, stub_read_message):
 async def test_q1_installed_app_only_has_no_buttons(monkeypatch, stub_read_message):
     job, _ = await _analyze_with_callback(monkeypatch, stub_read_message, FAMILY)
     card = await _answer(job["job_id"], "already_acted", "installed_app")
-    k6 = _text_card(card)
+    k6 = _card_body(card)
     assert k6["buttons"] == []
     assert "1. 휴대폰을 끄거나 비행기 모드로 바꾸세요." in k6["description"]
 
@@ -297,12 +319,13 @@ async def test_q1_not_yet_gets_a2_and_later_answers_accumulate(monkeypatch, stub
     job, _ = await _analyze_with_callback(monkeypatch, stub_read_message, FAMILY)
 
     a2 = await _answer(job["job_id"], "already_acted", "not_yet")
-    assert _text_card(a2)["description"].startswith("잘하셨어요. 지금처럼 돈을 보내지 마세요.")
+    assert _basic_card(a2)["description"].startswith("잘하셨어요. 지금처럼 돈을 보내지 마세요.")
+    assert _basic_card(a2)["thumbnail"]["imageUrl"].endswith("/b2a-message-only.png")
 
     await _answer(job["job_id"], "already_acted", "sent_money")
     again = await _answer(job["job_id"], "already_acted", "not_yet")
     # 대응이 있는 답을 이미 골랐으면 A2 가 아니라 K6 가 다시 나간다
-    assert _text_card(again)["title"] == "🚨 지금 먼저 하세요"
+    assert _card_body(again)["title"] == "🚨 지금 먼저 하세요"
     assert job["final_payload"]["answers"]["already_acted"] == ["not_yet", "sent_money"]
 
 
@@ -312,7 +335,7 @@ async def test_q1_not_yet_gets_a2_and_later_answers_accumulate(monkeypatch, stub
 async def test_q1_for_missing_case_gets_notice_and_default_response():
     card = await _answer("no-such-job", "already_acted", "sent_money")
     assert _outputs(card)[0] == {"simpleText": {"text": main._CASE_NOT_FOUND_TEXT}}
-    k6 = _text_card(card, 1)
+    k6 = _card_body(card, 1)
     assert k6["title"] == "🚨 지금 먼저 하세요"
     assert "지급정지" in k6["description"]
     assert [b["label"] for b in k6["buttons"]] == ["112 신고"]
@@ -344,7 +367,7 @@ async def test_answer_while_running_does_not_start_new_analysis(monkeypatch, stu
 
     card = await _answer(job["job_id"], "already_acted", "sent_money")
 
-    assert _text_card(card)["title"] == "🚨 지금 먼저 하세요"
+    assert _card_body(card)["title"] == "🚨 지금 먼저 하세요"
 
 
 # ── 결과 확인 ───────────────────────────────────────────────
@@ -374,16 +397,16 @@ async def test_family_without_demand_prefixes_known_number_line(monkeypatch, stu
     job, card = await _analyze_with_callback(
         monkeypatch, stub_read_message, "엄마 나야\n폰 바꿨어"
     )
-    result = _text_card(card)
+    result = _card_body(card)
     assert result["title"] == "🤔 판단하기 어려워요"
     assert result["description"].startswith("문자 속 번호 대신 원래 알던 번호로 직접 전화해 확인하세요.")
 
 
 async def test_single_gift_card_stop_uses_full_sentence(monkeypatch, stub_read_message):
     job, card = await _analyze_with_callback(monkeypatch, stub_read_message, GIFT)
-    assert _text_card(card)["description"].startswith("상품권을 사거나 핀번호를 보내지 마세요.")
+    assert _card_body(card)["description"].startswith("상품권을 사거나 핀번호를 보내지 마세요.")
     a2 = await _answer(job["job_id"], "already_acted", "not_yet")
-    assert _text_card(a2)["description"].startswith(
+    assert _basic_card(a2)["description"].startswith(
         "잘하셨어요. 지금처럼 상품권을 사거나 핀번호를 보내지 마세요."
     )
 

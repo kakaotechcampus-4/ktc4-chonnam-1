@@ -107,6 +107,13 @@ def _card_body(card: dict) -> dict:
     return output.get("textCard") or output["basicCard"]
 
 
+def _voice_detail_text(result: dict) -> str:
+    """D19: V1 앞면은 요약 카드다. 주장, 확인한 것, 확인하지 못한 것은 녹음 '자세히 보기'에 있다."""
+
+    items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+    return "\n\n".join(f"{item['title']}\n{item['description']}" for item in items)
+
+
 def _transcript(text: str = "안녕하세요", failure=None) -> TranscriptResult:
     segments = [] if failure is not None else [Segment(side=Side.UNKNOWN, text=text)]
     return TranscriptResult(segments=segments, failure=failure)
@@ -347,8 +354,7 @@ class TestV1CallClaimsFieldMapping:
             ),
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
-        description = _card_body(card)["description"]
+        description = _voice_detail_text(result)
 
         assert "통화에 나온 말: '지금 바로 입금하세요'" in description
 
@@ -383,8 +389,7 @@ class TestV1CallClaimsFieldMapping:
             ]),
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
-        description = _card_body(card)["description"]
+        description = _voice_detail_text(result)
 
         assert "통화에 나온 요구: 송금·입금, 앱 설치, 인증번호 전달" in description
         assert "개인정보 제공" not in description
@@ -468,9 +473,11 @@ class TestVoiceDetailCarouselTemplate:
         items = card["template"]["outputs"][0]["carousel"]["items"]
         assert "- 통화에 나온 기관: '금융감독원입니다'" in items[0]["description"]
         assert "상대가 한 말로 보이는 문장만 근거로 썼어요." in items[0]["description"]
-        assert len(items) == 4  # no matches: omit only the similarity card
-        assert items[1]["title"] == "📋 확인 범위"
-        assert "비교할 사례를 찾지 못했어요" in items[1]["description"]
+        assert len(items) == 5  # no matches: omit only the similarity card
+        # D19: 결과 카드 앞면에서 뺀 확인한 것이 확인 범위 앞에 온다
+        assert items[1]["title"] == "✅ 확인한 것"
+        assert items[2]["title"] == "📋 확인 범위"
+        assert "비교할 사례를 찾지 못했어요" in items[2]["description"]
         assert "{{" not in str(card)
         # "통화에서 들은 내용"/"주의할 점" 칸 제목이 claim_lines에 남으면 안 된다.
         assert "통화에서 들은 내용" not in items[0]["description"]
@@ -1007,8 +1014,8 @@ class TestVoiceMessageAsyncCallbackPath:
         reply = main.handle_check_result("voice-user")
         # handle_check_result()는 확인 시각 말풍선(simpleText)을 결과 카드
         # 앞에 붙인다(K2) — 결과 카드는 그 다음 output이다.
-        text_card = reply["template"]["outputs"][1]["textCard"]
-        assert text_card["title"] == "⚠️ 보이스피싱이 의심돼요"
+        result_card = reply["template"]["outputs"][1]["basicCard"]
+        assert result_card["title"] == "⚠️ 보이스피싱이 의심돼요"
 
 
 class TestVoiceAnswerFlow:
@@ -1260,8 +1267,7 @@ class TestV1NumberChecksAndSimilarCases:
             number_checks=[NumberCheck(number="1332", org="금융감독원", result="official")],
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
-        description = _card_body(card)["description"]
+        description = _voice_detail_text(result)
 
         assert "상대가 말한 번호(1332): 금융감독원 대표번호와 같아요" in description
         assert "번호가 같아도 본인이라는 뜻은 아니에요" in description
@@ -1291,13 +1297,12 @@ class TestV1NumberChecksAndSimilarCases:
             number_checks=[NumberCheck(number="02-1234-5678", org="알 수 없는 기관", result="org_not_listed")],
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
-        description = _card_body(card)["description"]
+        description = _voice_detail_text(result)
 
         assert "공식 번호가 아니에요" not in description
         assert "상대가 말한 번호가 알 수 없는 기관 번호인지 (대표번호 자료에 없는 기관이에요)" in description
-        # "확인한 것" 블록이 아니라 "확인하지 못한 것" 블록에 들어가야 한다.
-        unchecked_block = description.split("확인하지 못한 것")[1]
+        # "확인한 것" 장이 아니라 "확인 범위"(확인하지 못한 것) 장에 들어가야 한다.
+        unchecked_block = description.split("📋 확인 범위")[1]
         assert "알 수 없는 기관 번호인지" in unchecked_block
 
     def test_phone_number_label_is_used_when_no_number_checks(self):
@@ -1308,8 +1313,7 @@ class TestV1NumberChecksAndSimilarCases:
 
         result = _voice_result(checked=[CheckItem.PHONE_NUMBER]).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
-        description = _card_body(card)["description"]
+        description = _voice_detail_text(result)
 
         assert "- 상대가 말한 전화번호" in description
 
@@ -1327,8 +1331,7 @@ class TestV1NumberChecksAndSimilarCases:
         # 분석 결과 데이터 자체는 유지된다 — payload에는 그대로 남아 있다.
         assert result["similar_cases"]["matches"][0]["case_id"] == "c1"
 
-        card = main.render_voice_result_card(result)
-        description = _card_body(card)["description"]
+        description = _voice_detail_text(result)
 
         assert "- 비슷한 사례" in description
         items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
@@ -1415,13 +1418,14 @@ class TestLatestVoice115Contract:
             unchecked=[Unchecked(item="similar_cases", reason=reason)] if reason else [],
         ).model_dump(mode="json")
         initial = main.render_voice_result_card(result)
-        description = _card_body(initial)["description"]
+        description = _voice_detail_text(result)
         assert f"- 비슷한 사례 ({expected})" in description
         assert description.count("- 비슷한 사례") == 1
         carousel = main.render_voice_detail_carousel(result)
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
         assert all(item["title"] != "📚 비슷한 사례" for item in items)
-        assert f"- 비슷한 사례 ({expected})" in items[1]["description"]
+        scope = next(item for item in items if item["title"] == "📋 확인 범위")
+        assert f"- 비슷한 사례 ({expected})" in scope["description"]
         assert "{{" not in str(initial) + str(carousel)
 
     @pytest.mark.parametrize("caution", [False, True])
@@ -1451,8 +1455,9 @@ class TestLatestVoice115Contract:
         initial = main.render_voice_result_card(result)
         carousel = main.render_voice_detail_carousel(result)
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
+        # D19: 앞면은 근거 한 줄(통화에 나온 기관)만, 주장 전체는 상세 첫 장에 있다
+        assert "통화에 나온 기관" in str(initial)
         for label in ("통화에 나온 기관", "통화에 나온 말", "통화에 나온 사정", "통화에 나온 요구"):
-            assert label in str(initial)
             assert label in items[0]["description"]
         assert "상대가 한 말로 보이는 문장만 근거로 썼어요." in items[0]["description"]
         assert "통화에 나온 기관의 대표번호" in items[-1]["description"]

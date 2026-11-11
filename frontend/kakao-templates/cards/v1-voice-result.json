@@ -3,9 +3,14 @@
   "template": {
     "outputs": [
       {
-        "textCard": {
+        "basicCard": {
           "title": "{{ headline }}",
-          "description": "{{ stop_line }}\n{{ verify_line }}\n\n{{ call_claims }}✅ 확인한 것\n{{ checked }}\n\n❌ 확인하지 못한 것\n{{ unchecked }}",
+          "description": "{{ stop_line }}\n{{ verify_line }}\n\n{{ basis_line }}\n{{ unchecked_line }}",
+          "thumbnail": {
+            "imageUrl": "{{ image_url }}",
+            "altText": "{{ image_alt }}",
+            "fixedRatio": false
+          },
           "buttonLayout": "vertical",
           "buttons": [
             {

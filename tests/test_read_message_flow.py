@@ -239,7 +239,7 @@ async def test_real_result_cards_disable_only_ambiguous_detail_buttons(
     for output, payload in zip(visible, payloads):
         # Compare the whole real R1/R9 output: only the detail button may change.
         expected = main.render_result_card(payload, job_id=job_id)["template"]["outputs"][0]
-        key = "basicCard" if kind == "r1" else "textCard"
+        key = "basicCard"  # R1, 그리고 D19 로 요약 카드가 된 R9 모두 basicCard 다
         assert any(b["label"] == "자세히 보기" for b in expected[key]["buttons"])
         if link_count > 1:
             expected[key]["buttons"] = [

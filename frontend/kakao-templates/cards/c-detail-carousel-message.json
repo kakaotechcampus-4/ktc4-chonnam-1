@@ -1,0 +1,34 @@
+{
+  "version": "2.0",
+  "template": {
+    "outputs": [
+      {
+        "carousel": {
+          "type": "textCard",
+          "items": [
+            {
+              "title": "{{ claims_title }}",
+              "description": "{{ claim_lines }}"
+            },
+            {
+              "title": "✅ 확인한 것",
+              "description": "{{ checked }}"
+            },
+            {
+              "title": "📋 확인 범위",
+              "description": "{{ unchecked }}\n\n결과는 확인한 자료로만 안내했어요. 확인하지 못한 부분은 판단에 넣지 않았어요.",
+              "buttonLayout": "vertical",
+              "buttons": [
+                {
+                  "label": "다른 문자 확인하기",
+                  "action": "block",
+                  "blockId": "6ae3302425d4bc48e2bb8a61"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
