@@ -11,8 +11,8 @@
 - **서비스 이용 링크:** `http://pf.kakao.com/_ycxoxeX`
 - **시연 영상:** `[5분 이내 영상 URL 입력]`
 - **발표 자료:** `[발표 자료 URL 입력]`
-- **기술문서:** [`docs/README.md`](docs/README.md) / `[제출용 테크스펙 링크]`
-- **협업문서:** `[협업문서 링크]`
+- **기술문서:** [`docs/README.md`](docs/README.md) / `https://ktc4-chonnam-1-docs.vercel.app/tech-spec/`
+- **협업문서:** `https://ktc4-chonnam-1-docs.vercel.app/collab/`
 
 ## 1. 해결하려는 문제
 
