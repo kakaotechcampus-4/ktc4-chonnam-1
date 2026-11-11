@@ -16,8 +16,10 @@ def case_search_tool(body: str) -> Tool[CaseSearchResult]:
     async def run(_board: Board, _: None) -> CaseSearchResult:
         # ponytail: 문자 분석(analyze_message_part·analyze_message_case)도 같은 검색을 따로 돌린다.
         # 그 검색을 board 에서 꺼내 쓰게 바꾸면 요청당 한 번으로 준다
+        # 임베딩을 쓰지 않는다. 임베딩 작업자는 카드가 읽는 검색과 함께 쓰므로, 참고용 검색이 끼어들면
+        # 카드용 검색이 마감을 넘겨 TF-IDF 로 떨어지고 카드 근거가 달라질 수 있다
         return await asyncio.wait_for(
-            asyncio.to_thread(search_cases, mask_pii(body)), timeout=SEARCH_BUDGET_S
+            asyncio.to_thread(search_cases, mask_pii(body), use_embedding=False), timeout=SEARCH_BUDGET_S
         )
 
     def observe(found: CaseSearchResult) -> Obs:

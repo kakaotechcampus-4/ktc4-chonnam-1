@@ -121,7 +121,7 @@ HOSTILE = {
 def _offline(monkeypatch):
     monkeypatch.delenv("AGENT_MODEL", raising=False)
     monkeypatch.setattr(
-        tools, "search_cases", lambda text: CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=[]),
+        tools, "search_cases", lambda text, **_: CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=[]),
     )
 
 
@@ -326,7 +326,8 @@ async def test_cancelled_request_reaps_the_agent_and_every_analysis(
     monkeypatch.setattr(main, "analyze_message_part", lambda text, **_: hold("message"))
     client = scripted_agent([("check_official_numbers", {})], HANG)
     monkeypatch.setattr(loop, "TURN_TIMEOUT_S", 30)
-    request = asyncio.create_task(main.run_analysis("본문 " + EVIL))
+    job_id = main.create_analysis_job("router-user")
+    request = asyncio.create_task(main.run_analysis("본문 " + EVIL, job_id))
     await asyncio.wait_for(
         asyncio.gather(client.hanging.wait(), *(event.wait() for event in started.values())), 1,
     )
@@ -337,6 +338,7 @@ async def test_cancelled_request_reaps_the_agent_and_every_analysis(
 
     assert client.hang_reaped
     assert stopped == {"collector", "message"}
+    assert main.ANALYSIS_JOBS[job_id]["investigation"]["stop"] == "preempted"
 
 
 async def test_eval_offers_the_agent_the_same_tool_menu_as_the_backend(monkeypatch, stub_read_message):
@@ -350,7 +352,11 @@ async def test_eval_offers_the_agent_the_same_tool_menu_as_the_backend(monkeypat
     def menu(offered):
         return [(tool.name, tool.description, tool.per_link) for tool in offered]
 
-    assert menu(agent_router_eval.stub_tools(reading, "본문 " + EVIL)) == menu(real)
+    assert menu(agent_router_eval.stub_tools(reading)) == menu(real)
+    # 호출 예산 5회를 링크 2개의 필수 호출로 다 쓰지 않게, 필요하다고 적는 링크 도구는 공식 대조 하나다
+    assert [tool.name for tool in real if tool.per_link and "필요하다" in tool.description] == [
+        "check_official_domain",
+    ]
 
 
 BROWSED = CollectResult(

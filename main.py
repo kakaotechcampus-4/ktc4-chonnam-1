@@ -557,13 +557,13 @@ def _analysis_tools(
     # 설명은 에이전트가 읽는다. 언제 필요한 분석인지까지 적는다
     need = _Need(
         Tool("collect_link",
-             "링크를 격리 환경에서 열어 이동 경로와 페이지를 수집한다. 링크가 있으면 링크마다 필요하다",
+             "링크를 격리 환경에서 열어 이동 경로와 페이지를 수집한다. 공식 대조가 함께 시작하므로 결과를 먼저 보고 싶을 때만 부른다",
              True, collect, see_collection),
         Tool("analyze_message_signals",
-             "문자 본문의 위험 신호와 내세운 기관 이름을 읽는다. 링크가 있으면 필요하다",
+             "문자 본문의 위험 신호와 내세운 기관 이름을 읽는다. 공식 대조가 함께 시작하므로 결과를 먼저 보고 싶을 때만 부른다",
              False, signals, see_signals),
         Tool("check_official_domain",
-             "수집한 링크 주소를 공식 도메인 목록과 대조한다. 링크가 있으면 링크마다 필요하다",
+             "링크 주소를 공식 도메인 목록과 대조한다. 그 링크의 수집과 본문 분석을 함께 시작한다. 링크가 있으면 링크마다 필요하다",
              True, official, see_official),
         Tool("analyze_claims",
              "문자가 내세운 사칭 주장과 요구를 읽는다. 링크가 없으면 필요하다. "
@@ -595,6 +595,7 @@ async def run_analysis(
     # 카드·저장 여유 5초는 에이전트를 기다리는 데 쓰지 않는다
     async with investigation(
         reading, tools, grace_until=started + MESSAGE_CASE_BUDGET_S,
+        on_close=lambda trace: record_trace(job_id, trace),
     ) as board:
         if reading.links:
             response = await _link_cards(board, need, reading, job_id)
@@ -602,7 +603,6 @@ async def run_analysis(
             response = await run_message_case(
                 utterance, job_id=job_id, started=started, claims=lambda: board.get(need.claims),
             )
-    record_trace(job_id, board.trace())
     return response
 
 

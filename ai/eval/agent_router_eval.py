@@ -46,15 +46,15 @@ LIMIT_NOTE = (
 # (이름, 설명, per_link, 시간이 걸리는지, 관측). 이름·설명·per_link 는 main._analysis_tools 와 같게 둔다
 BE_TOOLS = (
     ("collect_link",
-     "링크를 격리 환경에서 열어 이동 경로와 페이지를 수집한다. 링크가 있으면 링크마다 필요하다",
+     "링크를 격리 환경에서 열어 이동 경로와 페이지를 수집한다. 공식 대조가 함께 시작하므로 결과를 먼저 보고 싶을 때만 부른다",
      True, True,
      {"reached": True, "redirects": 0, "has_page": True, "browser_used": False, "downloads": 0, "failed": False}),
     ("analyze_message_signals",
-     "문자 본문의 위험 신호와 내세운 기관 이름을 읽는다. 링크가 있으면 필요하다",
+     "문자 본문의 위험 신호와 내세운 기관 이름을 읽는다. 공식 대조가 함께 시작하므로 결과를 먼저 보고 싶을 때만 부른다",
      False, True,
      {"answer": AnswerState.NO_RISK_FOUND, "brand_named": False, "signals": 0}),
     ("check_official_domain",
-     "수집한 링크 주소를 공식 도메인 목록과 대조한다. 링크가 있으면 링크마다 필요하다",
+     "링크 주소를 공식 도메인 목록과 대조한다. 그 링크의 수집과 본문 분석을 함께 시작한다. 링크가 있으면 링크마다 필요하다",
      True, False,
      {"official": DomainMatch.NOT_REGISTERED}),
     ("analyze_claims",
@@ -76,7 +76,7 @@ class Run:
     total_s: float
 
 
-def stub_tools(reading: MessageReading, utterance: str) -> tuple[Tool, ...]:
+def stub_tools(reading: MessageReading) -> tuple[Tool, ...]:
     """BE 가 넘기는 것과 같은 도구 목록. BE 도구의 실행만 가짜다."""
     tools: dict[str, Tool] = {}
 
@@ -93,12 +93,12 @@ def stub_tools(reading: MessageReading, utterance: str) -> tuple[Tool, ...]:
 
     for name, description, per_link, slow, seen in BE_TOOLS:
         tools[name] = Tool(name, description, per_link, canned(name, seen, STUB_DELAY_S if slow else 0.0), dict)
-    return (*tools.values(), case_search_tool(reading.message), official_number_tool(utterance))
+    return (*tools.values(), case_search_tool(reading.message), official_number_tool(reading.message))
 
 
-async def investigate(reading: MessageReading, utterance: str, model: str | None) -> Run:
+async def investigate(reading: MessageReading, model: str | None) -> Run:
     """조사를 한 번 돌린다. model 이 없으면 에이전트 없이 코드만 근거를 꺼낸다."""
-    tools = {tool.name: tool for tool in stub_tools(reading, utterance)}
+    tools = {tool.name: tool for tool in stub_tools(reading)}
     started = time.perf_counter()
     async with investigation(reading, tuple(tools.values()), model=model) as board:
         entered = time.perf_counter()
@@ -125,8 +125,8 @@ async def run_rows(rows: Sequence[tuple[str, str]], model: str) -> tuple[list[di
                     or (not reading.links and reading.unverified_links)):
                 skipped.append(row_id)
                 return
-            off = await investigate(reading, text, None)
-            on = await investigate(reading, text, model)
+            off = await investigate(reading, None)
+            on = await investigate(reading, model)
             results.append({"id": row_id, "links": len(reading.links), "off": off, "on": on})
 
     await asyncio.gather(*(one(row_id, text) for row_id, text in rows))

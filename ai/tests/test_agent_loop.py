@@ -5,6 +5,7 @@
 
 import asyncio
 import json
+import threading
 import time
 from enum import Enum
 from types import SimpleNamespace
@@ -306,6 +307,35 @@ async def test_missing_llm_settings_end_the_agent(monkeypatch):
     assert (board.trace().stop, board.trace().turns) == ("llm_error", 0)
 
 
+async def test_llm_client_is_built_off_the_event_loop(monkeypatch):
+    built_on = []
+
+    def build(timeout):
+        built_on.append(threading.current_thread())
+        raise RuntimeError("no client in this test")
+
+    monkeypatch.setattr(loop, "create_client", build)
+
+    async with investigation(reading(), [], model="m") as board:
+        pass
+
+    assert built_on and built_on[0] is not threading.current_thread()
+    assert board.trace().stop == "llm_error"
+
+
+async def test_trace_is_handed_over_after_every_analysis_is_reaped():
+    tool, seen = probe("held", hold=True)
+    client, _ = scripted_client([("held", {})])
+    traces = []
+
+    with pytest.raises(LookupError):
+        async with investigation(reading(), [tool], client=client, model="m", on_close=traces.append):
+            raise LookupError("card failed")
+
+    assert seen["stopped"]
+    assert [(trace.stop, trace.steps[0].status) for trace in traces] == [("preempted", "cancelled")]
+
+
 async def test_unmasked_message_is_never_sent(monkeypatch):
     def broken(text):
         raise RuntimeError("mask failed")
@@ -428,8 +458,8 @@ SEARCH_RESULT = CaseSearchResult(status=AnalysisStatus.COMPLETED, matches=[
 async def test_case_search_tool_searches_the_masked_body(monkeypatch):
     queries = []
 
-    def search(text):
-        queries.append(text)
+    def search(text, *, use_embedding):
+        queries.append((text, use_embedding))
         return SEARCH_RESULT
 
     monkeypatch.setattr(tools, "search_cases", search)
@@ -437,7 +467,7 @@ async def test_case_search_tool_searches_the_masked_body(monkeypatch):
 
     found = await Board([tool], 0).get(tool)
 
-    assert queries == ["계좌 <계좌번호> 확인 바랍니다"]
+    assert queries == [("계좌 <계좌번호> 확인 바랍니다", False)]
     assert tool.observe(found) == {"status": AnalysisStatus.COMPLETED, "matches": 1}
 
 

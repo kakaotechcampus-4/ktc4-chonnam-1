@@ -12,7 +12,7 @@ from openai import AsyncOpenAI
 
 from ai.case.lexicon import read_with_lexicon
 from ai.case.types import ClaimReading, ClaimReadingResult, InputKind, ReadingSource
-from ai.llm._client import create_client, failure_of, parse_answer, prompt_text, required_env
+from ai.llm._client import create_client, data_line, failure_of, parse_answer, prompt_text, required_env
 from ai.types import FailureCode
 
 
@@ -33,11 +33,7 @@ def _resolve_model(model: str | None) -> str:
 def _render_segments(source: ReadingSource) -> str:
     """세그먼트(통화는 문장, 문자는 줄)를 한 줄씩 data 태그로 감싼다. 화자 표기는 없다(ADR 0008).
     원문 안의 닫는 태그는 무력화한다."""
-    lines = []
-    for seg in source.segments:
-        text = " ".join(seg.text.split()).replace("</data", "< /data")
-        lines.append(f"<data>{text}</data>")
-    return "\n".join(lines)
+    return "\n".join(data_line(seg.text) for seg in source.segments)
 
 
 def _fallback(source: ReadingSource, failure: FailureCode) -> ClaimReadingResult:

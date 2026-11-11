@@ -9,17 +9,17 @@ import json
 import logging
 import os
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from enum import Enum
 from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from ai.agent.board import Board, Stop, Tool
+from ai.agent.board import Board, Stop, Tool, Trace
 from ai.case.privacy import mask_pii
 from ai.diagnostics import where
-from ai.llm._client import create_client, prompt_text
+from ai.llm._client import create_client, data_line, prompt_text
 from ai.types import MessageReading
 
 LOGGER = logging.getLogger(__name__)
@@ -39,6 +39,7 @@ async def investigation(
     client: AsyncOpenAI | None = None,
     model: str | None = None,
     grace_until: float | None = None,
+    on_close: Callable[[Trace], None] | None = None,
 ) -> AsyncIterator[Board]:
     """Board 를 열고 에이전트 루프를 붙인다. 나갈 때 루프와 남은 분석을 모두 취소하고 회수한다.
 
@@ -46,6 +47,7 @@ async def investigation(
     모델은 인자 → AGENT_MODEL 이고, 없으면 루프를 돌리지 않는다. 에이전트의 실패는 밖으로 나오지 않는다.
     `grace_until`(time.monotonic 기준)을 넘겨서는 에이전트를 기다리지 않는다. 다 만든 카드를
     부른 쪽의 전체 상한에 잃지 않게 하려는 것이다.
+    `on_close` 는 모든 분석을 회수한 뒤 조사 기록을 받는다. 시간 초과·예외로 끝나도 불린다.
     """
     board = Board(tools, len(reading.links))
     model = model or os.getenv("AGENT_MODEL", "").strip()
@@ -66,6 +68,8 @@ async def investigation(
             agent.cancel()
             await asyncio.gather(agent, return_exceptions=True)
         await board.reap()
+        if on_close is not None:
+            on_close(board.trace())
 
 
 async def _run_agent(
@@ -74,7 +78,8 @@ async def _run_agent(
     """루프를 돌리고 끝난 이유를 board 에 적는다. 취소 말고는 예외를 올리지 않는다."""
     try:
         async with AsyncExitStack() as stack:
-            llm = client or await stack.enter_async_context(create_client(TURN_TIMEOUT_S))
+            # 클라이언트를 만들 때의 SSL 초기화가 이벤트 루프를 막지 않게 한다(http_client.py 의 측정 참고)
+            llm = client or await stack.enter_async_context(await asyncio.to_thread(create_client, TURN_TIMEOUT_S))
             board.stop = await _loop(board, _brief(reading), llm, model, moved)
     except asyncio.CancelledError:
         board.stop = "preempted"
@@ -133,12 +138,9 @@ async def _loop(board: Board, brief: str, llm: AsyncOpenAI, model: str, moved: a
 def _brief(reading: MessageReading) -> str:
     """LLM 이 받는 입력. 링크 수와, 개인정보를 가린 본문을 줄마다 data 태그로 감싼 것이다.
 
-    본문은 링크 구간을 뗀 것이라 주소가 없다. 원문 안의 닫는 태그는 무력화한다(llm/claims.py 와 같다).
+    본문은 링크 구간을 뗀 것이라 주소가 없다.
     """
-    lines = [
-        f"<data>{' '.join(line.split()).replace('</data', '< /data')}</data>"
-        for line in mask_pii(reading.message).splitlines() if line.strip()
-    ]
+    lines = [data_line(line) for line in mask_pii(reading.message).splitlines() if line.strip()]
     return "\n".join([f"링크 수: {len(reading.links)}", *lines])
 
 

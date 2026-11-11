@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from collections.abc import Callable
 from contextlib import AsyncExitStack
 from functools import lru_cache
@@ -31,6 +32,7 @@ from ai.diagnostics import where
 from ai.types import FailureCode
 
 _T = TypeVar("_T", bound=BaseModel)
+_DATA_CLOSE = re.compile(r"</(data)", re.IGNORECASE)
 
 
 def required_env(name: str) -> str:
@@ -58,6 +60,11 @@ def create_client(timeout: float) -> AsyncOpenAI:
 def prompt_text(path: Path) -> str:
     """프롬프트 파일. 요청마다 디스크를 읽지 않도록 한 번만 읽는다."""
     return path.read_text(encoding="utf-8")
+
+
+def data_line(text: str) -> str:
+    """받은 글 한 줄을 data 태그로 감싼다. 글 안의 닫는 태그는 대소문자와 상관없이 무력화한다."""
+    return "<data>" + _DATA_CLOSE.sub(r"< /\1", " ".join(text.split())) + "</data>"
 
 
 class NoAnswer(Exception):
