@@ -80,6 +80,10 @@ def _text_card(card, index=0):
     return _outputs(card)[index]["textCard"]
 
 
+def _basic_card(card, index=0):
+    return _outputs(card)[index]["basicCard"]
+
+
 def _list_items(card, index):
     return _outputs(card)[index]["listCard"]["items"]
 
@@ -297,7 +301,8 @@ async def test_q1_not_yet_gets_a2_and_later_answers_accumulate(monkeypatch, stub
     job, _ = await _analyze_with_callback(monkeypatch, stub_read_message, FAMILY)
 
     a2 = await _answer(job["job_id"], "already_acted", "not_yet")
-    assert _text_card(a2)["description"].startswith("잘하셨어요. 지금처럼 돈을 보내지 마세요.")
+    assert _basic_card(a2)["description"].startswith("잘하셨어요. 지금처럼 돈을 보내지 마세요.")
+    assert _basic_card(a2)["thumbnail"]["imageUrl"].endswith("/b2a-message-only.png")
 
     await _answer(job["job_id"], "already_acted", "sent_money")
     again = await _answer(job["job_id"], "already_acted", "not_yet")
@@ -383,7 +388,7 @@ async def test_single_gift_card_stop_uses_full_sentence(monkeypatch, stub_read_m
     job, card = await _analyze_with_callback(monkeypatch, stub_read_message, GIFT)
     assert _text_card(card)["description"].startswith("상품권을 사거나 핀번호를 보내지 마세요.")
     a2 = await _answer(job["job_id"], "already_acted", "not_yet")
-    assert _text_card(a2)["description"].startswith(
+    assert _basic_card(a2)["description"].startswith(
         "잘하셨어요. 지금처럼 상품권을 사거나 핀번호를 보내지 마세요."
     )
 

@@ -86,9 +86,12 @@
   이미지가 준비되면 해당 카드를 `basicCard` + `thumbnail`로 바꾼다.
 - 확정 카드 이미지는 `assets/cards/`에 둔다. `imageUrl`은 `develop` 브랜치의
   `raw.githubusercontent.com` 주소라 **develop에 머지된 뒤에야 보인다.**
-  지금 적용한 카드: W1, B1a, B2, B2a, B2b, R1~R4, R8. 문자 상세 캐러셀(C1~C4)은 이미지 없이 제공한다.
+  지금 적용한 카드: W1, B1a, B2, B2a, B2b, R1~R4, R8, A2, A3, K4, K5. 문자 상세 캐러셀(C1~C4)은 이미지 없이 제공한다.
   이미지 파일 이름은 카드 파일 이름을 따른다(R1만 `r1-danger.png`, 캐러셀은 `c1-signal` `c2-scope` `c3-action`).
   B1은 W1 이미지(`w1-welcome.png`)를 같이 쓴다.
+  아래 카드도 다른 카드의 이미지를 다시 쓴다(2026-11-11). 같은 상황을 다루는 카드끼리 맞췄다.
+  A2 문자는 `b2a-message-only.png`, A2 녹음은 `b2c-call-only.png`, A3은 `b2b-link-clicked.png`,
+  K4는 `r4-unavailable.png`, K5는 `k1-still-running.png`. K6는 할 일이 먼저 보여야 해서 이미지를 넣지 않는다.
 - R5는 `template`이 없어 이미지를 붙일 수 없으므로 그대로 둔다. R5용으로 받은 "분석 중"
   이미지는 K1(`k1-still-running.png`)에 쓴다.
 - R5(`r5-analyzing.json`)는 콜백 대기 응답이라 `template` 없이 `useCallback`과 `data.text`만 있다.
