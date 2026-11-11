@@ -147,6 +147,20 @@ GitHub Actions를 통해 `develop` 브랜치에 코드가 반영되거나 PR이 
 
 ### 백엔드 배포 (Render)
 
+백엔드 서버는 Render의 Web Service를 통해 배포합니다.
+
+**빌드 및 실행 명령어**
+
+```bash
+# Build Command
+pip install -r requirements.txt
+
+# Start Command
+uvicorn main:app --host 0.0.0.0 --port $PORT
+```
+
+**배포 절차**
+
 1. GitHub 저장소의 변경 사항을 반영합니다.
 2. Render 대시보드에서 백엔드 서비스를 선택합니다.
 3. **Manual Deploy**를 통해 배포를 실행합니다.
