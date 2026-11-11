@@ -1,26 +1,54 @@
-# backend
+# Backend
 
-FastAPI 스킬 서버. 카카오톡 채널 웹훅을 받아 분석 파이프라인을 오케스트레이션하고, AI 파트를 호출하고, 결과를 조립해 돌려주는 BE의 전체 구현체입니다.
+화기니의 FastAPI 기반 백엔드 모듈입니다.
 
-## 이 폴더가 하지 않는 것
+카카오톡 채널에서 전달된 요청을 처리하고, AI 분석 및 외부 검증 기능을 연결하며, 분석 결과를 카카오톡 응답 형식으로 구성하는 역할을 담당합니다.
 
-- **판단하지 않는다** — 문자 해석, 유형 분류, 대조, 보강판단은 전부 `clients/`를 통해 AI 파트에 위임합니다. 이 폴더 안에서 LLM을 직접 호출하는 코드는 없어야 합니다.
-- **템플릿 문구를 직접 짓지 않는다** — 카카오 응답 문구·버튼 구성은 `/frontend/kakao-templates`(FE 소유, 선언형)의 몫이고, 이 폴더의 `templates/`는 그 선언을 렌더링하는 엔진만 가집니다.
+## 주요 역할
 
-## 하위 구조
+- **요청 처리:** 카카오톡 스킬 서버 요청 및 분석 관련 API 처리
+- **분석 흐름 연결:** AI 분석 패키지와 외부 검증 기능 연계
+- **비동기 작업 관리:** 분석 작업의 생성·상태 관리 및 결과 전달
+- **결과 응답:** 분석 결과를 카카오톡 카드 형식으로 구성
+- **보안 검증:** 요청 인증, 콜백 URL 검증, 외부 리소스 접근 제한
 
-| 폴더 | 역할 |
+## 설계 원칙
+
+### AI와 백엔드의 역할 분리
+
+문자 해석과 위험 신호 추출 등 AI 분석은 AI 패키지에 위임합니다.
+
+백엔드는 분석 기능을 연결하고, 검증 결과를 전달하며, 서비스의 API 및 실행 흐름을 관리합니다.
+
+### 프론트엔드와의 역할 분리
+
+카카오톡 카드의 문구와 템플릿은 `frontend/kakao-templates/`에서 관리합니다.
+
+백엔드는 해당 템플릿과 분석 결과를 결합하여 카카오톡 응답을 생성합니다.
+
+## 주요 디렉터리
+
+| 경로 | 역할 |
 | --- | --- |
-| `src/server/api/` | 카카오 웹훅·분석 엔드포인트 (라우터) |
-| `src/server/templates/` | `/frontend/kakao-templates` 렌더러 |
-| `src/server/orchestration/` | ①~⑥ 파이프라인 흐름, 조회 한도, 이중 검증 |
-| `src/server/tools/` | 외부 도구(격리 관측·도메인 조회 등) 실행 |
-| `src/server/clients/` | AI 파트 호출 |
-| `src/server/models/` | ORM 모델 |
-| `src/server/job_queue/` | 비동기 작업 큐 (표준 라이브러리 `queue`와 이름 충돌 방지를 위해 `job_queue`로 명명) |
-| `tests/` | 테스트 케이스 10건 + 인젝션 픽스처 |
+| `src/server/api/` | API 및 웹훅 관련 모듈 |
+| `src/server/templates/` | 카카오톡 템플릿 렌더링 |
+| `src/server/orchestration/` | 분석 및 검증 작업 흐름 |
+| `src/server/tools/` | 외부 검증 도구 연동 |
+| `src/server/clients/` | AI 분석 기능 연동 |
+| `src/server/models/` | 데이터 모델 관련 모듈 |
+| `src/server/job_queue/` | 비동기 작업 관리 |
+| `tests/` | 백엔드 테스트 |
 
-## 시작하기 전에
+## 실행 및 테스트
 
-- `/contracts/schemas`에 정의된 BE↔AI 스키마를 먼저 확인하세요. 이 저장소의 `clients/`, `orchestration/`의 타입은 전부 거기서 파생됩니다.
-- 동의/고지 관련 로직은 어디에도 존재하지 않습니다 (PM 최종 결정). 관련 코드를 발견하면 삭제 대상입니다.
+백엔드는 저장소 루트의 `main.py`와 연결되어 실행됩니다.
+
+의존성 설치, 환경변수 설정, 서버 실행 및 테스트 명령어는 [루트 README](../README.md)를 참고하세요.
+
+## 관련 문서
+
+- [문서 인덱스](../docs/README.md)
+- [제품 요구사항](../docs/PRD.md)
+- [보안 점검](../docs/security-checklist.md)
+- [AI·BE 연동](../docs/ai-be-python-integration.md)
+- [격리 환경 설계](../docs/isolation-security.md)
