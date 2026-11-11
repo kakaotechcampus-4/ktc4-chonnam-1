@@ -15,9 +15,15 @@ from services.chatbot_copy_data import (
     get_unverified_copy,
 )
 from services.kakao_card_renderer import render_card, substitute_values
+from services.link_cards import r9_blank_values
+from services.message_cards import link_caution_lines, message_claim_lines
+from services.result_card_selector import select_result_card
 from services.card_parts import (
+    CAROUSEL_TEXT_MAX_LENGTH,
     EVIDENCE_MAX_LENGTH,
+    NO_LINES,
     NO_RISK,
+    fit_lines,
     shorten_evidence,
 )
 
@@ -28,6 +34,7 @@ _FIXED_CAROUSEL_ITEMS = 2  # C2(미확인) + C3(행동 안내)는 항상 1장씩
 _MAX_GUIDANCE_ITEMS = 3  # find_guidance() 계약(최대 3개)과 별개로 BE에서도 한 번 더 막는다
 _GUIDANCE_TEXT_MAX_LENGTH = 128  # FE 합의: 카드 1장당 128자
 _COMPLETE_ANSWERS = (NO_RISK, "risk_found")
+_R9_DEFAULT_MESSAGE_REASON = "문자 분석 결과를 전달받지 못했습니다."
 
 
 def _message_unverified_line(message: dict) -> str | None:
@@ -127,7 +134,56 @@ def _guidance_items(analysis_result: dict) -> list[dict]:
     ]
 
 
-def render_detail_carousel(analysis_result: dict) -> dict:
+def _r9_message_reason(message: dict) -> str:
+    """이슈 #68: `message.brand`는 택배사만 알아보므로, 청소행정과처럼
+    택배사가 아닌 기관이 내세운 명분·요구는 이 칸으로만 전달된다.
+    확인한 사실이 아니라 "문자가 주장한 내용"이라 기본값도 '확인'이
+    아니라 '전달받지 못했습니다'로 둔다."""
+
+    reason = ((message.get("details") or {}).get("reason") or {}).get("text")
+    reason = (reason or "").strip()
+    return reason or _R9_DEFAULT_MESSAGE_REASON
+
+
+def _r9_detail_items(analysis_result: dict, case_result: dict | None) -> list[dict]:
+    """R9 '자세히 보기'에 더하는 장(D19, 4절 "판정 요약 카드에서 옮긴 내용").
+
+    요약 카드 앞면에서 뺀 확인한 것과 확인하지 못한 것(이유 포함)을 장으로 둔다. 확인 범위(C2)는
+    그대로 둔다. 실패 이유(#59)를 128자 C2 에 밀어 넣으면 이유가 잘려 나가기 때문이다.
+    #89 주의 갈래면 그 카드가 쓴 주장, 확인한 것, 확인하지 못한 것을 쓴다. 아니면 #68 의
+    '문자에 적힌 내용'을 장으로 둔다. 택배사가 아닌 기관의 명분은 이 칸으로만 전달된다.
+    """
+
+    templates = render_card("c-detail-carousel-message")["template"]["outputs"][0]["carousel"]["items"]
+    lines_template, checked_template = templates[0], templates[1]
+
+    def lines_item(title: str, lines: list[str]) -> dict:
+        return substitute_values(lines_template, {
+            "claims_title": title, "claim_lines": fit_lines(lines, CAROUSEL_TEXT_MAX_LENGTH),
+        })
+
+    items = []
+    if case_result:
+        checked_lines, unchecked_lines = link_caution_lines(analysis_result, case_result)
+        claim_lines = message_claim_lines(case_result)
+        if claim_lines:
+            items.append(lines_item("⚠️ 주의할 점", claim_lines))
+    else:
+        blank = r9_blank_values(analysis_result)
+        checked_lines = [line for line in blank["checked"].splitlines() if line != NO_LINES]
+        unchecked_lines = [line for line in blank["unchecked"].splitlines() if line != NO_LINES]
+        items.append(lines_item(
+            "📩 문자에 적힌 내용", [_r9_message_reason(analysis_result.get("message") or {})],
+        ))
+
+    items.append(substitute_values(checked_template, {
+        "checked": fit_lines(checked_lines or [NO_LINES], CAROUSEL_TEXT_MAX_LENGTH),
+    }))
+    items.append(lines_item("❌ 확인하지 못한 것", unchecked_lines or [NO_LINES]))
+    return items
+
+
+def render_detail_carousel(analysis_result: dict, case_result: dict | None = None) -> dict:
     """"자세히 보기"에서 쓸 의심 근거 캐러셀을 만든다.
 
     c-detail-carousel.json의 items[0]을 "의심 근거(C1)" 템플릿으로 보고
@@ -154,11 +210,18 @@ def render_detail_carousel(analysis_result: dict) -> dict:
 
     guidance_items = _guidance_items(analysis_result)
 
+    # D19: R9(와 그 자리의 #89 주의 갈래) 요약 카드에서 뺀 내용
+    r9_items = (
+        _r9_detail_items(analysis_result, case_result)
+        if case_result or select_result_card(analysis_result) == "r9-uncertain"
+        else []
+    )
+
     signal_budget = max(
         0,
         min(
             MAX_CAROUSEL_SIGNAL_ITEMS,
-            MAX_CAROUSEL_TOTAL_ITEMS - _FIXED_CAROUSEL_ITEMS - len(guidance_items),
+            MAX_CAROUSEL_TOTAL_ITEMS - _FIXED_CAROUSEL_ITEMS - len(guidance_items) - len(r9_items),
         ),
     )
 
@@ -211,7 +274,7 @@ def render_detail_carousel(analysis_result: dict) -> dict:
                 {
                     "carousel": {
                         "type": template["template"]["outputs"][0]["carousel"]["type"],
-                        "items": [*c1_items, c2_item, c3_template, *guidance_items],
+                        "items": [*c1_items, *r9_items, c2_item, c3_template, *guidance_items],
                     }
                 }
             ]

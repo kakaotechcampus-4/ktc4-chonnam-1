@@ -30,5 +30,6 @@ from services.message_cards import (  # noqa: F401
     render_message_answer_card,
     render_message_case_card,
     render_message_default_answer_card,
+    render_message_detail_carousel,
     render_message_question_card,
 )

@@ -9,7 +9,11 @@ import pytest
 import main
 from ai.case.types import ClaimView, Conclusion, MessageCaseResult, Scenario, StopAction
 from scanner.models import CollectResult
-from services.result_card_renderer import link_caution_applies, render_link_caution_card
+from services.result_card_renderer import (
+    link_caution_applies,
+    render_detail_carousel,
+    render_link_caution_card,
+)
 
 
 def _part(answer: str, brand: str | None = None, signals: list | None = None) -> dict:
@@ -47,8 +51,10 @@ def _case(caution: bool, *, conclusion: Conclusion = Conclusion.INCONCLUSIVE) ->
     ).model_dump(mode="json")
 
 
-def _text_card(card: dict) -> dict:
-    return card["template"]["outputs"][0]["textCard"]
+def _card_body(card: dict) -> dict:
+    """카드 본체. D19 로 주의 갈래 카드는 basicCard 다."""
+    output = card["template"]["outputs"][0]
+    return output.get("textCard") or output["basicCard"]
 
 
 class TestLinkCautionApplies:
@@ -72,17 +78,20 @@ class TestRenderLinkCautionCard:
     def test_caution_uses_r6b_uncertain_with_link_stop_line(self):
         card = render_link_caution_card(_analysis("not_registered"), _case(True))
 
-        text_card = _text_card(card)
-        assert text_card["title"] == "🔎 주의가 필요한 문자예요"
-        description = text_card["description"]
+        body = _card_body(card)
+        assert body["title"] == "🔎 주의가 필요한 문자예요"
+        description = body["description"]
         assert description.startswith("링크를 누르거나 정보를 입력하지 마세요.")
-        assert "주의할 점" in description
-        assert "- 내세운 명분: '쓰레기 무단투기 신고가 접수되었습니다'" in description
+        assert len(description) <= 230
+        # D19: 주장과 확인 범위는 '자세히 보기'(R9 와 같은 문자 캐러셀)에 있다
+        items = render_detail_carousel(_analysis("not_registered"), _case(True))
+        detail = str(items["template"]["outputs"][0]["carousel"]["items"])
+        assert "주의할 점" in detail
+        assert "- 내세운 명분: '쓰레기 무단투기 신고가 접수되었습니다'" in detail
         # 링크 결과의 주소·페이지 확인 범위를 함께 보여 준다
-        assert "주소가 공식 주소인지 (보낸 기관을 몰라 대조하지 못했어요)" in description
-        assert "페이지 내용 (열지 못했어요)" in description
-        assert "- 문자 내용" in description
-        assert len(description) <= 400
+        assert "주소가 공식 주소인지 (보낸 기관을 몰라 대조하지 못했어요)" in detail
+        assert "페이지 내용 (열지 못했어요)" in detail
+        assert "- 문자 내용" in detail
 
     def test_no_question_cards_on_link_result(self):
         # 링크 결과 아래 Q1 은 미구현(chatbot-copy.md D16)이라 붙이지 않는다
@@ -127,7 +136,7 @@ async def test_uncertain_link_with_caution_sends_caution_card(stub_read_message,
 
     response = await main.run_analysis("원문 https://evil.top/a")
 
-    assert _text_card(response)["title"] == "🔎 주의가 필요한 문자예요"
+    assert _card_body(response)["title"] == "🔎 주의가 필요한 문자예요"
     text, kwargs = link_flow["case"][0]
     # 링크를 뗀 본문을 링크가 있는 문자로 읽는다
     assert text == "청소행정과입니다. 정보를 입력해 주세요"
@@ -140,7 +149,7 @@ async def test_uncertain_link_without_caution_keeps_r9(stub_read_message, link_f
 
     response = await main.run_analysis("원문 https://evil.top/a")
 
-    assert _text_card(response)["title"] == "🤔 판단하기 어려워요"
+    assert _card_body(response)["title"] == "🤔 판단하기 어려워요"
 
 
 async def test_gate_runs_once_for_several_links(stub_read_message, link_flow):
@@ -162,7 +171,7 @@ async def test_gate_failure_falls_back_to_r9(stub_read_message, link_flow, monke
 
     response = await main.run_analysis("원문 https://evil.top/a")
 
-    assert _text_card(response)["title"] == "🤔 판단하기 어려워요"
+    assert _card_body(response)["title"] == "🤔 판단하기 어려워요"
 
 
 def test_same_quote_is_not_repeated_as_institution_and_pretext():
@@ -172,6 +181,6 @@ def test_same_quote_is_not_repeated_as_institution_and_pretext():
     case["claims"]["identity"] = [{"kind": "institution", "name": "kyc", "quote": quote, "listed_institution": False}]
     case["claims"]["pretexts"] = [quote]
 
-    description = _text_card(render_link_caution_card(_analysis("not_registered"), case))["description"]
+    description = _card_body(render_link_caution_card(_analysis("not_registered"), case))["description"]
 
     assert description.count(quote) == 1

@@ -9,22 +9,20 @@ from services.chatbot_copy_data import (
     get_message_failure_copy,
 )
 from services.official_domain_service import brand_for_domain, official_homepage
-from services.kakao_card_renderer import render_card, substitute_values
+from services.kakao_card_renderer import render_card
 from services.result_card_selector import select_result_card
 from services.card_parts import (
     NO_LINES,
     NO_RISK,
     PARTIAL,
-    TEXT_CARD_MAX_LENGTH,
     UNKNOWN,
     address_lines,
     env_lines,
     inject_job_id,
-    shorten_evidence,
+    render_verdict_summary,
 )
 
 _MAX_REQUESTED_ACTIONS = 3
-_R9_DEFAULT_MESSAGE_REASON = "문자 분석 결과를 전달받지 못했습니다."
 
 
 def _r9_org_label(brand: str | None) -> str:
@@ -73,7 +71,7 @@ def _r9_message_lines(
     return None, None
 
 
-def _r9_blank_values(analysis_result: dict) -> dict[str, str]:
+def r9_blank_values(analysis_result: dict) -> dict[str, str]:
     """r9-uncertain의 `{{ org_label }}`, `{{ checked }}`, `{{ unchecked }}`를 채운다.
 
     docs/designs/chatbot-copy.md "R9 판단 보류 → 빈칸 채우는 규칙"의 표를
@@ -117,15 +115,23 @@ def _r9_blank_values(analysis_result: dict) -> dict[str, str]:
     }
 
 
-def _r9_message_reason(message: dict) -> str:
-    """이슈 #68: `message.brand`는 택배사만 알아보므로, 청소행정과처럼
-    택배사가 아닌 기관이 내세운 명분·요구는 이 칸으로만 전달된다.
-    확인한 사실이 아니라 "문자가 주장한 내용"이라 기본값도 '확인'이
-    아니라 '전달받지 못했습니다'로 둔다."""
+def _r9_summary_values(analysis_result: dict) -> dict[str, str]:
+    """R9 요약 카드의 근거 한 줄과 확인하지 못한 것 한 줄(3절 "판정 요약 카드").
 
-    reason = ((message.get("details") or {}).get("reason") or {}).get("text")
-    reason = (reason or "").strip()
-    return reason or _R9_DEFAULT_MESSAGE_REASON
+    R9 는 아직 주장 칸이 없어 주소 줄만 근거로 쓴다(5순위). 주소를 대조하지 못했으면
+    그 사실을, 아니면 보낸 곳을 확인하지 못했다고 쓴다.
+    """
+
+    brand = (analysis_result.get("message") or {}).get("brand")
+    official = (analysis_result.get("url") or {}).get("official")
+    address_checked, address_unchecked = address_lines(official, brand)
+    return {
+        "basis_line": f"✅ {address_checked}" if address_checked else "",
+        "unchecked_line": (
+            "❌ 주소가 공식 주소인지 확인하지 못했어요." if address_unchecked
+            else "❌ 실제로 보낸 곳은 확인하지 못했어요."
+        ),
+    }
 
 
 def _result_card_values(analysis_result: dict, card_name: str) -> dict[str, str]:
@@ -155,7 +161,8 @@ def _result_card_values(analysis_result: dict, card_name: str) -> dict[str, str]
             values["official_url"] = homepage
 
     if card_name == "r9-uncertain":
-        values.update(_r9_blank_values(analysis_result))
+        values.update(r9_blank_values(analysis_result))
+        values.update(_r9_summary_values(analysis_result))
 
     return values
 
@@ -171,18 +178,10 @@ def render_result_card(
     card_name = select_result_card(analysis_result)
     values = _result_card_values(analysis_result, card_name)
 
-    card = render_card(card_name, values)
-
     if card_name == "r9-uncertain":
-        message = analysis_result.get("message") or {}
-        reason = _r9_message_reason(message)
-        node = card["template"]["outputs"][0]["textCard"]
-        # 다른 빈칸을 먼저 채운 뒤 400자에서 남는 만큼만 message_reason에 쓴다.
-        fixed = substitute_values(node["description"], {"message_reason": ""})
-        available = TEXT_CARD_MAX_LENGTH - len(fixed)
-        node["description"] = substitute_values(
-            node["description"],
-            {"message_reason": shorten_evidence(reason, available)},
-        )
+        # D19 요약 카드. 확인한 것과 문자에 적힌 내용은 '자세히 보기'에 둔다
+        card = render_verdict_summary(card_name, "uncertain", values)
+    else:
+        card = render_card(card_name, values)
 
     return inject_job_id(card, job_id, allow_details=allow_details)

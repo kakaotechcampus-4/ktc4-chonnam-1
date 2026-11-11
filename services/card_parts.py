@@ -1,5 +1,6 @@
 """카드 렌더러들이 같이 쓰는 조각: 문구 표, 줄이기, 버튼에 job_id 꽂기, 응답 합치기."""
 
+import re
 from typing import Any
 
 from services.kakao_card_renderer import render_card
@@ -10,7 +11,29 @@ UNKNOWN = "unknown"
 NO_RISK = "no_risk_found"
 PARTIAL = "partial"
 NO_LINES = "- 없음"
-TEXT_CARD_MAX_LENGTH = 400
+
+# D19 판정 요약 카드(chatbot-copy.md 3절 "판정 요약 카드"). 앞면은 basicCard 본문 한도 안,
+# 앞면에서 뺀 근거는 '자세히 보기' 캐러셀(textCard, 장당 128자)에 둔다.
+_SUMMARY_MAX_LENGTH = 230
+CAROUSEL_TEXT_MAX_LENGTH = 128
+SCOPE_NOTE = "결과는 확인한 자료로만 안내했어요. 확인하지 못한 부분은 판단에 넣지 않았어요."
+_CARD_IMAGE_BASE = (
+    "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/"
+    "frontend/kakao-templates/assets/cards/"
+)
+_UNCERTAIN_IMAGE = (
+    _CARD_IMAGE_BASE + "r3-inconclusive.png",
+    "내용이 비어 있는 화면과 물음표 옆에서 고민하는 기니피그",
+)
+# 결론별 이미지. 주의 이미지는 아직 없어 판단 보류 이미지를 같이 쓴다
+_VERDICT_IMAGES = {
+    "suspected": (
+        _CARD_IMAGE_BASE + "r1-danger.png",
+        "빨간 경고 표지판 옆에서 손바닥을 들어 멈추라고 하는 경찰 모자 기니피그",
+    ),
+    "caution": _UNCERTAIN_IMAGE,
+    "uncertain": _UNCERTAIN_IMAGE,
+}
 
 
 def shorten_evidence(evidence: str, max_length: int = EVIDENCE_MAX_LENGTH) -> str:
@@ -19,6 +42,27 @@ def shorten_evidence(evidence: str, max_length: int = EVIDENCE_MAX_LENGTH) -> st
     if max_length <= 0:
         return ""
     return evidence[: max_length - 1] + "…"
+
+
+def fit_lines(lines: list[str], max_length: int) -> str:
+    """줄 목록을 max_length 안으로 맞춘다(4절 "판정 요약 카드에서 옮긴 내용").
+
+    아래 줄부터 괄호 이유를 빼고, 그래도 넘으면 아래 줄부터 뺀다. 무엇을 확인했는지가
+    이유보다 먼저다. 한 줄만 남아도 넘으면 끝을 줄인다.
+    """
+
+    lines = list(lines)
+
+    def size() -> int:
+        return len("\n".join(lines))
+
+    for index in range(len(lines) - 1, -1, -1):
+        if size() <= max_length:
+            break
+        lines[index] = re.sub(r" \([^()]*\)$", "", lines[index])
+    while size() > max_length and len(lines) > 1:
+        lines.pop()
+    return shorten_evidence("\n".join(lines), max_length)
 
 
 STOP_ACTION_JOIN = {
@@ -62,15 +106,11 @@ def response_action_lines(response_actions: list[str], answers: list[str]) -> li
 
 
 # Q1 option_id -> 리스트 카드 항목 썸네일(문자·녹음 공용). 없는 답(clicked_link)은 이미지를 달지 않는다.
-Q1_IMAGE_BASE = (
-    "https://raw.githubusercontent.com/kakaotechcampus-4/ktc4-chonnam-1/develop/"
-    "frontend/kakao-templates/assets/cards/"
-)
 Q1_OPTION_IMAGES = {
-    "entered_info": Q1_IMAGE_BASE + "q1-list-1-entered-info.png",
-    "installed_app": Q1_IMAGE_BASE + "q1-list-2-installed-app.png",
-    "sent_money": Q1_IMAGE_BASE + "q1-list-3-sent-money.png",
-    "not_yet": Q1_IMAGE_BASE + "q1-list-4-not-yet.png",
+    "entered_info": _CARD_IMAGE_BASE + "q1-list-1-entered-info.png",
+    "installed_app": _CARD_IMAGE_BASE + "q1-list-2-installed-app.png",
+    "sent_money": _CARD_IMAGE_BASE + "q1-list-3-sent-money.png",
+    "not_yet": _CARD_IMAGE_BASE + "q1-list-4-not-yet.png",
 }
 
 
@@ -188,12 +228,37 @@ def merge_kakao_responses(responses: list[dict]) -> dict:
     }
 
 
+def card_node(card: dict) -> dict:
+    """첫 output 의 카드 본체. 요약 카드는 basicCard, 그 밖은 textCard 다."""
+
+    output = card["template"]["outputs"][0]
+    return output.get("basicCard") or output["textCard"]
+
+
 def tidy_description(card: dict) -> dict:
     """빈 빈칸이 남긴 앞쪽 빈 줄과 겹친 빈 줄을 정리한다("남는 빈 줄은 BE가 정리한다")."""
 
-    text_card = card["template"]["outputs"][0]["textCard"]
-    description = text_card["description"].lstrip("\n")
+    node = card_node(card)
+    description = node["description"].lstrip("\n")
     while "\n\n\n" in description:
         description = description.replace("\n\n\n", "\n\n")
-    text_card["description"] = description
+    node["description"] = description.rstrip("\n")
+    return card
+
+
+def render_verdict_summary(card_name: str, kind: str, values: dict[str, str]) -> dict:
+    """판정 요약 카드를 채운다. 빈칸이 남긴 빈 줄을 정리하고 230자를 넘지 않게 한다."""
+
+    image_url, image_alt = _VERDICT_IMAGES[kind]
+    card = tidy_description(render_card(card_name, {
+        **values, "image_url": image_url, "image_alt": image_alt,
+    }))
+    node = card_node(card)
+    if len(node["description"]) > _SUMMARY_MAX_LENGTH:
+        # 규칙대로면 넘지 않는다. 넘으면 근거 줄을 빼고, 그래도 넘으면 끝을 줄인다
+        card = tidy_description(render_card(card_name, {
+            **values, "basis_line": "", "image_url": image_url, "image_alt": image_alt,
+        }))
+        node = card_node(card)
+        node["description"] = shorten_evidence(node["description"], _SUMMARY_MAX_LENGTH)
     return card

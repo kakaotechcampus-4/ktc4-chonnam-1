@@ -35,6 +35,7 @@ from services.result_card_renderer import (
     render_voice_detail_carousel,
     render_voice_answer_card,
     render_message_case_card,
+    render_message_detail_carousel,
     render_message_answer_card,
     render_message_default_answer_card,
     link_caution_applies,
@@ -270,7 +271,12 @@ def handle_detail_carousel(job_id: str) -> dict:
     if job.get("analysis_kind") == "voice":
         return render_voice_detail_carousel(final_payload)
 
-    return render_detail_carousel(final_payload)
+    # D19: 링크 없는 문자 결과(R6b)도 요약 카드라 앞면에서 뺀 내용을 여기서 보여 준다
+    if job.get("analysis_kind") == "message_case":
+        return render_message_detail_carousel(final_payload)
+
+    # #89 주의 갈래로 나간 링크 결과면 그 카드가 쓴 문자 게이트 결과로 상세를 만든다
+    return render_detail_carousel(final_payload, job.get("link_case"))
 
 
 # ============================================================
@@ -562,12 +568,18 @@ async def run_analysis(
                     if not link_case_read:
                         link_case = await _link_message_case(reading.message, started)
                         link_case_read = True
-                    caution_card = render_link_caution_card(final_payload, link_case)
+                    caution_card = render_link_caution_card(
+                        final_payload, link_case,
+                        job_id=job_id, allow_details=(link_count == 1),
+                    )
                 cards.append(caution_card or render_result_card(
                     final_payload, job_id=job_id, allow_details=(link_count == 1),
                 ))
                 if job_id is not None and (job := ANALYSIS_JOBS.get(job_id)):
                     job["final_payload"] = final_payload
+                    if caution_card is not None:
+                        # '자세히 보기'가 주의 갈래 카드와 같은 근거를 보여 주게 남긴다
+                        job["link_case"] = link_case
             except Exception as error:  # noqa: BLE001 — 링크 하나가 실패해도 나머지 링크 결과는 보낸다
                 _log.warning(f"[ANALYSIS ERROR] {type(error).__name__}")
                 cards.append(render_card("r4-unavailable"))

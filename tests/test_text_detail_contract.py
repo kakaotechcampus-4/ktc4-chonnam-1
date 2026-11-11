@@ -10,6 +10,11 @@ from services import card_parts, detail_carousel
 from services.chatbot_copy_data import SIGNAL_COPY
 
 
+def _scope_item(items: list[dict]) -> dict:
+    # D19: 판단 보류(R9)면 확인한 것, 확인하지 못한 것 장이 C2 앞에 붙는다. C2 는 제목으로 찾는다
+    return next(item for item in items if item["title"] == "📋 확인 범위")
+
+
 @pytest.mark.parametrize("code", list(SIGNAL_COPY))
 @pytest.mark.parametrize("length", [0, 1, 59, 60, 128, 300])
 def test_text_carousel_keeps_complete_reason_within_128(monkeypatch, code, length):
@@ -78,7 +83,7 @@ def test_scope_with_failures_fits_without_losing_disclaimer(monkeypatch, message
     carousel = renderer.render_detail_carousel({
         "message": part(message_answer), "env": part(env_answer),
     })["template"]["outputs"][0]["carousel"]
-    scope = carousel["items"][0]
+    scope = _scope_item(carousel["items"])
     assert len(scope["description"]) <= 128
     assert scope["description"].endswith("확인하지 못한 부분은 판단에 넣지 않았어요.")
 
@@ -106,7 +111,8 @@ def test_scope_separates_address_verification_from_analysis(monkeypatch, officia
     payload = {"url": {"official": official},
                "message": {"answer": message_answer, "details": {"reason": {"failures": ["timeout"]}}},
                "env": {"answer": env_answer}}
-    scope = renderer.render_detail_carousel(payload)["template"]["outputs"][0]["carousel"]["items"][0]["description"]
+    items = renderer.render_detail_carousel(payload)["template"]["outputs"][0]["carousel"]["items"]
+    scope = _scope_item(items)["description"]
     assert len(scope) <= 128
     assert "모두 확인했어요" not in scope
     assert ("공식 주소 여부는 확인하지 못했어요." in scope) == (official not in ("official", "brand_mismatch"))

@@ -17,7 +17,7 @@ from services.result_card_renderer import (
     render_detail_carousel,
     render_result_card,
 )
-from services.link_cards import _r9_blank_values
+from services.link_cards import r9_blank_values
 
 from services.chatbot_copy_data import (
     get_message_failure_copy,
@@ -150,9 +150,19 @@ class TestRenderResultCard:
         )
 
 
+_R9_MOVED_TITLES = ("📩 문자에 적힌 내용", "✅ 확인한 것", "❌ 확인하지 못한 것")
+# D19: 판단 보류(R9) 결과의 캐러셀에는 위 세 장이 C2 앞에 붙는다
+_R9_DETAIL_ITEMS = len(_R9_MOVED_TITLES)
+
+
 def _r9_description(analysis: dict) -> str:
-    card = render_result_card(analysis)
-    return card["template"]["outputs"][0]["textCard"]["description"]
+    """D19: R9 앞면은 요약 카드이고, 확인한 것, 확인하지 못한 것, 문자에 적힌 내용은
+    '자세히 보기'의 장으로 옮겼다. 빈칸을 채우는 규칙은 그대로라 두 곳을 이어 붙여 본다."""
+
+    front = render_result_card(analysis)["template"]["outputs"][0]["basicCard"]["description"]
+    items = render_detail_carousel(analysis)["template"]["outputs"][0]["carousel"]["items"]
+    moved = [f"{i['title']}\n{i['description']}" for i in items if i["title"] in _R9_MOVED_TITLES]
+    return "\n\n".join([front, *moved])
 
 
 def _c2_text(analysis: dict) -> str:
@@ -319,7 +329,7 @@ class TestR9BlankValues:
             _part("not_run"),
         )
 
-        values = _r9_blank_values(analysis)
+        values = r9_blank_values(analysis)
 
         assert "- 문자 내용 (문자 분석을 완료하지 못했어요)" in values["unchecked"]
         assert "문자 내용 (문자 분석을 완료하지 못했어요)" not in values["checked"]
@@ -551,7 +561,7 @@ class TestR9MessageReason:
 
         assert "문자에 적힌 내용\n문자 분석 결과를 전달받지 못했습니다." in description
 
-    def test_card_stays_within_400_chars_and_truncates_reason(self):
+    def test_summary_and_reason_card_stay_within_limits_and_truncate_reason(self):
         long_reason = "문자가 내세운 명분: '" + "가" * 500 + "'."
         analysis = _analysis(
             "not_registered",
@@ -566,12 +576,17 @@ class TestR9MessageReason:
         analysis["message"]["details"]["reason"]["failures"] = ["timeout"]
         analysis["env"]["details"]["reason"]["failures"] = []
 
-        description = _r9_description(analysis)
+        # D19: 앞면은 basicCard 230자, 문자에 적힌 내용은 '자세히 보기'의 한 장(128자)이다
+        front = render_result_card(analysis)["template"]["outputs"][0]["basicCard"]["description"]
+        items = render_detail_carousel(analysis)["template"]["outputs"][0]["carousel"]["items"]
+        reason = next(i for i in items if i["title"] == "📩 문자에 적힌 내용")["description"]
 
-        assert len(description) <= 400
-        assert description.endswith("기한이 있다면 미리 공식 경로로 확인하세요.")
+        assert len(front) <= 230
+        assert front.endswith("기한이 있다면 미리 공식 경로로 확인하세요.")
+        assert len(reason) <= 128
         # 잘렸으면 원문 전체가 다 들어갈 리 없다.
-        assert long_reason not in description
+        assert reason.endswith("…")
+        assert long_reason not in reason
 
     def test_other_blank_values_are_not_affected_by_message_reason(self):
         """message_reason 치환이 이미 채워진 {{ checked }}/{{ unchecked }}
@@ -668,7 +683,7 @@ class TestRenderDetailCarousel:
         carousel = render_detail_carousel(analysis)
 
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
-        assert len(items) == 2
+        assert len(items) == _R9_DETAIL_ITEMS + 2
 
 
 class TestRenderDetailCarouselGuidance:
@@ -689,7 +704,7 @@ class TestRenderDetailCarouselGuidance:
         carousel = render_detail_carousel(self._analysis())
 
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
-        assert len(items) == 2  # C2 + C3만
+        assert len(items) == _R9_DETAIL_ITEMS + 2  # R9 상세 + C2 + C3만
 
     def test_verification_kind_uses_text_as_is(self, monkeypatch):
         monkeypatch.setattr(
@@ -700,7 +715,7 @@ class TestRenderDetailCarouselGuidance:
         carousel = render_detail_carousel(self._analysis())
 
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
-        assert len(items) == 3
+        assert len(items) == _R9_DETAIL_ITEMS + 3
         assert "인터넷우체국에서 본인 확인 후 조회하세요." in str(items[-1])
 
     def test_procedure_kind_formats_source_and_year(self, monkeypatch):
@@ -729,7 +744,7 @@ class TestRenderDetailCarouselGuidance:
         carousel = render_detail_carousel(self._analysis())
 
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
-        assert len(items) == 2 + 3  # C2 + C3 + 안내 최대 3장
+        assert len(items) == _R9_DETAIL_ITEMS + 2 + 3  # R9 상세 + C2 + C3 + 안내 최대 3장
 
     def test_long_guidance_text_is_truncated_to_128_chars(self, monkeypatch):
         long_text = "고객센터 " + "0" * 200
@@ -771,7 +786,7 @@ class TestRenderDetailCarouselGuidance:
         carousel = render_detail_carousel(self._analysis())
 
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
-        assert len(items) == 2  # C2 + C3는 그대로 나간다
+        assert len(items) == _R9_DETAIL_ITEMS + 2  # R9 상세, C2, C3는 그대로 나간다
 
     def test_c2_shows_message_failure_reason_when_env_is_complete(self):
         """이슈 #59: 문자 분석 실패 + 페이지 분석 정상 완료 — 정상 완료된

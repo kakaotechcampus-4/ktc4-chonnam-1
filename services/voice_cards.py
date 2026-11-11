@@ -10,9 +10,13 @@ from services.chatbot_copy_data import (
 from services.kakao_card_renderer import render_card
 from services.card_parts import (
     ANSWER_BLOCK_ID,
+    CAROUSEL_TEXT_MAX_LENGTH,
+    SCOPE_NOTE,
     STOP_ACTION_JOIN,
+    fit_lines,
     inject_job_id,
     merge_kakao_responses,
+    render_verdict_summary,
     response_action_lines,
     shorten,
     tidy_description,
@@ -125,28 +129,8 @@ def _voice_verify_line(official_contact: dict | None) -> str:
     return "통화에 나온 기관의 대표번호를\n직접 찾아 전화해 확인하세요."
 
 
-def _voice_call_claims(claims: dict, caution: bool) -> str:
-    """"주의할 점"/"통화에서 들은 내용" 블록(이슈 #115 V1 call_claims 매핑).
-
-    기관 = identity[].quote, 통화에 나온 말 = 첫 demands[].quote, 통화에
-    나온 사정 = blockers(있으면) 또는 pretexts, 통화에 나온 요구 =
-    demands[].kind 라벨(최대 3개). 전부 비어 있으면 통째로 빈 문자열
-    ("칸 제목 포함, 값 없으면 빈 문자열").
-
-    "내세운 사정 = blockers → pretexts"는 이슈 원문 그대로 "blockers가
-    있으면 그걸, 없으면 pretexts"로 읽어 구현했다 — 다르게 뜻했다면
-    확인 필요(보고 사항).
-
-    말머리는 이슈 #139에 따라 "통화에 나온 ~"로 기본값을 바꿨다(ADR
-    0008로 화자 분리를 아예 없앴으니 "상대가"라고 단정할 근거가 없다).
-    예전에는 `speaker_unknown`일 때만 이 말머리로 바꾸는 치환 루프가
-    있었다 — ADR 0008이 채택되고(2026-11-07) #116이 "화자 분리 코드
-    자체가 없어져 speaker/speaker_unknown을 결과에 남길 필요가 없다"며
-    닫혀(2026-11-10), 그 분기가 영영 쓰일 수 없다는 게 확정돼 지웠다
-    (이슈 #139). 같은 이유로 `_voice_verify_line()`·`claim_note`의
-    `speaker_unknown` 분기와 `_voice_speaker_unknown()` 자체도 PR #167
-    리뷰에 따라 함께 지웠다.
-    """
+def _voice_claim_lines(claims: dict) -> list[str]:
+    """통화 주장 줄(`- 통화에 나온 기관: '…'` 등). 칸 제목은 붙이지 않는다."""
 
     identity = claims.get("identity") or []
     demands = claims.get("demands") or []
@@ -169,12 +153,30 @@ def _voice_call_claims(claims: dict, caution: bool) -> str:
             _VOICE_DEMAND_LABELS.get(d.get("kind", ""), "기타 요구") for d in demands[:3]
         ]
         lines.append(f"- 통화에 나온 요구: {', '.join(demand_labels)}")
+    return lines
 
-    if not lines:
-        return ""
 
-    title = "⚠️ 주의할 점" if caution else "📞 통화에서 들은 내용"
-    return f"{title}\n" + "\n".join(lines) + "\n\n"
+def _voice_basis_line(result: dict, alert: bool) -> str:
+    """V1 요약 카드의 근거 한 줄(3절 "판정 요약 카드" `basis_line`).
+
+    번호 대조에서 대표번호가 아니라고 나온 것이 가장 확실한 근거다. 없으면 통화에 나온
+    기관, 그다음 사정 인용을 쓴다. 요구는 멈출 행동 줄과 같은 말이라 고르지 않는다.
+    """
+
+    for check in result.get("number_checks") or []:
+        if check.get("result") == "not_official":
+            line = _NUMBER_CHECK_CHECKED_LINES["not_official"]
+            return "✅ " + line.format(number=check.get("number", ""), org=check.get("org", ""))
+
+    claims = result.get("claims") or {}
+    mark = "⚠️" if alert else "📞"
+    quotes = [i.get("quote") for i in claims.get("identity") or [] if i.get("quote")]
+    if quotes:
+        return f"{mark} 통화에 나온 기관: '{shorten(quotes[0])}'"
+    pretext_source = (claims.get("blockers") or []) or (claims.get("pretexts") or [])
+    if pretext_source:
+        return f"{mark} 통화에 나온 사정: '{shorten(pretext_source[0])}'"
+    return ""
 
 
 def _voice_number_check_entries(number_checks: list[dict]) -> tuple[list[str], list[str]]:
@@ -282,25 +284,24 @@ def render_voice_result_card(result: dict, job_id: str | None = None) -> dict:
         return render_card("ve4-no-claim")
 
     caution = bool(result.get("caution"))
-    checked, unchecked = _voice_checked_unchecked(result)
 
     if conclusion == Conclusion.SUSPECTED.value:
-        headline = "⚠️ 보이스피싱이 의심돼요"
+        kind, headline = "suspected", "⚠️ 보이스피싱이 의심돼요"
     elif caution:
-        headline = "🔎 주의가 필요한 통화예요"
+        kind, headline = "caution", "🔎 주의가 필요한 통화예요"
     else:
-        headline = "🤔 판단하기 어려워요"
+        kind, headline = "uncertain", "🤔 판단하기 어려워요"
 
-    card = render_card("v1-voice-result", {
+    # D19: 앞면은 할 일, 근거 한 줄, 확인하지 못한 것 한 줄. 나머지는 녹음 캐러셀에 있다
+    card = render_verdict_summary("v1-voice-result", kind, {
         "headline": headline,
         "stop_line": _voice_stop_line(result.get("stop_actions") or []),
         "verify_line": _voice_verify_line(result.get("official_contact")),
-        "call_claims": _voice_call_claims(result.get("claims") or {}, caution),
-        "checked": checked,
-        "unchecked": unchecked,
+        "basis_line": _voice_basis_line(result, kind != "uncertain"),
+        "unchecked_line": "❌ 실제로 건 곳은 확인하지 못했어요.",
     })
 
-    card = inject_job_id(tidy_description(card), job_id)
+    card = inject_job_id(card, job_id)
     questions = result.get("questions") or []
     if not questions:
         return card
@@ -390,16 +391,17 @@ def render_voice_detail_carousel(result: dict) -> dict:
     이슈 #115). `VoiceCaseResult`는 문자·URL 결과와 모양이 완전히 달라
     `render_detail_carousel()`을 재사용하지 않는다.
 
-    `claim_lines`는 `call_claims`에서 칸 제목(첫 줄)만 뺀 줄들이다.
+    `claim_lines`는 통화 주장 줄(칸 제목 없이)이다.
     """
 
-    caution = bool(result.get("caution"))
-    claims_block = _voice_call_claims(result.get("claims") or {}, caution).strip()
-    claim_lines = (
-        "\n".join(claims_block.splitlines()[1:]) if claims_block else "확인된 의심 근거가 없어요."
-    )
-    _, unchecked = _voice_checked_unchecked(result)
+    claim_lines = "\n".join(_voice_claim_lines(result.get("claims") or {})) or "확인된 의심 근거가 없어요."
+    checked, unchecked = _voice_checked_unchecked(result)
     verify_line = _voice_verify_line(result.get("official_contact"))
+    # D19: 결과 카드 앞면에서 뺀 확인한 것, 확인하지 못한 것을 장당 128자 안으로 둔다
+    checked = fit_lines(checked.splitlines(), CAROUSEL_TEXT_MAX_LENGTH)
+    unchecked = fit_lines(
+        unchecked.splitlines(), CAROUSEL_TEXT_MAX_LENGTH - len("\n\n" + SCOPE_NOTE),
+    )
 
     # #109: 가장 닮은 사례 하나(matches[0])의 type 으로 문구를 고른다. 표에 없는 유형이면
     # 수법을 추측하지 않고 사례를 찾았다는 사실만 알린다.
@@ -411,6 +413,7 @@ def render_voice_detail_carousel(result: dict) -> dict:
         "claim_note": "상대가 한 말로 보이는 문장만 근거로 썼어요.",
         "similar_type": similar_type,
         "similar_line": similar_line,
+        "checked": checked,
         "unchecked": unchecked,
         "verify_line": verify_line,
     })

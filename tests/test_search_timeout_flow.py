@@ -57,8 +57,10 @@ def _use_search(monkeypatch, search_cases):
     monkeypatch.setattr(main, "analyze_message_case", analyze)
 
 
-def _description(card: dict) -> str:
-    return card["template"]["outputs"][0]["textCard"]["description"]
+def _detail(payload: dict) -> str:
+    """D19: 확인한 것, 확인하지 못한 것은 R6b 요약 카드가 아니라 '자세히 보기'에 있다."""
+    items = main.render_message_detail_carousel(payload)["template"]["outputs"][0]["carousel"]["items"]
+    return "\n".join(item["description"] for item in items)
 
 
 async def test_slow_embedding_still_reports_similar_cases(monkeypatch, kb, slow_embedding, caplog):
@@ -67,13 +69,13 @@ async def test_slow_embedding_still_reports_similar_cases(monkeypatch, kb, slow_
     main.ANALYSIS_JOBS.update(jobs)
 
     with caplog.at_level(logging.WARNING):
-        card = await main.run_message_case(TEXT, job_id="job-1")
+        await main.run_message_case(TEXT, job_id="job-1")
 
     payload = jobs["job-1"]["final_payload"]
     assert [m["case_id"] for m in payload["similar_cases"]["matches"]] == ["CE-9001"]
     assert "similar_cases" in payload["checked"]
-    assert "- 비슷한 사례" in _description(card)
-    assert "비슷한 사례 (" not in _description(card)
+    assert "- 비슷한 사례" in _detail(payload)
+    assert "비슷한 사례 (" not in _detail(payload)
     # 진단 로그에 문자 내용이 남지 않는다
     assert "case search mode=tfidf matches=1" in caplog.text
     assert "핀번호" not in caplog.text
@@ -84,12 +86,14 @@ async def test_whole_budget_timeout_shows_unchecked_not_no_cases(monkeypatch, ca
         time.sleep(3.0)
 
     _use_search(monkeypatch, stuck)
+    jobs = {"job-2": {"status": "running"}}
+    monkeypatch.setattr(main, "ANALYSIS_JOBS", jobs)
 
     with caplog.at_level(logging.WARNING):
-        card = await main.run_message_case(TEXT)
+        card = await main.run_message_case(TEXT, job_id="job-2")
 
     # 검색 실패(시간 초과)는 "사례 없음" 이 아니라 확인하지 못한 것으로 보인다
-    assert "- 비슷한 사례 (시간 안에 끝내지 못했어요)" in _description(card)
+    assert "- 비슷한 사례 (시간 안에 끝내지 못했어요)" in _detail(jobs["job-2"]["final_payload"])
     assert "message case search timed out" in caplog.text
     # 판정과 카드 종류는 그대로다
-    assert card["template"]["outputs"][0]["textCard"]["title"] == "🔎 주의가 필요한 문자예요"
+    assert card["template"]["outputs"][0]["basicCard"]["title"] == "🔎 주의가 필요한 문자예요"

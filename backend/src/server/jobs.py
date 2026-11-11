@@ -30,10 +30,12 @@ class Job(TypedDict, total=False):
     error: str | None
     callback_status: Literal["pending", "success", "failed"]
     callback_error: str | None
-    # 아래 셋은 분석하면서 붙는다. analysis_kind 가 없으면 링크 문자다
+    # 아래는 분석하면서 붙는다. analysis_kind 가 없으면 링크 문자다
     analysis_kind: Literal["voice", "message_case"]
     link_count: int
     qa_answers: list[str]
+    # #89 주의 갈래 카드에 쓴 문자 게이트 결과. '자세히 보기'가 같은 근거를 보여 준다
+    link_case: dict | None
 
 
 ANALYSIS_JOBS: dict[str, Job] = {}
