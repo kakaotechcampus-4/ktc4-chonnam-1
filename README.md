@@ -6,8 +6,6 @@
 화기니는 사용자가 받은 의심스러운 문자와 통화 녹음 등을 카카오톡 채널에서 검사하고, 위험 신호와 확인하지 못한 항목을 이해하기 쉬운 카드로 안내하는 피싱 대응 챗봇입니다.
 
 - **서비스 이용 링크:** [카카오톡 채널 바로가기](http://pf.kakao.com/_ycxoxeX)
-- **시연 영상:** `[5분 이내 영상 URL 입력]`
-- **발표 자료:** `[발표 자료 URL 입력]`
 - **기술문서:** [테크스펙](https://ktc4-chonnam-1-docs.vercel.app/tech-spec/) | [개발 문서 인덱스](docs/README.md)
 - **협업문서:** [협업 가이드](https://ktc4-chonnam-1-docs.vercel.app/collab/)
 
