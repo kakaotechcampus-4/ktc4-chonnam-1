@@ -685,6 +685,6 @@ async def test_owned_client_uses_page_budget_and_closes_after_cancellation(monke
     with pytest.raises(asyncio.CancelledError):
         await analyze_page(inspected)
 
-    assert budgets == [5.0]
+    assert budgets == [8.0]
     assert requested_names == ["LLM_MODEL"]
     client.close.assert_awaited_once()

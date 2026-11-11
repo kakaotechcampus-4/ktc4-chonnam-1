@@ -288,6 +288,6 @@ async def test_client_ownership_and_cancellation(official, owned, cancel, failur
         await asyncio.gather(task, return_exceptions=True)
     assert client.closed is owned
     if owned:
-        factory.assert_called_once_with(5.0)
+        factory.assert_called_once_with(8.0)
     else:
         factory.assert_not_called()
