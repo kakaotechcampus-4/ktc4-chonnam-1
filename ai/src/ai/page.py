@@ -5,10 +5,14 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from html.parser import HTMLParser
 import json
+import logging
 import re
 from time import monotonic
 
+from ai.diagnostics import where
 from ai.types import EnvDoubt, FailureCode
+
+LOGGER = logging.getLogger(__name__)
 
 
 MAX_HTML_BYTES = 262_144
@@ -655,7 +659,9 @@ def inspect_html(info: str) -> PageInspection:
         timed_out = True
     except _InspectionLimit:
         pass
-    except Exception:
+    except Exception as error:  # noqa: BLE001 — HTML 파서 안의 오류다. 읽은 데까지 쓰고 부분 결과로 표시한다
+        # 큰 페이지와 같은 부분 결과로 나가므로, 코드 결함과 구분하려면 이 줄이 필요하다
+        LOGGER.warning("html inspection failed: %s", where(error))
         collector.malformed_important = True
     finally:
         collector.finish()

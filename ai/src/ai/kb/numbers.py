@@ -10,12 +10,35 @@ import threading
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 import yaml
 
-from ai.case.types import NumberCheck, OfficialContact
+from ai.types import StrictModel
 
 LOGGER = logging.getLogger(__name__)
+
+
+class NumberCheck(StrictModel):
+    """상대가 말한 번호를 내세운 기관의 공식 대표번호와 맞춰 본 결과 (v3 §6.3)."""
+
+    number: str
+    org: str
+    # org_not_listed: 대표번호 KB 에 없는 기관. 공식이 아니라는 뜻이 아니다
+    result: Literal["official", "not_official", "org_not_listed"]
+    source_url: str | None = None
+
+
+class OfficialContact(StrictModel):
+    """상대가 내세운 기관의 공식 대표번호. V1 확인 안내(`verify_line`)에 쓴다.
+
+    번호는 대표번호 KB 에서만 온다. 녹음 속 번호는 사기범 번호일 수 있어 쓰지 않는다.
+    """
+
+    org: str
+    number: str
+    source_url: str
+
 
 NUMBERS_PATH = Path(__file__).resolve().parent / "official_numbers.yaml"
 _LOAD_LOCK = threading.Lock()

@@ -141,20 +141,6 @@ def _truncate_html(html: str, limit: int) -> tuple[str, bool]:
     return encoded[:limit].decode("utf-8", errors="ignore"), True
 
 
-def _invalid(expected_url: str, failure: str) -> CollectResult:
-    return CollectResult(
-        input_url=expected_url,
-        final_url=None,
-        redirect_chain=(),
-        status_code=None,
-        content_type=None,
-        html="",
-        title=None,
-        elapsed_ms=0,
-        failures=(failure,),
-    )
-
-
 def parse_collect_response(expected_url: str, data: dict) -> CollectResult:
     """`/collect` 응답 본문을 `CollectResult`로 바꾼다.
 
@@ -173,13 +159,13 @@ def parse_collect_response(expected_url: str, data: dict) -> CollectResult:
     """
 
     if not isinstance(data, dict):
-        return _invalid(expected_url, "invalid_response")
+        return CollectResult.failed(expected_url, "invalid_response")
 
     reported_url = _as_str(data.get("input_url"))
     if reported_url is None:
-        return _invalid(expected_url, "invalid_response")
+        return CollectResult.failed(expected_url, "invalid_response")
     if reported_url != expected_url:
-        return _invalid(expected_url, "url_mismatch")
+        return CollectResult.failed(expected_url, "url_mismatch")
 
     failures = _as_failures(data.get("failures"))
 

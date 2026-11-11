@@ -71,3 +71,26 @@ python eval/voice_rag_eval.py --dev-only --extra-normals <로컬 정상 jsonl>  
 결과는 `reports/2026-10-28-voice-rag-minority.md` "Task 6".
 관문 모델 json 의 `feature_hash` 는 단계 신호가 쓰는 어휘 패턴의 해시다. 어휘표를 고치면 달라지므로 관문을 다시
 학습한다(`tests/test_attach_gate.py` 가 현재 값과 같은지 확인한다).
+
+## 에이전트 라우터 행동 평가
+
+`ai/` 에서 실행한다. LLM 키가 필요하다. 에이전트 모델은 `AGENT_MODEL`, 없으면 `LLM_MODEL` 이다.
+
+```bash
+python eval/agent_router_eval.py [--label <이름>]   # reports/<날짜>-agent-router[-<이름>].md
+```
+
+에이전트가 돌릴 분석을 어떻게 고르는지와 그 때문에 붙는 지연을 잰다([ADR 0012](../../docs/adr/0012-agent-analysis-router.md)).
+`datasets/smishing.jsonl`·`benign.jsonl` 의 문자마다 `read_message` 로 링크를 읽고, 같은 읽기로 조사를 두 번(에이전트 끔, 켬) 돌린다.
+BE 도구(수집·문자 신호·공식 대조·주장 분석)는 정해 둔 관측을 정해 둔 시간(1초) 뒤에 돌려주는 가짜다.
+운영은 카드가 끝나면 에이전트를 끊지만 평가는 선택을 끝까지 보려고 에이전트가 끝날 때까지 기다린다.
+
+- 루프가 끝난 이유(`done`·`turn_limit`·`call_limit`·`llm_error`·`preempted`)와 LLM 턴 수
+- 도구별로 누가 분석을 시작했는지: 에이전트가 먼저(`agent+code`), 코드만(`code`), 에이전트만(`agent`)
+- 첫 수를 기다린 시간, 카드 근거를 다 꺼내기까지 걸린 시간
+- 카드가 읽는 근거가 에이전트를 끈 실행과 같은 행 수. 다르면 에이전트 버그다
+
+카드가 같은지는 이 평가가 아니라 저장소 루트의 `tests/test_agent_router.py` 가 가짜 LLM 으로 확인한다. 가짜 도구의 관측은
+모든 문자에 같아서 에이전트의 두 번째 턴 선택은 운영과 다를 수 있다. 판정·카드 품질의 지표가 아니다.
+
+LLM 키가 없는 환경에서 만들어 가짜 LLM 으로만 돌려 봤다(`ai/tests/test_agent_router_eval.py`). 실제 실행 리포트는 아직 없다.

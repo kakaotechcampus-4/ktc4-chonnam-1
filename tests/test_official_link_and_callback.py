@@ -6,9 +6,10 @@ import pytest
 from fastapi import BackgroundTasks
 
 import main
+from services.kakao_card_renderer import render_card
 from backend.src.server.callback_guard import callback_host, is_allowed_callback_url
 from services.official_domain_service import check_link_official, official_homepage
-from services.result_card_renderer import _result_card_values
+from services.link_cards import _result_card_values
 
 WL = {"CJ대한통운": {"cjlogistics.com"}}
 
@@ -116,7 +117,7 @@ class TestKakaoSkillCallback:
         response = await main.kakao_skill(FakeRequest(skill_body("http://169.254.169.254/latest")), tasks)
         assert tasks.tasks == []
         assert "u-test" not in main.RUNNING_USERS
-        assert json.dumps(response, ensure_ascii=False) == json.dumps(main.render_card("r4-unavailable"), ensure_ascii=False)
+        assert json.dumps(response, ensure_ascii=False) == json.dumps(render_card("r4-unavailable"), ensure_ascii=False)
 
     async def test_kakao_callback_starts_analysis(self, monkeypatch):
         monkeypatch.delenv("KAKAO_CALLBACK_HOSTS", raising=False)

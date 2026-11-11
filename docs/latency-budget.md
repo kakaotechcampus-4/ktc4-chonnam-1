@@ -30,6 +30,10 @@
 | 링크 없는 문자 주장 읽기 | 12초 | 어휘표 폴백, `failures`에 `timeout` |
 | 링크 없는 문자 사례 검색 | 2.5초 | 미확인(`similar_cases:timeout`), 읽기와 병렬 실행 |
 | 링크 없는 문자 분석 전체(`analyze_message_case`) | BE `40 - 경과 초`(AI 기본 25초) | 예산이 없으면 LLM 없이 어휘표만 쓴다 |
+| 에이전트 LLM 한 턴(`AGENT_MODEL` 이 있을 때만) | 5초 | 에이전트만 끝낸다(`llm_error`). 분석은 코드가 그대로 돌린다 |
+| 에이전트 루프 | LLM 4턴, 새로 시작하는 분석 5회 | 더 부르지 않고 끝낸다(`turn_limit`·`call_limit`) |
+| 에이전트 첫 턴 기다림 | 링크 1개 이하만 턴 상한 5초, 2개 이상은 기다리지 않음 | 카드 코드가 출발한다 |
+| 카드가 끝난 뒤 에이전트 | 기다리지 않음 | 바로 취소한다(`preempted`). 카드는 그대로 나간다 |
 
 신호 제안의 30초는 시나리오 테스트 설정이다. 링크 추출이 끝나야 수집을 시작하므로(ADR 0007)
 BE 는 `READ_MESSAGE_TIMEOUT_SECONDS = 15.0` 으로 추출 상한을 줄인다. 추출 15초 + 자체 격리 API 17초 +
@@ -68,6 +72,13 @@ BE는 `analyze_call`에 `time_budget_s`를 넘길 때 기본값 40초를 그대�
 주장 읽기 12.5초 + 사례 검색(병렬)이라 최악에도 약 28초에 끝나 45초 안에 든다. Q1·Q2 답 처리(`apply_message_answer`)는
 LLM·네트워크를 쓰지 않아 콜백 없이 스킬 응답으로 바로 돌려준다.
 
+에이전트([ADR 0012](adr/0012-agent-analysis-router.md))는 `AGENT_MODEL` 이 있을 때만 돌고, `read_message` 뒤에 붙는다.
+링크가 하나 이하면 에이전트의 첫 턴이 끝나야 수집과 문자 분석이 출발하므로 그만큼(상한 5초) 늦게 시작한다. 두 번째 턴부터는 분석과 함께 돈다.
+링크가 둘 이상이면 첫 턴을 기다리지 않는다. 링크는 순서대로 수집하므로 에이전트를 꺼도 상한을 모두 쓰는 최악(추출 15초 + 링크마다 22초 = 59초)이 45초를 넘는다.
+카드가 다 만들어지면 에이전트를 바로 취소한다. 그래서 에이전트가 더하는 시간은 링크 1개 이하에서 최대 5초, 2개 이상에서 0초다.
+링크 1개에서 단계 상한을 모두 쓰는 최악은 추출 15초 + 첫 턴 5초 + 자체 격리 API 17초 + 페이지 분석 5초 = 42초이고, 에이전트를 끄면 37초다.
+실제 지연은 `ai/eval/agent_router_eval.py` 로 재지만 아직 실행한 값이 없다.
+
 ## 실행 순서
 
 요구 분석 LLM 이 원문을 한 번 읽어 링크와 요구를 함께 뽑는다(`read_message`, ADR 0007).
@@ -93,7 +104,7 @@ HTTP 수집은 리다이렉트 최대 5홉을 따른다. 브라우저는 설정�
 
 ## 검증
 
-단계 제한은 `main.py`, `scanner/isolation_client.py`,
-`infra/isolation/collector/app.py`, `ai/src/ai/llm/`의 실제 설정을 따른다.
+단계 제한은 `main.py`, `backend/src/server/`(`budgets.py`·`voice_flow.py`·`callback.py`),
+`scanner/isolation_client.py`, `infra/isolation/collector/app.py`, `ai/src/ai/llm/`·`ai/src/ai/case/`의 실제 설정을 따른다.
 현재 측정과 실행하지 못한 항목은
 [자체 URL 수집 전환 검증 기록](experiments/2026-10-17-internal-url-scanner.md)에 남긴다.

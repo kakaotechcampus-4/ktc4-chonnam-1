@@ -13,17 +13,17 @@ URL이 로그에 노출되지 않는지, Q1→K6/A2 대응이 쌓이는지, 기�
 
 import asyncio
 import io
-import os
-import tempfile
 import wave
 
 import httpx
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi.testclient import TestClient
 
+import backend.src.server.voice_flow as voice_flow
 import main
+from services.result_card_renderer import render_detail_carousel, render_voice_detail_carousel, render_voice_result_card
+from services.kakao_card_renderer import render_card
 from ai.case.types import (
     ClaimView,
     ClaimViewDemand,
@@ -32,7 +32,6 @@ from ai.case.types import (
     DemandKind,
     IdentityKind,
     OfficialContact,
-    ResponseAction,
     Scenario,
     Segment,
     Side,
@@ -51,29 +50,10 @@ def clean_state(monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("KAKAO_MEDIA_HOSTS", "media.kakao.test")
     monkeypatch.setenv("KAKAO_CALLBACK_HOSTS", "bot-api.kakao.com")
-    main.ANALYSIS_JOBS.clear()
-    main.RUNNING_USERS.clear()
     yield
-    main.ANALYSIS_JOBS.clear()
-    main.RUNNING_USERS.clear()
-
-
-@pytest.fixture
-def client():
-    with TestClient(main.app) as test_client:
-        yield test_client
 
 
 SIGNED_CDN_URL = "https://media.kakao.test/rec/abc?token=should-not-leak"
-
-
-def _real_temp_voice_file() -> str:
-    """`run_voice_analysis()`가 실제로 열어서 bytes로 읽으므로, 가짜
-    다운로드도 디스크에 진짜 존재하는 파일 경로를 돌려줘야 한다."""
-    fd, path = tempfile.mkstemp(suffix="_test_voice.m4a")
-    with os.fdopen(fd, "wb") as file:
-        file.write(_wav_bytes())
-    return path
 
 
 def _wav_bytes(seconds=1, rate=8000):
@@ -147,7 +127,7 @@ def _patch_pipeline(monkeypatch, *, download=None, transcript=None, analysis=Non
     async def fake_download(url):
         if download is not None:
             return await download(url)
-        return _real_temp_voice_file(), 10
+        return _wav_bytes()
 
     async def fake_transcribe(audio, filename):
         if transcript is None:
@@ -161,9 +141,9 @@ def _patch_pipeline(monkeypatch, *, download=None, transcript=None, analysis=Non
         outcome = analysis(transcript_result, time_budget_s=time_budget_s)
         return await outcome if asyncio.iscoroutine(outcome) else outcome
 
-    monkeypatch.setattr(main, "download_voice_media", fake_download)
-    monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-    monkeypatch.setattr(main, "analyze_call", fake_analyze)
+    monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+    monkeypatch.setattr(voice_flow, "transcribe_call", fake_transcribe)
+    monkeypatch.setattr(voice_flow, "analyze_call", fake_analyze)
 
 
 class TestVoiceMessageIsRoutedBeforeReadMessage:
@@ -185,7 +165,7 @@ class TestVoiceMessageIsRoutedBeforeReadMessage:
 
         async def fake_download(url):
             captured_urls.append(url)
-            return _real_temp_voice_file(), 10
+            return _wav_bytes()
 
         _patch_pipeline(monkeypatch, download=fake_download)
 
@@ -205,7 +185,7 @@ class TestVoiceMessageIsRoutedBeforeReadMessage:
 
         async def fake_download(url):
             captured_urls.append(url)
-            return _real_temp_voice_file(), 10
+            return _wav_bytes()
 
         _patch_pipeline(monkeypatch, download=fake_download)
 
@@ -226,7 +206,6 @@ class TestVoiceMessageIsRoutedBeforeReadMessage:
             raise RuntimeError("boom")
 
         _patch_pipeline(monkeypatch, transcript=failing_transcribe)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
 
         client.post("/kakao/skill", json=_voice_skill_payload())
 
@@ -242,7 +221,7 @@ class TestVoiceMessageIsRoutedBeforeReadMessage:
         def unexpected_download(url):
             pytest.fail("오디오가 아닌 링크가 음성 다운로드로 감")
 
-        monkeypatch.setattr(main, "download_voice_media", unexpected_download)
+        monkeypatch.setattr(voice_flow, "download_voice_media", unexpected_download)
         calls = stub_read_message()
 
         response = client.post(
@@ -256,7 +235,7 @@ class TestVoiceMessageIsRoutedBeforeReadMessage:
         )
 
         assert response.status_code == 200
-        assert response.json() == main.render_card("r6-input-required")
+        assert response.json() == render_card("r6-input-required")
         assert [text for text, _ in calls] == ["https://media.kakao.test/page.html"]
 
 
@@ -275,9 +254,7 @@ class TestVoiceMessageSyncPath:
             unchecked=[Unchecked(item=UncheckedItem.ACTUAL_SENDER, reason=UncheckedReason.CANNOT_VERIFY)],
         )
 
-        removed = []
         _patch_pipeline(monkeypatch, analysis=lambda t, time_budget_s=40.0: result)
-        monkeypatch.setattr(main.os, "remove", lambda path: removed.append(path))
 
         response = client.post("/kakao/skill", json=_voice_skill_payload())
 
@@ -286,25 +263,24 @@ class TestVoiceMessageSyncPath:
         assert text_card["title"] == "⚠️ 보이스피싱이 의심돼요"
         assert "금융감독원 대표번호(1332)로\n직접 전화해 확인하세요." in text_card["description"]
         assert "통화를 끊고" in text_card["description"]
-        assert len(removed) == 1
 
     def test_download_failure_returns_safe_card_without_crashing(self, client, monkeypatch):
         async def failing_download(url):
             raise MediaDownloadBlocked("허용되지 않은 주소로 해석됨")
 
-        monkeypatch.setattr(main, "download_voice_media", failing_download)
+        monkeypatch.setattr(voice_flow, "download_voice_media", failing_download)
 
         response = client.post("/kakao/skill", json=_voice_skill_payload())
 
         assert response.status_code == 200
-        assert response.json() == main.render_card("r4-unavailable")
+        assert response.json() == render_card("r4-unavailable")
 
     def test_running_user_duplicate_is_still_enforced(self, client, monkeypatch):
         main.RUNNING_USERS.add("voice-user")
 
         response = client.post("/kakao/skill", json=_voice_skill_payload())
 
-        assert response.json() == main.render_card("k5-duplicate")
+        assert response.json() == render_card("k5-duplicate")
 
     def test_missing_media_url_is_handled_safely(self, client):
         payload = _voice_skill_payload()
@@ -313,7 +289,7 @@ class TestVoiceMessageSyncPath:
         response = client.post("/kakao/skill", json=payload)
 
         assert response.status_code == 200
-        assert response.json() == main.render_card("r4-unavailable")
+        assert response.json() == render_card("r4-unavailable")
 
 
 class TestV1CallClaimsFieldMapping:
@@ -332,7 +308,7 @@ class TestV1CallClaimsFieldMapping:
             ),
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "통화에 나온 기관: '금융감독원 조사국입니다'" in description
@@ -347,7 +323,7 @@ class TestV1CallClaimsFieldMapping:
             ),
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "통화에 나온 말: '지금 바로 입금하세요'" in description
@@ -357,7 +333,7 @@ class TestV1CallClaimsFieldMapping:
             claims=ClaimView(pretexts=["계좌가 범죄에 연루됐습니다"]),
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "통화에 나온 사정: '계좌가 범죄에 연루됐습니다'" in description
@@ -367,7 +343,7 @@ class TestV1CallClaimsFieldMapping:
             claims=ClaimView(blockers=["다른 사람에게 말하지 마세요"], pretexts=["계좌가 범죄에 연루됐습니다"]),
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "통화에 나온 사정: '다른 사람에게 말하지 마세요'" in description
@@ -383,7 +359,7 @@ class TestV1CallClaimsFieldMapping:
             ]),
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "통화에 나온 요구: 송금·입금, 앱 설치, 인증번호 전달" in description
@@ -392,7 +368,7 @@ class TestV1CallClaimsFieldMapping:
     def test_empty_claims_omit_the_whole_block(self):
         result = _voice_result(claims=ClaimView()).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "통화에서 들은 내용" not in description
@@ -406,18 +382,18 @@ class TestVoiceResultConclusionBranching:
     def test_not_analyzable_uses_ve3_unrecognized_card(self):
         result = _voice_result(conclusion=Conclusion.NOT_ANALYZABLE).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
 
-        assert card == main.render_card("ve3-unrecognized")
+        assert card == render_card("ve3-unrecognized")
         text_card = _card_body(card)
         assert text_card["title"] == "🎙️ 녹음 내용을 알아듣지 못했어요"
 
     def test_input_required_uses_ve4_no_claim_card(self):
         result = _voice_result(conclusion=Conclusion.INPUT_REQUIRED).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
 
-        assert card == main.render_card("ve4-no-claim")
+        assert card == render_card("ve4-no-claim")
         text_card = _card_body(card)
         assert text_card["title"] == "🎙️ 녹음에 사칭·요구하는 말이 없어요"
 
@@ -433,7 +409,7 @@ class TestVoiceResultConclusionBranching:
             questions=[AttachedQuestion(question_id=QuestionId.ALREADY_ACTED, option_ids=["sent_money"])],
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result, job_id="some-job")
+        card = render_voice_result_card(result, job_id="some-job")
 
         assert len(card["template"]["outputs"]) == 1
 
@@ -443,7 +419,7 @@ class TestVoiceResultConclusionBranching:
 
         result = _voice_result(conclusion=Conclusion.SUSPECTED).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         text_card = _card_body(card)
         labels = {b["label"] for b in text_card["buttons"]}
 
@@ -463,7 +439,7 @@ class TestVoiceDetailCarouselTemplate:
             caution=False,
         ).model_dump(mode="json")
 
-        card = main.render_voice_detail_carousel(result)
+        card = render_voice_detail_carousel(result)
 
         items = card["template"]["outputs"][0]["carousel"]["items"]
         assert "- 통화에 나온 기관: '금융감독원입니다'" in items[0]["description"]
@@ -479,7 +455,7 @@ class TestVoiceDetailCarouselTemplate:
     def test_detail_carousel_with_no_claims_uses_fallback_text(self):
         result = _voice_result(claims=ClaimView()).model_dump(mode="json")
 
-        card = main.render_voice_detail_carousel(result)
+        card = render_voice_detail_carousel(result)
 
         assert "확인된 의심 근거가 없어요." in card["template"]["outputs"][0]["carousel"]["items"][0]["description"]
 
@@ -493,7 +469,7 @@ class TestVoiceDetailCarouselTemplate:
             "env": {"answer": "no_risk_found", "details": {"signals": []}},
         }
 
-        card = main.render_detail_carousel(analysis_result)
+        card = render_detail_carousel(analysis_result)
 
         assert card["template"]["outputs"][0]["carousel"]["type"] == "textCard"
 
@@ -508,7 +484,7 @@ class TestTranscribeAndAnalyzeWiring:
         captured = {}
 
         async def fake_download(url):
-            return _real_temp_voice_file(), 10
+            return _wav_bytes()
 
         async def fake_transcribe(audio, filename):
             return transcript
@@ -518,17 +494,16 @@ class TestTranscribeAndAnalyzeWiring:
             captured["time_budget_s"] = time_budget_s
             return _voice_result()
 
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-        monkeypatch.setattr(main, "analyze_call", fake_analyze)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", fake_transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", fake_analyze)
 
         await main.run_voice_analysis(SIGNED_CDN_URL)
 
         assert captured["transcript"] is transcript
         # CALLBACK_DEADLINE_SECONDS(45) - 5 = 40초에서 경과 시간을 뺀 값이라
         # 40초보다 작아야 하고, 거의 즉시 끝났으니 0에 아주 가깝게 작지는 않다.
-        assert 0 < captured["time_budget_s"] <= main.VOICE_ANALYZE_BUDGET_S
+        assert 0 < captured["time_budget_s"] <= voice_flow.VOICE_ANALYZE_BUDGET_S
 
     async def test_insufficient_remaining_budget_skips_real_analysis_budget(self, monkeypatch):
         """남은 예산이 5초 미만이면 analyze_call()에 0초를 줘 실제 분석
@@ -540,13 +515,13 @@ class TestTranscribeAndAnalyzeWiring:
         해서 "경과 시간이 예산을 넘겼다"를 실제로 재현한다.
         """
 
-        monkeypatch.setattr(main, "VOICE_ANALYZE_BUDGET_S", 0.05)
-        monkeypatch.setattr(main, "VOICE_MIN_ANALYZE_BUDGET_S", 0.05)
+        monkeypatch.setattr(voice_flow, "VOICE_ANALYZE_BUDGET_S", 0.05)
+        monkeypatch.setattr(voice_flow, "VOICE_MIN_ANALYZE_BUDGET_S", 0.05)
 
         captured = {}
 
         async def fake_download(url):
-            return _real_temp_voice_file(), 10
+            return _wav_bytes()
 
         async def fake_transcribe(audio, filename):
             await asyncio.sleep(0.1)  # 예산(0.05초)보다 길게 걸리게 한다
@@ -556,10 +531,9 @@ class TestTranscribeAndAnalyzeWiring:
             captured["time_budget_s"] = time_budget_s
             return _voice_result(conclusion=Conclusion.NOT_ANALYZABLE)
 
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-        monkeypatch.setattr(main, "analyze_call", fake_analyze)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", fake_transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", fake_analyze)
 
         await main.run_voice_analysis(SIGNED_CDN_URL)
 
@@ -575,7 +549,7 @@ class TestTranscribeAndAnalyzeWiring:
         captured = {}
 
         async def fake_download(url):
-            return _real_temp_voice_file(), 10
+            return _wav_bytes()
 
         async def fake_transcribe(audio, filename):
             return failed_transcript
@@ -587,10 +561,9 @@ class TestTranscribeAndAnalyzeWiring:
                 unchecked=[Unchecked(item=UncheckedItem.TRANSCRIPT, reason=UncheckedReason.FAILED)],
             )
 
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-        monkeypatch.setattr(main, "analyze_call", fake_analyze)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", fake_transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", fake_analyze)
 
         card = await main.run_voice_analysis(SIGNED_CDN_URL)
 
@@ -600,21 +573,20 @@ class TestTranscribeAndAnalyzeWiring:
 
     async def test_cancelled_error_during_transcribe_is_not_swallowed(self, monkeypatch):
         async def fake_download(url):
-            return _real_temp_voice_file(), 10
+            return _wav_bytes()
 
         async def cancelling_transcribe(audio, filename):
             raise asyncio.CancelledError()
 
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", cancelling_transcribe)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", cancelling_transcribe)
 
         with pytest.raises(asyncio.CancelledError):
             await main.run_voice_analysis(SIGNED_CDN_URL)
 
     async def test_cancelled_error_during_analyze_is_not_swallowed(self, monkeypatch):
         async def fake_download(url):
-            return _real_temp_voice_file(), 10
+            return _wav_bytes()
 
         async def fake_transcribe(audio, filename):
             return _transcript()
@@ -622,19 +594,18 @@ class TestTranscribeAndAnalyzeWiring:
         async def cancelling_analyze(transcript_result, *, time_budget_s):
             raise asyncio.CancelledError()
 
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-        monkeypatch.setattr(main, "analyze_call", cancelling_analyze)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
+        monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", fake_transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", cancelling_analyze)
 
         with pytest.raises(asyncio.CancelledError):
             await main.run_voice_analysis(SIGNED_CDN_URL)
 
-    async def test_downloaded_file_is_removed_even_when_analyze_raises(self, monkeypatch):
-        removed = []
+    async def test_analyze_error_is_left_to_the_caller(self, monkeypatch):
+        """통화 분석이 계약과 달리 예외를 올리면 그대로 올린다. 부른 쪽이 안내 응답으로 바꾼다."""
 
         async def fake_download(url):
-            return _real_temp_voice_file(), 10
+            return _wav_bytes()
 
         async def fake_transcribe(audio, filename):
             return _transcript()
@@ -642,64 +613,25 @@ class TestTranscribeAndAnalyzeWiring:
         async def failing_analyze(transcript_result, *, time_budget_s):
             raise RuntimeError("boom")
 
-        monkeypatch.setattr(main, "download_voice_media", fake_download)
-        monkeypatch.setattr(main, "transcribe_call", fake_transcribe)
-        monkeypatch.setattr(main, "analyze_call", failing_analyze)
-        monkeypatch.setattr(main.os, "remove", lambda path: removed.append(path))
+        monkeypatch.setattr(voice_flow, "download_voice_media", fake_download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", fake_transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", failing_analyze)
 
-        card = await main.run_voice_analysis(SIGNED_CDN_URL)
+        with pytest.raises(RuntimeError):
+            await main.run_voice_analysis(SIGNED_CDN_URL)
 
-        assert card == main.render_card("r4-unavailable")
-        assert len(removed) == 1
+    async def test_sync_path_answers_r4_when_analysis_raises(self, monkeypatch):
+        """Job 이 없는 동기 경로는 예외를 R4 카드로 끝낸다."""
 
+        monkeypatch.setattr(main, "run_voice_analysis", AsyncMock(side_effect=RuntimeError("boom")))
+        from fastapi import BackgroundTasks
 
-class TestDownloadVoiceMediaCleansUpOnCancellation:
-    """`download_voice_media()` 자체(목업으로 대체하지 않은 실제 함수)가
-    다운로드 도중 취소돼도 임시 파일을 남기지 않는지 확인한다.
+        response = await main.handle_voice_message(
+            {"type": "audio", "url": SIGNED_CDN_URL}, "voice-user", None, BackgroundTasks(),
+        )
 
-    `asyncio.CancelledError`는 `Exception`이 아니라 `BaseException`만
-    상속해서(3.8+), `except Exception: os.remove(path)` 패턴은 취소 중
-    예외를 못 잡고 파일을 남긴다 — 그 회귀를 지키는 테스트다.
-    """
-
-    async def test_temp_file_is_removed_when_cancelled_mid_download(self, monkeypatch):
-        class FakeResponse:
-            status_code = 200
-
-            async def aiter_bytes(self, chunk_size):
-                yield b"partial-bytes"
-                raise asyncio.CancelledError()
-
-        class FakeStream:
-            async def __aenter__(self):
-                return FakeResponse()
-
-            async def __aexit__(self, *exc_info):
-                return False
-
-        class FakeHttpClient:
-            def stream(self, method, url, **kwargs):
-                return FakeStream()
-
-        monkeypatch.setattr(main, "get_http_client", lambda: FakeHttpClient())
-        monkeypatch.setattr(main, "assert_resolves_to_public_ip", lambda host: _noop())
-
-        created_paths = []
-        import tempfile as tempfile_module
-        real_mkstemp = tempfile_module.mkstemp
-
-        def tracking_mkstemp(*args, **kwargs):
-            fd, path = real_mkstemp(*args, **kwargs)
-            created_paths.append(path)
-            return fd, path
-
-        monkeypatch.setattr(main.tempfile, "mkstemp", tracking_mkstemp)
-
-        with pytest.raises(asyncio.CancelledError):
-            await main.download_voice_media(SIGNED_CDN_URL)
-
-        assert len(created_paths) == 1
-        assert not os.path.exists(created_paths[0])
+        assert response == render_card("r4-unavailable")
+        assert "voice-user" not in main.RUNNING_USERS
 
 
 async def _noop():
@@ -721,20 +653,18 @@ def _webm_header():
 
 class TestVoiceInputValidation:
     @pytest.mark.parametrize("extra_byte", [False, True])
-    async def test_actual_wav_at_25mib_reaches_stt_but_one_extra_byte_does_not(self, monkeypatch, tmp_path, extra_byte):
+    async def test_actual_wav_at_25mib_reaches_stt_but_one_extra_byte_does_not(self, monkeypatch, extra_byte):
         # PCM header is 44 bytes; keep the full original production size boundary.
-        data = _wav_bytes((main.MAX_VOICE_FILE_BYTES - 44) // 2, rate=1)
-        assert len(data) == main.MAX_VOICE_FILE_BYTES
+        data = _wav_bytes((voice_flow.MAX_VOICE_FILE_BYTES - 44) // 2, rate=1)
+        assert len(data) == voice_flow.MAX_VOICE_FILE_BYTES
         if extra_byte:
             data += b"x"
-        path = tmp_path / "download"
-        path.write_bytes(data)
         async def download(url):
-            return str(path), len(data)
+            return data
         transcribe = AsyncMock(return_value=_transcript())
-        monkeypatch.setattr(main, "download_voice_media", download)
-        monkeypatch.setattr(main, "transcribe_call", transcribe)
-        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", AsyncMock(return_value=_voice_result()))
         result = await main.run_voice_analysis(SIGNED_CDN_URL)
         if extra_byte:
             assert "25MB보다 커요" in str(result)
@@ -742,7 +672,6 @@ class TestVoiceInputValidation:
         else:
             assert "보이스피싱이 의심" in str(result)
             transcribe.assert_awaited_once_with(data, "voice.wav")
-        assert not path.exists()
 
     async def test_sync_deadline_returns_r4_and_cleans_running_user(self, monkeypatch):
         stopped = asyncio.Event()
@@ -751,12 +680,12 @@ class TestVoiceInputValidation:
                 await asyncio.Event().wait()
             finally:
                 stopped.set()
-        monkeypatch.setattr(main, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
         monkeypatch.setattr(main, "VOICE_SYNC_TIMEOUT_SECONDS", 0.01)
         from fastapi import BackgroundTasks
         response = await main.handle_voice_message({"type": "audio", "url": SIGNED_CDN_URL},
                                                   "voice-user", None, BackgroundTasks())
-        assert response == main.render_card("r4-unavailable")
+        assert response == render_card("r4-unavailable")
         assert "voice-user" not in main.RUNNING_USERS and stopped.is_set()
 
     @pytest.mark.parametrize("data,expected_card,reason", [
@@ -770,24 +699,21 @@ class TestVoiceInputValidation:
         (b"", "ve2-invalid-audio", "비어 있어요"),
     ])
     @pytest.mark.parametrize("with_job", [False, True])
-    async def test_rejected_bytes_produce_ve_card_before_stt(self, monkeypatch, tmp_path, data, expected_card, reason, with_job):
-        path = tmp_path / "looks-like-audio.m4a"
-        path.write_bytes(data)
+    async def test_rejected_bytes_produce_ve_card_before_stt(self, monkeypatch, data, expected_card, reason, with_job):
         async def download(url):
-            return str(path), len(data)
+            return data
         transcribe, analyze = AsyncMock(), AsyncMock()
-        monkeypatch.setattr(main, "download_voice_media", download)
-        monkeypatch.setattr(main, "transcribe_call", transcribe)
-        monkeypatch.setattr(main, "analyze_call", analyze)
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", analyze)
         job_id = main.create_analysis_job("voice-user") if with_job else None
         result = await main.run_voice_analysis(SIGNED_CDN_URL, job_id=job_id)
         if reason is None:
-            assert result == main.render_card(expected_card)
+            assert result == render_card(expected_card)
         else:
             description = _card_body(result)["description"]
             assert reason in description and "{{ reason_line }}" not in description
             assert _card_body(result)["title"] == "🎙️ 이 녹음은 확인할 수 없어요"
-        assert not path.exists()
         transcribe.assert_not_awaited()
         analyze.assert_not_awaited()
 
@@ -796,32 +722,27 @@ class TestVoiceInputValidation:
         (b"\xff\xfb\x90\x00" + b"\x00" * 413, "voice.mp3"),
         (b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x00" + b"\x00" * 413, "voice.mp3"),
     ], ids=["wav", "m4a", "webm", "mp3", "mp3_id3"])
-    async def test_supported_content_controls_stt_filename_not_url_extension(self, monkeypatch, tmp_path, data, filename):
-        path = tmp_path / "download"
-        path.write_bytes(data)
+    async def test_supported_content_controls_stt_filename_not_url_extension(self, monkeypatch, data, filename):
         async def download(url):
-            return str(path), len(data)
+            return data
         transcribe = AsyncMock(return_value=_transcript())
-        monkeypatch.setattr(main, "download_voice_media", download)
-        monkeypatch.setattr(main, "transcribe_call", transcribe)
-        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", AsyncMock(return_value=_voice_result()))
         result = await main.run_voice_analysis(SIGNED_CDN_URL)
         assert "보이스피싱이 의심" in str(result)
         transcribe.assert_awaited_once_with(data, filename)
-        assert not path.exists()
 
     @pytest.mark.parametrize("limit,seconds,reason", [(None, 3, None), (2, 2, None), (2, 3, "2초보다 길어요")])
-    async def test_wav_duration_limit_unset_boundary_and_violation(self, monkeypatch, tmp_path, limit, seconds, reason):
+    async def test_wav_duration_limit_unset_boundary_and_violation(self, monkeypatch, limit, seconds, reason):
         data = _wav_bytes(seconds)
-        path = tmp_path / "download"
-        path.write_bytes(data)
         async def download(url):
-            return str(path), len(data)
+            return data
         transcribe = AsyncMock(return_value=_transcript())
-        monkeypatch.setattr(main, "download_voice_media", download)
-        monkeypatch.setattr(main, "MAX_VOICE_DURATION_SECONDS", limit)
-        monkeypatch.setattr(main, "transcribe_call", transcribe)
-        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "MAX_VOICE_DURATION_SECONDS", limit)
+        monkeypatch.setattr(voice_flow, "transcribe_call", transcribe)
+        monkeypatch.setattr(voice_flow, "analyze_call", AsyncMock(return_value=_voice_result()))
         result = await main.run_voice_analysis(SIGNED_CDN_URL)
         if reason:
             assert reason in str(result)
@@ -829,37 +750,33 @@ class TestVoiceInputValidation:
         else:
             assert "보이스피싱이 의심" in str(result)
             transcribe.assert_awaited_once()
-        assert not path.exists()
 
-    async def test_unknown_compressed_duration_is_not_silently_accepted_when_limit_configured(self, monkeypatch, tmp_path):
-        path = tmp_path / "download.webm"
-        path.write_bytes(_webm_header())
+    async def test_unknown_compressed_duration_is_not_silently_accepted_when_limit_configured(self, monkeypatch):
         async def download(url):
-            return str(path), path.stat().st_size
+            return _webm_header()
         transcribe = AsyncMock()
-        monkeypatch.setattr(main, "download_voice_media", download)
-        monkeypatch.setattr(main, "MAX_VOICE_DURATION_SECONDS", 60)
-        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "MAX_VOICE_DURATION_SECONDS", 60)
+        monkeypatch.setattr(voice_flow, "transcribe_call", transcribe)
         result = await main.run_voice_analysis(SIGNED_CDN_URL)
         assert "녹음 길이를 확인할 수 없어요" in str(result)
         transcribe.assert_not_awaited()
-        assert not path.exists()
 
     @pytest.mark.parametrize("failure", [httpx.ConnectError("signed token must not leak"), httpx.ReadTimeout("signed token must not leak")])
     @pytest.mark.parametrize("with_job", [False, True])
     async def test_network_errors_and_timeouts_are_r4_in_both_paths(self, monkeypatch, failure, with_job, capsys):
         download = AsyncMock(side_effect=failure)
         transcribe = AsyncMock()
-        monkeypatch.setattr(main, "download_voice_media", download)
-        monkeypatch.setattr(main, "transcribe_call", transcribe)
+        monkeypatch.setattr(voice_flow, "download_voice_media", download)
+        monkeypatch.setattr(voice_flow, "transcribe_call", transcribe)
         job_id = main.create_analysis_job("voice-user") if with_job else None
-        assert await main.run_voice_analysis(SIGNED_CDN_URL, job_id=job_id) == main.render_card("r4-unavailable")
+        assert await main.run_voice_analysis(SIGNED_CDN_URL, job_id=job_id) == render_card("r4-unavailable")
         assert "signed token must not leak" not in capsys.readouterr().out
         transcribe.assert_not_awaited()
 
     @pytest.mark.parametrize("extra_byte", [False, True])
-    async def test_real_download_25mib_boundary_is_streamed_and_cleaned(self, monkeypatch, tmp_path, extra_byte):
-        assert main.MAX_VOICE_FILE_BYTES == 25 * 1024 * 1024
+    async def test_real_download_25mib_boundary_is_streamed(self, monkeypatch, extra_byte):
+        assert voice_flow.MAX_VOICE_FILE_BYTES == 25 * 1024 * 1024
         class Stream(httpx.AsyncByteStream):
             async def __aiter__(self):
                 for _ in range(25):
@@ -868,20 +785,15 @@ class TestVoiceInputValidation:
                     yield b"x"
         def respond(request):
             return httpx.Response(200, stream=Stream(), headers={"Content-Type": "audio/mp4"})
-        original = main.tempfile.mkstemp
-        monkeypatch.setattr(main.tempfile, "mkstemp", lambda **kwargs: original(dir=tmp_path, **kwargs))
-        monkeypatch.setattr(main, "assert_resolves_to_public_ip", AsyncMock())
+        monkeypatch.setattr(voice_flow, "assert_resolves_to_public_ip", AsyncMock())
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
-            monkeypatch.setattr(main, "get_http_client", lambda: client)
+            monkeypatch.setattr(voice_flow, "get_http_client", lambda: client)
             if extra_byte:
                 result = await main.run_voice_analysis(SIGNED_CDN_URL)
                 assert "25MB보다 커요" in str(result)
-                assert not list(tmp_path.iterdir())
             else:
-                path, size = await main.download_voice_media(SIGNED_CDN_URL)
-                assert size == main.MAX_VOICE_FILE_BYTES
-                assert os.path.getsize(path) == size
-                os.remove(path)
+                audio = await voice_flow.download_voice_media(SIGNED_CDN_URL)
+                assert len(audio) == voice_flow.MAX_VOICE_FILE_BYTES
 
     @pytest.mark.parametrize("data,mime,expected", [
         (_wav_bytes(), "etc/m4a", "⚠️ 보이스피싱이 의심돼요"),
@@ -891,11 +803,12 @@ class TestVoiceInputValidation:
     async def test_real_download_mime_does_not_override_content(self, monkeypatch, data, mime, expected):
         def respond(request):
             return httpx.Response(200, content=data, headers={"Content-Type": mime})
-        monkeypatch.setattr(main, "assert_resolves_to_public_ip", AsyncMock())
-        monkeypatch.setattr(main, "transcribe_call", AsyncMock(return_value=_transcript()))
-        monkeypatch.setattr(main, "analyze_call", AsyncMock(return_value=_voice_result()))
+        monkeypatch.setattr(voice_flow, "assert_resolves_to_public_ip", AsyncMock())
+        monkeypatch.setattr(voice_flow, "transcribe_call", AsyncMock(return_value=_transcript()))
+        monkeypatch.setattr(voice_flow, "analyze_call", AsyncMock(return_value=_voice_result()))
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             monkeypatch.setattr(main, "get_http_client", lambda: client)
+            monkeypatch.setattr(voice_flow, "get_http_client", lambda: client)
             result = await main.run_voice_analysis(SIGNED_CDN_URL)
         assert _card_body(result)["title"] == expected
 
@@ -906,13 +819,13 @@ class TestVoiceInputValidation:
                 await asyncio.Event().wait()
             finally:
                 stopped.set()
-        monkeypatch.setattr(main, "download_voice_media", wait_for_download)
+        monkeypatch.setattr(voice_flow, "download_voice_media", wait_for_download)
         monkeypatch.setattr(main, "CALLBACK_DEADLINE_SECONDS", 0.01)
         job_id = main.create_analysis_job("voice-user")
         main.RUNNING_USERS.add("voice-user")
         await main.run_analysis_and_callback("", "https://untrusted.example/cb", "voice-user", job_id,
                                              voice_media_url=SIGNED_CDN_URL)
-        assert main.ANALYSIS_JOBS[job_id]["result"] == main.render_card("r4-unavailable")
+        assert main.ANALYSIS_JOBS[job_id]["result"] == render_card("r4-unavailable")
         assert main.ANALYSIS_JOBS[job_id]["status"] == "timeout"
         assert "voice-user" not in main.RUNNING_USERS and stopped.is_set()
 
@@ -930,7 +843,7 @@ class TestVoiceMessageAsyncCallbackPath:
         )
 
         assert response.status_code == 200
-        assert response.json() == main.render_card("r5-analyzing")
+        assert response.json() == render_card("r5-analyzing")
         job, = main.ANALYSIS_JOBS.values()
         assert job["analysis_kind"] == "voice"
 
@@ -946,7 +859,7 @@ class TestVoiceMessageAsyncCallbackPath:
 
         async def fake_voice_analysis(media_url, job_id=None):
             calls.append((media_url, job_id))
-            return main.render_card("r4-unavailable")
+            return render_card("r4-unavailable")
 
         async def unexpected(*args, **kwargs):
             pytest.fail("voice_media_url이 있는데 다른 분석 경로가 호출됨")
@@ -967,7 +880,7 @@ class TestVoiceMessageAsyncCallbackPath:
         """콜백 URL이 만료·불량이어도 기존 콜백 실패 처리로 안전하게 끝난다."""
 
         async def fake_voice_analysis(media_url, job_id=None):
-            return main.render_card("r4-unavailable")
+            return render_card("r4-unavailable")
 
         monkeypatch.setattr(main, "run_voice_analysis", fake_voice_analysis)
 
@@ -989,7 +902,6 @@ class TestVoiceMessageAsyncCallbackPath:
         result = _voice_result(conclusion=Conclusion.SUSPECTED)
 
         _patch_pipeline(monkeypatch, analysis=lambda t, time_budget_s=40.0: result)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
 
         job_id = main.create_analysis_job("voice-user")
         main.ANALYSIS_JOBS[job_id]["analysis_kind"] = "voice"
@@ -1037,7 +949,7 @@ class TestVoiceAnswerFlow:
         job_id = self._seed_voice_job()
         original = main.ANALYSIS_JOBS[job_id]["final_payload"]
         for answer in answers:
-            card = main.handle_voice_answer(job_id, answer)
+            card = main.handle_voice_answer(job_id, answer, "voice-user")
         job = main.ANALYSIS_JOBS[job_id]
         text_card = _card_body(card)
         assert text_card["title"] == "🚨 지금 먼저 하세요"
@@ -1163,8 +1075,8 @@ class TestVoiceAnswerFlow:
 
         job_id = self._seed_voice_job()
 
-        main.handle_voice_answer(job_id, "not_yet")
-        card = main.handle_voice_answer(job_id, "sent_money")
+        main.handle_voice_answer(job_id, "not_yet", "voice-user")
+        card = main.handle_voice_answer(job_id, "sent_money", "voice-user")
 
         text_card = _card_body(card)
         assert text_card["title"] == "🚨 지금 먼저 하세요"
@@ -1177,14 +1089,55 @@ class TestVoiceAnswerFlow:
 
         job_id = self._seed_voice_job()
 
-        first = main.handle_voice_answer(job_id, "installed_app")
+        first = main.handle_voice_answer(job_id, "installed_app", "voice-user")
         assert _card_body(first)["buttons"] == []
 
-        second = main.handle_voice_answer(job_id, "sent_money")
+        second = main.handle_voice_answer(job_id, "sent_money", "voice-user")
         labels = {b["label"] for b in _card_body(second)["buttons"]}
         assert labels == {"112 신고"}
         assert "상담:" not in str(second)
         assert "1332" not in str(second)
+
+    def test_answer_from_other_user_does_not_touch_case(self, client):
+        """다른 사용자가 case_id 를 알아도 남의 통화 결과에 답을 쌓지 못한다."""
+
+        job_id = self._seed_voice_job()
+        original = main.ANALYSIS_JOBS[job_id]["final_payload"]
+
+        response = client.post(
+            "/kakao/skill",
+            json={
+                "userRequest": {"utterance": "", "user": {"id": "someone-else"}},
+                "action": {"clientExtra": {
+                    "case_id": job_id, "question_id": "already_acted", "option_id": "sent_money",
+                }},
+            },
+        )
+
+        assert response.json() == main.kakao_response(main._CASE_NOT_FOUND_TEXT)
+        job = main.ANALYSIS_JOBS[job_id]
+        assert "qa_answers" not in job
+        assert job["final_payload"] == original
+
+    def test_same_answer_clicked_twice_is_kept_once(self):
+        job_id = self._seed_voice_job()
+
+        main.handle_voice_answer(job_id, "sent_money", "voice-user")
+        main.handle_voice_answer(job_id, "sent_money", "voice-user")
+
+        assert main.ANALYSIS_JOBS[job_id]["qa_answers"] == ["sent_money"]
+
+    def test_not_yet_card_has_no_doubled_blank_line_when_only_hang_up_remains(self):
+        """멈출 행동이 hang_up 뿐이면 stop_line 이 비는데, 빈 줄이 겹쳐 나가면 안 된다."""
+
+        job_id = self._seed_voice_job()
+        main.ANALYSIS_JOBS[job_id]["final_payload"]["stop_actions"] = ["hang_up"]
+
+        card = main.handle_voice_answer(job_id, "not_yet", "voice-user")
+
+        description = _card_body(card)["description"]
+        assert "차단하세요.\n\n신고·상담은" in description
+        assert "\n\n\n" not in description
 
     def test_answer_for_unknown_job_is_handled_safely(self, client):
         response = client.post(
@@ -1211,7 +1164,6 @@ class TestVoiceAnswerFlow:
             questions=[AttachedQuestion(question_id=QuestionId.ALREADY_ACTED, option_ids=["sent_money", "not_yet"])],
         )
         _patch_pipeline(monkeypatch, analysis=lambda t, time_budget_s=40.0: result)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
 
         job_id = main.create_analysis_job("voice-user")
 
@@ -1239,7 +1191,6 @@ class TestVoiceAnswerFlow:
             questions=[AttachedQuestion(question_id=QuestionId.ALREADY_ACTED, option_ids=["sent_money"])],
         )
         _patch_pipeline(monkeypatch, analysis=lambda t, time_budget_s=40.0: result)
-        monkeypatch.setattr(main.os, "remove", lambda path: None)
 
         card = await main.run_voice_analysis(SIGNED_CDN_URL, job_id=None)
 
@@ -1260,7 +1211,7 @@ class TestV1NumberChecksAndSimilarCases:
             number_checks=[NumberCheck(number="1332", org="금융감독원", result="official")],
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "상대가 말한 번호(1332): 금융감독원 대표번호와 같아요" in description
@@ -1275,7 +1226,7 @@ class TestV1NumberChecksAndSimilarCases:
             number_checks=[NumberCheck(number="010-1234-5678", org="금융감독원", result="not_official")],
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "상대가 말한 번호(010-1234-5678): 금융감독원 대표번호가 아니에요" in description
@@ -1291,7 +1242,7 @@ class TestV1NumberChecksAndSimilarCases:
             number_checks=[NumberCheck(number="02-1234-5678", org="알 수 없는 기관", result="org_not_listed")],
         ).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "공식 번호가 아니에요" not in description
@@ -1308,7 +1259,7 @@ class TestV1NumberChecksAndSimilarCases:
 
         result = _voice_result(checked=[CheckItem.PHONE_NUMBER]).model_dump(mode="json")
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "- 상대가 말한 전화번호" in description
@@ -1327,11 +1278,11 @@ class TestV1NumberChecksAndSimilarCases:
         # 분석 결과 데이터 자체는 유지된다 — payload에는 그대로 남아 있다.
         assert result["similar_cases"]["matches"][0]["case_id"] == "c1"
 
-        card = main.render_voice_result_card(result)
+        card = render_voice_result_card(result)
         description = _card_body(card)["description"]
 
         assert "- 비슷한 사례" in description
-        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        items = render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
         assert items[1]["title"] == "📚 비슷한 사례"
         assert "비슷한 예시 통화를 찾았어요" in items[1]["description"]
         assert "결과 판단에는 쓰지 않았어요" in items[1]["description"]
@@ -1358,7 +1309,7 @@ class TestV1NumberChecksAndSimilarCases:
         ])
         result = _voice_result(similar_cases=similar).model_dump(mode="json")
 
-        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        items = render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
 
         assert items[1]["description"] == (
             f"이번 통화는 '{similar_type}' 수법의 예시 통화와 비슷해요.\n{similar_line}\n\n"
@@ -1374,7 +1325,7 @@ class TestV1NumberChecksAndSimilarCases:
         ])
         result = _voice_result(similar_cases=similar).model_dump(mode="json")
 
-        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        items = render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
 
         assert items[1]["description"] == (
             "이번 통화는 '보이스피싱' 수법의 예시 통화와 비슷해요.\n\n"
@@ -1389,7 +1340,7 @@ class TestV1NumberChecksAndSimilarCases:
         ])
         result = _voice_result(similar_cases=similar).model_dump(mode="json")
 
-        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        items = render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
 
         assert "비슷한 예시 통화를 찾았어요" in items[1]["description"]
         assert "new_unlisted_type" not in str(items)
@@ -1414,11 +1365,11 @@ class TestLatestVoice115Contract:
             checked=[CheckItem.SIMILAR_CASES] if status == "completed" else [],
             unchecked=[Unchecked(item="similar_cases", reason=reason)] if reason else [],
         ).model_dump(mode="json")
-        initial = main.render_voice_result_card(result)
+        initial = render_voice_result_card(result)
         description = _card_body(initial)["description"]
         assert f"- 비슷한 사례 ({expected})" in description
         assert description.count("- 비슷한 사례") == 1
-        carousel = main.render_voice_detail_carousel(result)
+        carousel = render_voice_detail_carousel(result)
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
         assert all(item["title"] != "📚 비슷한 사례" for item in items)
         assert f"- 비슷한 사례 ({expected})" in items[1]["description"]
@@ -1427,7 +1378,7 @@ class TestLatestVoice115Contract:
     @pytest.mark.parametrize("caution", [False, True])
     def test_caution_does_not_imply_unknown_speaker(self, caution):
         result = _voice_result(caution=caution).model_dump(mode="json")
-        items = main.render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
+        items = render_voice_detail_carousel(result)["template"]["outputs"][0]["carousel"]["items"]
         assert "상대가 한 말로 보이는 문장만 근거로 썼어요." in items[0]["description"]
         assert "누가 한 말인지 가리지 못해" not in str(items)
 
@@ -1445,11 +1396,11 @@ class TestLatestVoice115Contract:
             demands=[ClaimViewDemand(kind=DemandKind.MONEY_TRANSFER, quote="돈을 보내세요")],
             blockers=["전화가 안 돼요"],
         )).model_dump(mode="json")
-        without_marker = main.render_voice_result_card(result)
-        carousel_without_marker = main.render_voice_detail_carousel(result)
+        without_marker = render_voice_result_card(result)
+        carousel_without_marker = render_voice_detail_carousel(result)
         result["unchecked"].append({"item": "speaker", "reason": "speaker_unknown"})
-        initial = main.render_voice_result_card(result)
-        carousel = main.render_voice_detail_carousel(result)
+        initial = render_voice_result_card(result)
+        carousel = render_voice_detail_carousel(result)
         items = carousel["template"]["outputs"][0]["carousel"]["items"]
         for label in ("통화에 나온 기관", "통화에 나온 말", "통화에 나온 사정", "통화에 나온 요구"):
             assert label in str(initial)
@@ -1463,7 +1414,7 @@ class TestLatestVoice115Contract:
         assert result["conclusion"] == "suspected"
 
     def test_b2d_uses_only_112_and_1394(self):
-        card = _card_body(main.render_card("b2d-call-acted"))
+        card = _card_body(render_card("b2d-call-acted"))
         assert [b["phoneNumber"] for b in card["buttons"]] == ["112", "1394"]
         assert "1332" not in str(card)
 
@@ -1481,7 +1432,7 @@ class TestExistingTextAndUrlFlowsAreUnaffected:
         )
 
         assert response.status_code == 200
-        assert response.json() == main.render_card("r6-input-required")
+        assert response.json() == render_card("r6-input-required")
         assert [text for text, _ in calls] == ["평범한 문자"]
 
     def test_media_dict_without_audio_type_falls_through_to_normal_flow(self, client):
@@ -1499,50 +1450,6 @@ class TestExistingTextAndUrlFlowsAreUnaffected:
         )
 
         assert response.status_code == 200
-        assert response.json() == main.render_card("r6-input-required")
+        assert response.json() == render_card("r6-input-required")
 
 
-class TestVoiceDownloadCancellation:
-    async def test_cancel_mid_chunk_removes_partial_temp_file(self, monkeypatch):
-        """바깥 wait_for 타임아웃(CancelledError)이 청크를 받는 도중 들어와도 임시 파일을 지운다."""
-
-        import asyncio
-
-        import httpx
-
-        second_chunk_started = asyncio.Event()
-
-        async def slow_body():
-            yield b"x" * 10
-            second_chunk_started.set()
-            await asyncio.sleep(60)
-            yield b"y"
-
-        def handler(request):
-            return httpx.Response(200, content=slow_body())
-
-        created = []
-        real_mkstemp = main.tempfile.mkstemp
-
-        def tracking_mkstemp(*args, **kwargs):
-            fd, path = real_mkstemp(*args, **kwargs)
-            created.append(path)
-            return fd, path
-
-        async def public_ip(host):
-            return None
-
-        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        monkeypatch.setattr(main, "get_http_client", lambda: client)
-        monkeypatch.setattr(main, "assert_resolves_to_public_ip", public_ip)
-        monkeypatch.setattr(main.tempfile, "mkstemp", tracking_mkstemp)
-
-        task = asyncio.create_task(main.download_voice_media(SIGNED_CDN_URL))
-        await asyncio.wait_for(second_chunk_started.wait(), timeout=5)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        await client.aclose()
-
-        assert len(created) == 1
-        assert not os.path.exists(created[0])

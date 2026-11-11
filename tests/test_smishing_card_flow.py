@@ -22,7 +22,7 @@ async def test_existing_result_button_opens_the_saved_analysis(monkeypatch, has_
         "env": {"answer": "not_run", "details": {"reason": {"failures": ["missing_result"]}}},
     }
     monkeypatch.setenv("APP_ENV", "test")
-    monkeypatch.setattr(main, "ANALYSIS_JOBS", {
+    main.ANALYSIS_JOBS.update({
         "parcel-job": {"user_id": "parcel-user", "status": "completed", "final_payload": payload},
     })
     result = render_result_card(payload, job_id="parcel-job")

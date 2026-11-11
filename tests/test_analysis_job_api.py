@@ -7,7 +7,6 @@
 """
 
 import pytest
-from fastapi.testclient import TestClient
 
 import main
 
@@ -20,15 +19,7 @@ def clean_jobs(monkeypatch):
     생략한다 — 이 API는 /api/analyses/{job_id}를 직접 호출한다.
     """
     monkeypatch.setenv("APP_ENV", "test")
-    main.ANALYSIS_JOBS.clear()
     yield
-    main.ANALYSIS_JOBS.clear()
-
-
-@pytest.fixture
-def client():
-    with TestClient(main.app) as test_client:
-        yield test_client
 
 
 def _base_job(job_id: str, **overrides) -> dict:
